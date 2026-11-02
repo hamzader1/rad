@@ -56,6 +56,12 @@ rad_view_state_gc(void)
       if(cfg == &cfg_nil_node || vs->last_frame_index_touched+2 < rad_state->frame_index)
       {
         if(prev == 0) { slot->first = next; } else { prev->hash_next = next; }
+        if(!u128_match(vs->cv.base_hash, u128_zero()))
+        {
+          c_hash_downstream_dec(vs->cv.base_hash);
+        }
+        if(vs->cv.history_arena != 0) { arena_release(vs->cv.history_arena); }
+        if(vs->cv.save_arena != 0) { arena_release(vs->cv.save_arena); }
         arena_release(vs->arena);
         SLLStackPush_N(rad_state->free_view_state, vs, hash_next);
       }
@@ -78,9 +84,85 @@ rad_code_view_init(RAD_CodeViewState *cv, Arena *arena)
     cv->initialized = 1;
     cv->preferred_column = 1;
     cv->patch_arena = arena;
+    cv->history_arena = arena_alloc();
+    cv->save_arena = arena_alloc();
     cv->initial_center = 1;
     cv->center_cursor = 1;
   }
+}
+
+internal B32
+rad_code_view_is_dirty(RAD_CodeViewState *cv)
+{
+  return (cv->version != cv->saved_version);
+}
+
+internal void
+rad_code_view_push_patch(RAD_CodeViewState *cv, Rng1U64 range, String8 replace)
+{
+  // rad: first patch over a base -> pin the base content, so the content
+  // cache keeps it alive even if the file changes on disk
+  if(cv->patches.first == 0 && u128_match(cv->base_hash, u128_zero()) && !u128_match(cv->current_hash, u128_zero()))
+  {
+    cv->base_hash = cv->current_hash;
+    c_hash_downstream_inc(cv->base_hash);
+  }
+  txt_patch_list_push_new(cv->patch_arena, &cv->patches, range, replace);
+  cv->version += 1;
+}
+
+internal void
+rad_code_view_edit(RAD_CodeViewState *cv, TXT_Patched *patched, Rng1U64 range, String8 replace)
+{
+  // rad: record (range, old text, new text) for undo, drop any redo tail
+  RAD_EditRecord *rec = push_array(cv->history_arena, RAD_EditRecord, 1);
+  rec->range = range;
+  rec->old_text = memory_map_data_from_range(cv->history_arena, &patched->memory_map, range);
+  rec->new_text = push_str8_copy(cv->history_arena, replace);
+  rec->prev = cv->history_last_applied;
+  if(cv->history_last_applied != 0)
+  {
+    cv->history_last_applied->next = rec;
+  }
+  else
+  {
+    cv->history_first = rec;
+  }
+  cv->history_last_applied = rec;
+  rad_code_view_push_patch(cv, range, replace);
+}
+
+internal B32
+rad_code_view_undo(RAD_CodeViewState *cv)
+{
+  B32 result = 0;
+  RAD_EditRecord *rec = cv->history_last_applied;
+  if(rec != 0)
+  {
+    Rng1U64 inverse_range = r1u64(rec->range.min, rec->range.min + rec->new_text.size);
+    rad_code_view_push_patch(cv, inverse_range, rec->old_text);
+    cv->history_last_applied = rec->prev;
+    cv->cursor = cv->mark = rec->range.min + rec->old_text.size;
+    cv->contain_cursor = 1;
+    result = 1;
+  }
+  return result;
+}
+
+internal B32
+rad_code_view_redo(RAD_CodeViewState *cv)
+{
+  B32 result = 0;
+  RAD_EditRecord *rec = (cv->history_last_applied != 0 ? cv->history_last_applied->next : cv->history_first);
+  if(rec != 0)
+  {
+    rad_code_view_push_patch(cv, rec->range, rec->new_text);
+    cv->history_last_applied = rec;
+    cv->cursor = cv->mark = rec->range.min + rec->new_text.size;
+    cv->contain_cursor = 1;
+    result = 1;
+  }
+  return result;
 }
 
 internal void
@@ -146,10 +228,50 @@ rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, Rng2F32 rect, TXT_LangK
       //- rad: interpret event as single-line text op
       UI_TxtOp single_line_op = ui_single_line_txt_op_from_event(scratch.arena, evt, line, line_range, *cursor, *mark);
 
-      //- rad: read-only for now - skip replace-ranges (same as raddbg)
-      if(single_line_op.replace.size != 0 || evt->flags & UI_EventFlag_Delete)
+      //- rad: read-only views skip replace-ranges (same as raddbg)
+      if(!cv->editable && (single_line_op.replace.size != 0 || evt->flags & UI_EventFlag_Delete))
       {
         continue;
+      }
+
+      //- rad: newline insertion -> auto-indent with the current line's leading
+      // whitespace; CRLF files get CRLF line ends
+      if(cv->editable && evt->string.size != 0)
+      {
+        String8 insert = evt->string;
+        if(str8_match(insert, str8_lit("\n"), 0))
+        {
+          U64 indent_size = 0;
+          for(;indent_size < line.size && (line.str[indent_size] == ' ' || line.str[indent_size] == '\t'); indent_size += 1);
+          indent_size = Min(indent_size, (*cursor > line_range.min ? *cursor - line_range.min : 0));
+          insert = push_str8f(scratch.arena, "\n%S", str8_prefix(line, indent_size));
+        }
+        if(str8_find_needle(insert, 0, str8_lit("\n"), 0) < insert.size)
+        {
+          // rad: normalize line ends to the file's convention ("\r\n" or "\n");
+          // NOTE: not str8_split - it drops trailing empty pieces, which would
+          // turn a lone "\n" into an empty insertion.
+          U8 *normalized = push_array(scratch.arena, U8, insert.size*2);
+          U64 normalized_size = 0;
+          for EachIndex(idx, insert.size)
+          {
+            U8 c = insert.str[idx];
+            if(c == '\r' && idx+1 < insert.size && insert.str[idx+1] == '\n')
+            {
+              continue;
+            }
+            if(c == '\n' && cv->crlf)
+            {
+              normalized[normalized_size++] = '\r';
+            }
+            normalized[normalized_size++] = c;
+          }
+          insert = str8(normalized, normalized_size);
+        }
+        if(insert.str != evt->string.str)
+        {
+          single_line_op.replace = insert;
+        }
       }
 
       //- rad: apply single-line navigations
@@ -273,6 +395,13 @@ rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, Rng2F32 rect, TXT_LangK
         *cursor = 0;
       }
 
+      //- rad: get replaced-range; adjust based on multi-line logic (same as raddbg)
+      Rng1U64 replaced_range = single_line_op.range;
+      if(*cursor != single_line_op.cursor && (evt->flags & UI_EventFlag_Delete || evt->string.size != 0))
+      {
+        replaced_range = r1u64(*mark, *cursor);
+      }
+
       //- rad: in some cases, we want to pick a selection side based on the delta
       if(*cursor != *mark && evt->flags & UI_EventFlag_PickSelectSide)
       {
@@ -297,6 +426,18 @@ rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, Rng2F32 rect, TXT_LangK
       if(!(evt->flags & UI_EventFlag_KeepMark))
       {
         *mark = *cursor;
+      }
+
+      //- rad: push patch if we have one (same as raddbg, plus undo history)
+      if(cv->editable && (replaced_range.max != replaced_range.min || single_line_op.replace.size != 0))
+      {
+        rad_code_view_edit(cv, &text_patched, replaced_range, single_line_op.replace);
+        text_patched = txt_patched_from_info_data_patches(scratch.arena, text_info, text_data, &cv->patches);
+        *cursor = *mark = replaced_range.min + single_line_op.replace.size;
+        U64 line_num = txt_line_num_from_off(&text_patched.line_map, *cursor);
+        Rng1U64 line_range = txt_range_from_line_num(&text_patched.line_map, line_num);
+        *preferred_column = (*cursor - line_range.min);
+        snap[Axis2_Y] = 1;
       }
 
       //- rad: consume
@@ -689,6 +830,58 @@ rad_text_view_ui(CFG_Node *tab, Rng2F32 rect)
   U128 hash = {0};
   TXT_TextInfo info = txt_text_info_from_key_lang(access, text_key, lang_kind, &hash);
   String8 data = c_data_from_hash(access, hash);
+  B32 file_changed_on_disk = 0;
+  cv->editable = 1;
+
+  //////////////////////////////
+  //- rad: pick the base text that the patches apply to
+  //
+  // no patches -> base is whatever the file stream has now.
+  // patches    -> base is the pinned `base_hash`. if a save is pending and the
+  //               file stream now has exactly the saved bytes, rebase: drop the
+  //               patches that the save materialized, and adopt the new hash.
+  //
+  if(cv->patches.first != 0 && !u128_match(cv->base_hash, u128_zero()) && !u128_match(cv->base_hash, hash))
+  {
+    B32 rebased = 0;
+    if(cv->save_pending && !u128_match(hash, u128_zero()) && info.lines_count != 0 && str8_match(data, cv->save_text, 0))
+    {
+      for(U64 idx = 0; idx < cv->save_patch_count && cv->patches.first != 0; idx += 1)
+      {
+        DLLRemove(cv->patches.first, cv->patches.last, cv->patches.first);
+        cv->patches.count -= 1;
+      }
+      c_hash_downstream_dec(cv->base_hash);
+      cv->base_hash = u128_zero();
+      if(cv->patches.first != 0)
+      {
+        cv->base_hash = hash;
+        c_hash_downstream_inc(cv->base_hash);
+      }
+      cv->save_pending = 0;
+      arena_clear(cv->save_arena);
+      MemoryZeroStruct(&cv->save_text);
+      rebased = 1;
+    }
+    if(!rebased)
+    {
+      file_changed_on_disk = !cv->save_pending;
+      hash = cv->base_hash;
+      info = txt_text_info_from_hash_lang(access, hash, lang_kind);
+      data = c_data_from_hash(access, hash);
+    }
+  }
+  else if(cv->patches.first == 0 && !u128_match(cv->base_hash, u128_zero()))
+  {
+    c_hash_downstream_dec(cv->base_hash);
+    cv->base_hash = u128_zero();
+  }
+  if(cv->save_pending && cv->patches.first == 0)
+  {
+    cv->save_pending = 0;
+  }
+  cv->current_hash = hash;
+  cv->crlf = (info.line_end_kind == TXT_LineEndKind_CRLF);
   B32 key_has_data = !u128_match(hash, u128_zero()) && info.lines_count;
 
   //////////////////////////////
@@ -750,7 +943,14 @@ rad_text_view_ui(CFG_Node *tab, Rng2F32 rect)
         ui_spacer(ui_em(1.5f, 1));
         ui_labelf("Line: %I64d, Column: %I64d, Offset: 0x%I64x", cursor_line_num, 1 + cv->cursor - cursor_line_range.min, cv->cursor);
         ui_spacer(ui_pct(1, 0));
-        ui_labelf("(read only)");
+        if(file_changed_on_disk)
+        {
+          ui_labelf("(changed on disk)");
+        }
+        if(rad_code_view_is_dirty(cv))
+        {
+          ui_labelf("(modified)");
+        }
         ui_labelf("%s",
                   info.line_end_kind == TXT_LineEndKind_LF   ? "lf" :
                   info.line_end_kind == TXT_LineEndKind_CRLF ? "crlf" :
@@ -761,4 +961,68 @@ rad_text_view_ui(CFG_Node *tab, Rng2F32 rect)
 
   access_close(access);
   scratch_end(scratch);
+}
+
+internal B32
+rad_text_view_save(CFG_Node *tab)
+{
+  B32 result = 0;
+  RAD_ViewState *vs = rad_view_state_from_cfg(tab);
+  RAD_CodeViewState *cv = &vs->cv;
+  String8 file_path = rad_file_path_from_tab(tab);
+  if(cv->initialized && file_path.size != 0)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    Access *access = access_open();
+    TXT_LangKind lang_kind = txt_lang_kind_from_extension(str8_skip_last_dot(file_path));
+    U128 hash = cv->current_hash;
+    TXT_TextInfo info = txt_text_info_from_hash_lang(access, hash, lang_kind);
+    String8 data = c_data_from_hash(access, hash);
+    if(!u128_match(hash, u128_zero()) && info.lines_count != 0)
+    {
+      //- rad: materialize base + patches
+      TXT_Patched patched = txt_patched_from_info_data_patches(scratch.arena, &info, data, &cv->patches);
+      String8 text = memory_map_data_from_range(scratch.arena, &patched.memory_map, r1u64(0, patched.size));
+
+      //- rad: write to a temporary file next to the target, then atomically replace it
+      String8 tmp_path = push_str8f(scratch.arena, "%S.rad_tmp", file_path);
+      B32 good = write_data_to_file_path(tmp_path, text);
+      if(good)
+      {
+        good = replace_file_path(file_path, tmp_path);
+      }
+      if(!good)
+      {
+        delete_file_at_path(tmp_path);
+        log_user_errorf("Could not save \"%S\".", file_path);
+      }
+
+      //- rad: success -> remember the saved bytes; the next file stream reload
+      // with exactly these bytes rebases the buffer (see rad_text_view_ui)
+      if(good)
+      {
+        cv->saved_version = cv->version;
+        cv->save_pending = (cv->patches.first != 0);
+        cv->save_patch_count = cv->patches.count;
+        arena_clear(cv->save_arena);
+        cv->save_text = push_str8_copy(cv->save_arena, text);
+        result = 1;
+      }
+    }
+    access_close(access);
+    scratch_end(scratch);
+  }
+  return result;
+}
+
+internal B32
+rad_tab_is_dirty(CFG_Node *tab)
+{
+  B32 result = 0;
+  if(str8_match(tab->string, str8_lit("text"), 0))
+  {
+    RAD_ViewState *vs = rad_view_state_from_cfg(tab);
+    result = (vs != 0 && vs->cv.initialized && rad_code_view_is_dirty(&vs->cv));
+  }
+  return result;
 }

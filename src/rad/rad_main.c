@@ -94,6 +94,7 @@ entry_point(CmdLine *cmd_line)
   if(g_logs_folder.size == 0)
   {
     String8 user_program_logs_data_path = get_process_info()->user_program_logs_data_path;
+    make_directory(push_str8f(scratch.arena, "%S/rad", user_program_logs_data_path));
     g_logs_folder = push_str8f(scratch.arena, "%S/rad/logs", user_program_logs_data_path);
   }
   make_directory(g_logs_folder);

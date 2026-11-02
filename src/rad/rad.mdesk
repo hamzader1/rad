@@ -1025,7 +1025,12 @@ RAD_CmdTable:
   
   //- rad: files
   {OpenFile               open_file            "Open File"            FileOutline   O          ctrl   0      0  }
+  {Save                   save                 "Save"                 Save          S          ctrl   0      0  }
   {Exit                   exit                 "Exit"                 X             F4         0      0      alt}
+
+  //- rad: editing
+  {Undo                   undo                 "Undo"                 Undo          Z          ctrl   0      0  }
+  {Redo                   redo                 "Redo"                 Redo          Y          ctrl   0      0  }
   
   //- rad: windows
   {ToggleFullscreen       toggle_fullscreen    "Toggle Fullscreen"    Window        Return     ctrl   0      0  }

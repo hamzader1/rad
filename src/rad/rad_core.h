@@ -193,6 +193,16 @@ struct RAD_State
   FNT_Tag font_slot_table[RAD_FontSlot_COUNT];
   R_Handle icon_texture;
 
+  //- rad: user-facing error / warning (shown in the bottom bar, same as raddbg)
+  U8 error_buffer[512];
+  U64 error_string_size;
+  F32 error_t;
+
+  //- rad: "unsaved changes" confirmation (second close/exit within a short
+  // time discards the changes)
+  CFG_ID discard_confirm_cfg_id;
+  U64 discard_confirm_deadline_us;
+
   //- rad: per-tab view states
   U64 view_state_slots_count;
   struct RAD_ViewStateSlot *view_state_slots;
@@ -220,6 +230,7 @@ internal RAD_Settings rad_default_settings(void);
 
 internal Arena *rad_frame_arena(void);
 internal void rad_request_frame(void);
+internal void rad_set_error(String8 string);
 
 ////////////////////////////////
 //~ rad: Commands

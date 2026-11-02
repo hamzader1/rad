@@ -125,7 +125,10 @@ typedef enum RAD_CmdKind
 {
 RAD_CmdKind_Null,
 RAD_CmdKind_OpenFile,
+RAD_CmdKind_Save,
 RAD_CmdKind_Exit,
+RAD_CmdKind_Undo,
+RAD_CmdKind_Redo,
 RAD_CmdKind_ToggleFullscreen,
 RAD_CmdKind_IncWindowFontSize,
 RAD_CmdKind_DecWindowFontSize,

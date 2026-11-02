@@ -55,6 +55,15 @@ rad_request_frame(void)
   rad_state->num_frames_requested = 4;
 }
 
+internal void
+rad_set_error(String8 string)
+{
+  rad_state->error_string_size = Min(sizeof(rad_state->error_buffer), string.size);
+  MemoryCopy(rad_state->error_buffer, string.str, rad_state->error_string_size);
+  rad_state->error_t = 1.f;
+  rad_request_frame();
+}
+
 ////////////////////////////////
 //~ rad: Commands
 
@@ -232,6 +241,11 @@ rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab)
     dr_fstrs_push_new(arena, &result, &params, str8_lit("  "));
   }
   dr_fstrs_push_new(arena, &result, &params, name);
+  if(rad_tab_is_dirty(tab))
+  {
+    dr_fstrs_push_new(arena, &result, &params, str8_lit(" "));
+    dr_fstrs_push_new(arena, &result, &params, rad_icon_kind_text_table[RAD_IconKind_CircleFilled], .font = rad_font_from_slot(RAD_FontSlot_Icons), .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons), .color = rgba_secondary, .size = ui_top_font_size()*0.6f);
+  }
   dr_fstrs_push_new(arena, &result, &params, str8_lit("  "));
   return result;
 }
@@ -685,14 +699,34 @@ rad_window_frame(RAD_Window *ws)
                   RAD_CmdKind cmds[] =
                   {
                     RAD_CmdKind_OpenFile,
+                    RAD_CmdKind_Save,
                     RAD_CmdKind_Null,//-
                     RAD_CmdKind_Exit,
                   };
                   U32 codepoints[] =
                   {
                     'o',
+                    's',
                     0,//-
                     'x',
+                  };
+                  StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
+                  rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
+                }
+
+                // rad: edit menu
+                UI_Key edit_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_edit_menu_key_"));
+                UI_CtxMenu(edit_menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+                {
+                  RAD_CmdKind cmds[] =
+                  {
+                    RAD_CmdKind_Undo,
+                    RAD_CmdKind_Redo,
+                  };
+                  U32 codepoints[] =
+                  {
+                    'u',
+                    'r',
                   };
                   StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
                   rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
@@ -804,6 +838,7 @@ rad_window_frame(RAD_Window *ws)
                   items[] =
                   {
                     {str8_lit("File"),     'f', WM_Key_F, file_menu_key},
+                    {str8_lit("Edit"),     'e', WM_Key_E, edit_menu_key},
                     {str8_lit("Window"),   'w', WM_Key_W, window_menu_key},
                     {str8_lit("Panel"),    'p', WM_Key_P, panel_menu_key},
                     {str8_lit("Tab"),      'b', WM_Key_V, tab_menu_key},
@@ -951,9 +986,25 @@ rad_window_frame(RAD_Window *ws)
     ProfScope("build bottom bar")
     {
       String8 tag = str8_lit("good_pop");
+      B32 show_error = (rad_state->error_t >= 0.01f && rad_state->error_string_size != 0);
+      if(show_error)
+      {
+        tag = str8_lit("bad_pop");
+      }
 
       //- rad: compute fstrs for status explanation
       DR_FStrList status_fstrs = {0};
+      if(show_error)
+      {
+        String8 error_string = str8(rad_state->error_buffer, rad_state->error_string_size);
+        DR_FStrParams params = {ui_top_font(), ui_top_text_raster_flags(), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+        dr_fstrs_push_new(scratch.arena, &status_fstrs, &params, rad_icon_kind_text_table[RAD_IconKind_WarningBig],
+                          .font = rad_font_from_slot(RAD_FontSlot_Icons),
+                          .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons));
+        dr_fstrs_push_new(scratch.arena, &status_fstrs, &params, str8_lit("  "));
+        dr_fstrs_push_new(scratch.arena, &status_fstrs, &params, error_string);
+      }
+      else
       {
         DR_FStrParams params = {ui_top_font(), ui_top_text_raster_flags(), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
         CFG_PanelNode *focused_panel = panel_tree.focused;
@@ -1322,6 +1373,10 @@ rad_window_frame(RAD_Window *ws)
             for(CFG_NodePtrNode *n = panel->tabs.first; n != 0; n = n->next)
             {
               CFG_Node *tab = n->v;
+              if(str8_match(tab->string, str8_lit("text"), 0))
+              {
+                rad_view_state_from_cfg(tab);
+              }
               UI_TagF(tab != panel->selected_tab ? "inactive" : "")
               {
                 DR_FStrList tab_title_fstrs = rad_title_fstrs_from_tab(scratch.arena, tab);
@@ -2086,9 +2141,57 @@ rad_exec_cmd(RAD_Cmd *cmd)
         rad_focus_panel(panel_cfg);
       }
     }break;
+    case RAD_CmdKind_Save:
+    if(tab_cfg != &cfg_nil_node && str8_match(tab_cfg->string, str8_lit("text"), 0))
+    {
+      rad_text_view_save(tab_cfg);
+    }break;
     case RAD_CmdKind_Exit:
     {
-      rad_state->quit = 1;
+      // rad: unsaved changes anywhere -> require a second exit within a few seconds
+      U64 dirty_count = 0;
+      CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
+      for(CFG_NodePtrNode *wn = windows.first; wn != 0; wn = wn->next)
+      {
+        CFG_PanelTree tree = cfg_panel_tree_from_cfg(scratch.arena, wn->v);
+        for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+        {
+          for(CFG_NodePtrNode *tn = p->tabs.first; tn != 0; tn = tn->next)
+          {
+            dirty_count += !!rad_tab_is_dirty(tn->v);
+          }
+        }
+      }
+      CFG_ID confirm_id = max_U64;
+      if(dirty_count == 0 || (rad_state->discard_confirm_cfg_id == confirm_id && now_time_us() < rad_state->discard_confirm_deadline_us))
+      {
+        rad_state->quit = 1;
+      }
+      else
+      {
+        rad_state->discard_confirm_cfg_id = confirm_id;
+        rad_state->discard_confirm_deadline_us = now_time_us() + 4000000;
+        rad_set_error(push_str8f(scratch.arena, "%I64u file%s with unsaved changes. Exit again to discard them, or save first (Ctrl+S).", dirty_count, dirty_count == 1 ? "" : "s"));
+      }
+    }break;
+
+    //- rad: editing
+    case RAD_CmdKind_Undo:
+    case RAD_CmdKind_Redo:
+    if(tab_cfg != &cfg_nil_node && str8_match(tab_cfg->string, str8_lit("text"), 0))
+    {
+      RAD_ViewState *vs = rad_view_state_from_cfg(tab_cfg);
+      if(vs->cv.initialized)
+      {
+        if(cmd->kind == RAD_CmdKind_Undo)
+        {
+          rad_code_view_undo(&vs->cv);
+        }
+        else
+        {
+          rad_code_view_redo(&vs->cv);
+        }
+      }
     }break;
 
     //- rad: windows
@@ -2399,7 +2502,15 @@ rad_exec_cmd(RAD_Cmd *cmd)
       }
     }break;
     case RAD_CmdKind_CloseTab:
-    if(tab_cfg != &cfg_nil_node)
+    if(tab_cfg != &cfg_nil_node && rad_tab_is_dirty(tab_cfg) &&
+       !(rad_state->discard_confirm_cfg_id == tab_cfg->id && now_time_us() < rad_state->discard_confirm_deadline_us))
+    {
+      // rad: unsaved changes -> require a second close within a few seconds
+      rad_state->discard_confirm_cfg_id = tab_cfg->id;
+      rad_state->discard_confirm_deadline_us = now_time_us() + 4000000;
+      rad_set_error(push_str8f(scratch.arena, "\"%S\" has unsaved changes. Close it again to discard them, or save first (Ctrl+S).", str8_skip_last_slash(rad_file_path_from_tab(tab_cfg))));
+    }
+    else if(tab_cfg != &cfg_nil_node)
     {
       // NOTE(rad): port of raddbg's RD_CmdKind_CloseTab
       CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, tab_cfg->parent);
@@ -2695,6 +2806,15 @@ read_only global RAD_TextNavBinding rad_text_nav_binding_table[] =
   // rad: copy
   {WM_Key_C,        WM_Modifier_Ctrl,                   UI_EventKind_Edit,     UI_EventFlag_Copy|UI_EventFlag_KeepMark,   UI_EventDeltaUnit_Null,  {+0, +0}},
   {WM_Key_Insert,   WM_Modifier_Ctrl,                   UI_EventKind_Edit,     UI_EventFlag_Copy|UI_EventFlag_KeepMark,   UI_EventDeltaUnit_Null,  {+0, +0}},
+
+  // rad: cut
+  {WM_Key_X,        WM_Modifier_Ctrl,                   UI_EventKind_Edit,     UI_EventFlag_Copy|UI_EventFlag_Delete,     UI_EventDeltaUnit_Null,  {+0, +0}},
+
+  // rad: delete / backspace
+  {WM_Key_Delete,   0,                                  UI_EventKind_Edit,     UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect, UI_EventDeltaUnit_Char, {+1, +0}},
+  {WM_Key_Delete,   WM_Modifier_Ctrl,                   UI_EventKind_Edit,     UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect, UI_EventDeltaUnit_Word, {+1, +0}},
+  {WM_Key_Backspace,0,                                  UI_EventKind_Edit,     UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect, UI_EventDeltaUnit_Char, {-1, +0}},
+  {WM_Key_Backspace,WM_Modifier_Ctrl,                   UI_EventKind_Edit,     UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect, UI_EventDeltaUnit_Word, {-1, +0}},
 };
 
 internal B32
@@ -2716,6 +2836,31 @@ rad_push_text_nav_ui_events(RAD_Window *ws, Arena *arena, WM_Event *event)
     evt2.delta_unit = UI_EventDeltaUnit_Whole;
     evt2.delta_2s32 = v2s32(+1, +0);
     ui_event_list_push(arena, &ws->ui_events, &evt2);
+    result = 1;
+  }
+
+  // rad: paste -> text event with the clipboard contents (same as raddbg's RD_CmdKind_Paste)
+  if(!result && ((event->key == WM_Key_V && event->modifiers == WM_Modifier_Ctrl) ||
+                 (event->key == WM_Key_Insert && event->modifiers == WM_Modifier_Shift)))
+  {
+    UI_Event evt = zero_struct;
+    evt.kind   = UI_EventKind_Text;
+    evt.flags  = UI_EventFlag_Paste;
+    evt.string = wm_get_clipboard_text(arena);
+    if(evt.string.size != 0)
+    {
+      ui_event_list_push(arena, &ws->ui_events, &evt);
+    }
+    result = 1;
+  }
+
+  // rad: tab -> indentation (4 spaces, the Rust convention)
+  if(!result && event->key == WM_Key_Tab && event->modifiers == 0)
+  {
+    UI_Event evt = zero_struct;
+    evt.kind   = UI_EventKind_Text;
+    evt.string = str8_lit("    ");
+    ui_event_list_push(arena, &ws->ui_events, &evt);
     result = 1;
   }
 
@@ -3068,6 +3213,20 @@ rad_frame(void)
   {
     LogScopeResult log = log_scope_end(scratch.arena);
     append_data_to_file_path(rad_state->log_path, log.strings[LogMsgKind_Info]);
+    if(log.strings[LogMsgKind_UserError].size != 0)
+    {
+      String8List error_log_lines = str8_split(scratch.arena, log.strings[LogMsgKind_UserError], (U8 *)"\n", 1, 0);
+      rad_set_error(str8_list_join(scratch.arena, &error_log_lines, &(StringJoin){.sep = str8_lit(" ")}));
+    }
+  }
+
+  //////////////////////////////
+  //- rad: fade out errors (same rate as raddbg)
+  //
+  if(rad_state->error_t > 0.01f)
+  {
+    rad_state->error_t -= rad_state->frame_dt/8.f;
+    rad_request_frame();
   }
 
   scratch_end(scratch);
