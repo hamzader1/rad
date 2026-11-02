@@ -204,3 +204,6 @@ Partial answers (checked in the code 2026-11-02):
   Say clearly when something is unverified or you are guessing.
 - **Small steps.** One layer or one milestone at a time, builds green after each step,
   small commits. Do not modify generated code. Do not delete debugger layers early.
+- **Keep the progress log.** Read `docs/PROGRESS.md` at the start of a session. Update
+  it (status, next steps, dated journal entry) in the same commit as the work, so any
+  session on any machine can pick up where the last one stopped.
