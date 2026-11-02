@@ -31,19 +31,20 @@ Required features, in priority order:
   from the start; every push gets compile-checked on a macOS GitHub Actions runner
   (repo is public, so macOS runners are free). The Mac window/render/font backends
   get written and visually tested on the Mac itself; they cannot be tested from Windows.
-- **OPEN QUESTION, decide at the end of milestone 1 with evidence:** how the IDE gets
-  its UI chrome (panels, tabs, menus, theme, code view) without the debugger.
-  - A) Keep using the `raddbg` (RD_) frontend, hide debugger panels, stub the
-    debugger layers (needed anyway to compile it on macOS), prune later.
-  - B) Thin new frontend in `src/rad/` built directly on `ui`, `draw`, `render`,
-    `font_*`, `text`, `window_manager`, copying the visual pieces of RD_ unchanged
-    (same `ui_` calls, same theme values), checked by side-by-side screenshots
-    against `raddbg.exe`.
-  - Facts (checked 2026-11-02): RD_ makes about 1,150 calls into debugger layers
-    (`e_` 577, `d_` 359, `ev_` 100, `rdi_` 57, `di_` 47, `dasm_` 9, `dmn_` 4).
+- **UI chrome: option B** (decided 2026-11-02). The IDE frontend is its own layer,
+  `src/rad/` (`RAD_`), built directly on `ui`, `draw`, `render`, `font_*`, `text`,
+  `window_manager`, `shell`, `config`. Visual pieces of `raddbg` (window frame, top
+  bar, bottom bar, panels, tabs, box renderer, widgets, theme presets, icon font)
+  are ported with the same `ui_` calls, sizes, tags and theme values, and checked
+  with side-by-side screenshots against `raddbg.exe`. `rad.exe` links no debugger
+  layer. (Rejected option A: keep the `raddbg` frontend and stub the debugger.)
+  - Facts behind the decision (checked 2026-11-02): RD_ makes about 1,150 calls into
+    debugger layers (`e_` 577, `d_` 359, `ev_` 100, `rdi_` 57, `di_` 47, `dasm_` 9,
+    `dmn_` 4); RD_ reads every setting through the debugger's expression evaluator.
     `ui`, `draw`, `render`, `font_*`, `text`, `window_manager` include no debugger
-    layer. `demon` has no stub and `#error`s on anything but Windows/Linux
-    (`src/demon/demon_inc.c:10`).
+    layer; `config` only used `d_hash_from_string` (now replaced by the identical
+    `u64_hash_from_seed_str8(5381, ...)` from `base`). `demon` has no stub and
+    `#error`s on anything but Windows/Linux (`src/demon/demon_inc.c:10`).
 
 ## 3. Facts about the RAD Debugger codebase (from its README)
 
@@ -67,8 +68,10 @@ Required features, in priority order:
     - `shell` (`SH_`): native dialogs, message boxes, file browser.
     - Per-platform implementations live in `src/win32/` and `src/linux/`
       (subfolders `base`, `window_manager`, `shell`, ...).
-  - `rad` (`src/rad/`): the IDE build target (`build rad` -> `rad.exe`). Its own
-    unity-build entry point; reuses the `raddbg` UI unmodified.
+  - `rad` (`RAD_`, `src/rad/`): the IDE frontend and build target (`build rad` ->
+    `rad.exe`). Unity build of only the non-debugger layers; see section 2 (option B).
+    `rad.mdesk` holds copies of raddbg's icon/theme/code-color tables plus the IDE
+    command table.
   - `text` (`TXT_`): text processing, lexing and parsing of source code, async.
   - `content` (`C_`), `file_stream` (`FS_`), `artifact_cache` (`AC_`): content-addressed,
     immutable data caches with async fill and hot-reload on file change.
