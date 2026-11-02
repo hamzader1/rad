@@ -3697,6 +3697,10 @@ txt_artifact_create(String8 key, B32 *cancel_signal, AC_Status *status_out, U64 
         {
           line_end_kind = TXT_LineEndKind_CRLF;
         }
+        else if(shared->info.lines_count > 1)
+        {
+          line_end_kind = TXT_LineEndKind_LF;
+        }
         shared->info.line_end_kind = line_end_kind;
       }
       lane_sync();
