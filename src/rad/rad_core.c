@@ -25,7 +25,11 @@ rad_default_settings(void)
   s.rounded_corner_amount   = 1.f;
   s.tab_width               = 2;
   s.focus_menu_bar_with_alt = 1;
+  s.cursor_scope_lines      = 1;
+  s.cursor_scope_end_annotations = 1;
+  s.cursor_trail            = 1;
   s.theme_preset            = RAD_ThemePreset_DefaultDark;
+  s.show_line_numbers       = 1;
   s.smooth_ui_text          = 1;
   s.hint_ui_text            = 1;
   s.smooth_code_text        = 0;
@@ -438,21 +442,11 @@ rad_view_ui(CFG_Node *tab, Rng2F32 rect)
   }
 
   //////////////////////////////
-  //- rad: text view (read-only placeholder until the code view is ported)
+  //- rad: text view
   //
   else if(str8_match(tab->string, str8_lit("text"), 0))
   {
-    String8 file_path = rad_file_path_from_tab(tab);
-    UI_WidthFill UI_HeightFill UI_NamedColumn(str8_lit("text_view"))
-      UI_Padding(ui_em(1.f, 1.f))
-      UI_PrefHeight(ui_em(2.f, 1.f))
-      UI_TagF("weak")
-    {
-      UI_Row UI_Padding(ui_em(1.f, 1.f)) UI_PrefWidth(ui_text_dim(10, 1))
-      {
-        ui_label(file_path);
-      }
-    }
+    rad_text_view_ui(tab, rect);
   }
 }
 
@@ -2499,6 +2493,12 @@ rad_init(CmdLine *cmdln)
     cfg_node_new(rad_state->cfg, cfg_node_root(), str8_lit("user"));
   }
 
+  //- rad: set up view state cache
+  {
+    rad_state->view_state_slots_count = 256;
+    rad_state->view_state_slots = push_array(rad_state->arena, RAD_ViewStateSlot, rad_state->view_state_slots_count);
+  }
+
   //- rad: build default window layout
   //
   // NOTE(rad): one root panel. with no file arguments, it holds a "getting
@@ -2629,6 +2629,114 @@ rad_init(CmdLine *cmdln)
 
   ProfEnd();
   scratch_end(scratch);
+}
+
+////////////////////////////////
+//~ rad: Text Navigation Bindings
+//
+// NOTE(rad): raddbg turns these keys into commands (move_left, copy, ...)
+// whose handlers push one UI_Event each (raddbg_core.c, RD_CmdKind_MoveLeft
+// and following). This table maps the same default bindings directly to the
+// same UI_Event parameters.
+
+typedef struct RAD_TextNavBinding RAD_TextNavBinding;
+struct RAD_TextNavBinding
+{
+  WM_Key key;
+  WM_Modifiers modifiers;
+  UI_EventKind kind;
+  UI_EventFlags flags;
+  UI_EventDeltaUnit delta_unit;
+  Vec2S32 delta;
+};
+
+#define RAD_NavFlags_Horz   (UI_EventFlag_PickSelectSide|UI_EventFlag_ZeroDeltaOnSelect|UI_EventFlag_ExplicitDirectional)
+#define RAD_NavFlags_Vert   (UI_EventFlag_ExplicitDirectional|UI_EventFlag_Secondary)
+#define RAD_NavFlags_SelH   (UI_EventFlag_KeepMark|UI_EventFlag_ExplicitDirectional)
+#define RAD_NavFlags_SelV   (UI_EventFlag_KeepMark|UI_EventFlag_ExplicitDirectional|UI_EventFlag_Secondary)
+read_only global RAD_TextNavBinding rad_text_nav_binding_table[] =
+{
+  // rad: character / line
+  {WM_Key_Left,     0,                                  UI_EventKind_Navigate, RAD_NavFlags_Horz,                         UI_EventDeltaUnit_Char,  {-1, +0}},
+  {WM_Key_Right,    0,                                  UI_EventKind_Navigate, RAD_NavFlags_Horz,                         UI_EventDeltaUnit_Char,  {+1, +0}},
+  {WM_Key_Up,       0,                                  UI_EventKind_Navigate, RAD_NavFlags_Vert,                         UI_EventDeltaUnit_Char,  {+0, -1}},
+  {WM_Key_Down,     0,                                  UI_EventKind_Navigate, RAD_NavFlags_Vert,                         UI_EventDeltaUnit_Char,  {+0, +1}},
+  {WM_Key_Left,     WM_Modifier_Shift,                  UI_EventKind_Navigate, RAD_NavFlags_SelH,                         UI_EventDeltaUnit_Char,  {-1, +0}},
+  {WM_Key_Right,    WM_Modifier_Shift,                  UI_EventKind_Navigate, RAD_NavFlags_SelH,                         UI_EventDeltaUnit_Char,  {+1, +0}},
+  {WM_Key_Up,       WM_Modifier_Shift,                  UI_EventKind_Navigate, RAD_NavFlags_SelV,                         UI_EventDeltaUnit_Char,  {+0, -1}},
+  {WM_Key_Down,     WM_Modifier_Shift,                  UI_EventKind_Navigate, RAD_NavFlags_SelV,                         UI_EventDeltaUnit_Char,  {+0, +1}},
+
+  // rad: chunk
+  {WM_Key_Left,     WM_Modifier_Ctrl,                   UI_EventKind_Navigate, UI_EventFlag_ExplicitDirectional,          UI_EventDeltaUnit_Word,  {-1, +0}},
+  {WM_Key_Right,    WM_Modifier_Ctrl,                   UI_EventKind_Navigate, UI_EventFlag_ExplicitDirectional,          UI_EventDeltaUnit_Word,  {+1, +0}},
+  {WM_Key_Up,       WM_Modifier_Ctrl,                   UI_EventKind_Navigate, RAD_NavFlags_Vert,                         UI_EventDeltaUnit_Word,  {+0, -1}},
+  {WM_Key_Down,     WM_Modifier_Ctrl,                   UI_EventKind_Navigate, RAD_NavFlags_Vert,                         UI_EventDeltaUnit_Word,  {+0, +1}},
+  {WM_Key_Left,     WM_Modifier_Ctrl|WM_Modifier_Shift, UI_EventKind_Navigate, RAD_NavFlags_SelH,                         UI_EventDeltaUnit_Word,  {-1, +0}},
+  {WM_Key_Right,    WM_Modifier_Ctrl|WM_Modifier_Shift, UI_EventKind_Navigate, RAD_NavFlags_SelH,                         UI_EventDeltaUnit_Word,  {+1, +0}},
+  {WM_Key_Up,       WM_Modifier_Ctrl|WM_Modifier_Shift, UI_EventKind_Navigate, RAD_NavFlags_SelH,                         UI_EventDeltaUnit_Word,  {+0, -1}},
+  {WM_Key_Down,     WM_Modifier_Ctrl|WM_Modifier_Shift, UI_EventKind_Navigate, RAD_NavFlags_SelH,                         UI_EventDeltaUnit_Word,  {+0, +1}},
+
+  // rad: page / whole
+  {WM_Key_PageUp,   0,                                  UI_EventKind_Navigate, UI_EventFlag_Secondary,                    UI_EventDeltaUnit_Page,  {+0, -1}},
+  {WM_Key_PageDown, 0,                                  UI_EventKind_Navigate, UI_EventFlag_Secondary,                    UI_EventDeltaUnit_Page,  {+0, +1}},
+  {WM_Key_PageUp,   WM_Modifier_Shift,                  UI_EventKind_Navigate, UI_EventFlag_KeepMark,                     UI_EventDeltaUnit_Page,  {+0, -1}},
+  {WM_Key_PageDown, WM_Modifier_Shift,                  UI_EventKind_Navigate, UI_EventFlag_KeepMark,                     UI_EventDeltaUnit_Page,  {+0, +1}},
+  {WM_Key_Home,     WM_Modifier_Ctrl,                   UI_EventKind_Navigate, UI_EventFlag_Secondary,                    UI_EventDeltaUnit_Whole, {+0, -1}},
+  {WM_Key_End,      WM_Modifier_Ctrl,                   UI_EventKind_Navigate, UI_EventFlag_Secondary,                    UI_EventDeltaUnit_Whole, {+0, +1}},
+  {WM_Key_Home,     WM_Modifier_Ctrl|WM_Modifier_Shift, UI_EventKind_Navigate, UI_EventFlag_KeepMark,                     UI_EventDeltaUnit_Whole, {+0, -1}},
+  {WM_Key_End,      WM_Modifier_Ctrl|WM_Modifier_Shift, UI_EventKind_Navigate, UI_EventFlag_KeepMark,                     UI_EventDeltaUnit_Whole, {+0, +1}},
+
+  // rad: home / end
+  {WM_Key_Home,     0,                                  UI_EventKind_Navigate, 0,                                         UI_EventDeltaUnit_Line,  {-1, +0}},
+  {WM_Key_End,      0,                                  UI_EventKind_Navigate, 0,                                         UI_EventDeltaUnit_Line,  {+1, +0}},
+  {WM_Key_Home,     WM_Modifier_Shift,                  UI_EventKind_Navigate, UI_EventFlag_KeepMark,                     UI_EventDeltaUnit_Line,  {-1, +0}},
+  {WM_Key_End,      WM_Modifier_Shift,                  UI_EventKind_Navigate, UI_EventFlag_KeepMark,                     UI_EventDeltaUnit_Line,  {+1, +0}},
+
+  // rad: copy
+  {WM_Key_C,        WM_Modifier_Ctrl,                   UI_EventKind_Edit,     UI_EventFlag_Copy|UI_EventFlag_KeepMark,   UI_EventDeltaUnit_Null,  {+0, +0}},
+  {WM_Key_Insert,   WM_Modifier_Ctrl,                   UI_EventKind_Edit,     UI_EventFlag_Copy|UI_EventFlag_KeepMark,   UI_EventDeltaUnit_Null,  {+0, +0}},
+};
+
+internal B32
+rad_push_text_nav_ui_events(RAD_Window *ws, Arena *arena, WM_Event *event)
+{
+  B32 result = 0;
+
+  // rad: select all -> two events (same as raddbg's RD_CmdKind_SelectAll)
+  if(event->key == WM_Key_A && event->modifiers == WM_Modifier_Ctrl)
+  {
+    UI_Event evt1 = zero_struct;
+    evt1.kind       = UI_EventKind_Navigate;
+    evt1.delta_unit = UI_EventDeltaUnit_Whole;
+    evt1.delta_2s32 = v2s32(-1, +0);
+    ui_event_list_push(arena, &ws->ui_events, &evt1);
+    UI_Event evt2 = zero_struct;
+    evt2.kind       = UI_EventKind_Navigate;
+    evt2.flags      = UI_EventFlag_KeepMark;
+    evt2.delta_unit = UI_EventDeltaUnit_Whole;
+    evt2.delta_2s32 = v2s32(+1, +0);
+    ui_event_list_push(arena, &ws->ui_events, &evt2);
+    result = 1;
+  }
+
+  // rad: table
+  if(!result) for EachElement(idx, rad_text_nav_binding_table)
+  {
+    RAD_TextNavBinding *b = &rad_text_nav_binding_table[idx];
+    if(b->key == event->key && b->modifiers == event->modifiers)
+    {
+      UI_Event evt = zero_struct;
+      evt.kind       = b->kind;
+      evt.flags      = b->flags;
+      evt.delta_unit = b->delta_unit;
+      evt.delta_2s32 = b->delta;
+      evt.timestamp_us = event->timestamp_us;
+      ui_event_list_push(arena, &ws->ui_events, &evt);
+      result = 1;
+      break;
+    }
+  }
+  return result;
 }
 
 internal void
@@ -2806,6 +2914,12 @@ rad_frame(void)
         rad_request_frame();
       }
 
+      //- rad: try text navigation bindings -> ui navigation events
+      if(!take && ws != 0 && event->kind == WM_EventKind_Press)
+      {
+        take = rad_push_text_nav_ui_events(ws, scratch.arena, event);
+      }
+
       //- rad: do fall-through -> ui event (same mapping as raddbg's RD_CmdKind_WMEvent)
       if(!take && ws != 0)
       {
@@ -2895,6 +3009,11 @@ rad_frame(void)
     }
   }
 
+  //////////////////////////////
+  //- rad: garbage collect untouched view states
+  //
+  rad_view_state_gc();
+  
   //////////////////////////////
   //- rad: clear frame request state
   //

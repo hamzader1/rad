@@ -52,7 +52,13 @@ struct RAD_Settings
   F32 rounded_corner_amount;
   U64 tab_width;
   B32 focus_menu_bar_with_alt;
+  B32 cursor_scope_lines;
+  B32 cursor_scope_end_annotations;
+  B32 cursor_trail;
   RAD_ThemePreset theme_preset;
+
+  //- rad: text view settings (defaults: raddbg.mdesk @schema text)
+  B32 show_line_numbers;
 
   //- rad: window settings (defaults: raddbg.mdesk @schema window)
   B32 smooth_ui_text;
@@ -186,6 +192,11 @@ struct RAD_State
   //- rad: fonts & icons
   FNT_Tag font_slot_table[RAD_FontSlot_COUNT];
   R_Handle icon_texture;
+
+  //- rad: per-tab view states
+  U64 view_state_slots_count;
+  struct RAD_ViewStateSlot *view_state_slots;
+  struct RAD_ViewState *free_view_state;
 
   //- rad: windows
   RAD_Window *first_window;
