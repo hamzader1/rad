@@ -76,6 +76,7 @@
 //   file <path>                 contents of a file on disk
 //   explorer_root explorer_rows explorer_selected
 //   explorer_row <n>            name of explorer row n (1-based)
+//   doc_count                   open documents (one per file, shared by tabs)
 //   error                       bottom bar error message ("" when none)
 //   elapsed_ms                  time since the script started
 

@@ -94,10 +94,6 @@ rad_view_state_gc(void)
       if(cfg == &cfg_nil_node || vs->last_frame_index_touched+2 < rad_state->frame_index)
       {
         if(prev == 0) { slot->first = next; } else { prev->hash_next = next; }
-        if(vs->cv.buffer != 0)
-        {
-          tb_buffer_release(vs->cv.buffer);
-        }
         if(vs->ex.initialized)
         {
           arena_release(vs->ex.expansions_arena);
@@ -115,49 +111,189 @@ rad_view_state_gc(void)
 }
 
 ////////////////////////////////
+//~ rad: Documents
+
+internal RAD_Document *
+rad_document_lookup(String8 path)
+{
+  RAD_Document *result = 0;
+  if(path.size != 0)
+  {
+    for(RAD_Document *doc = rad_state->first_document; doc != 0; doc = doc->next)
+    {
+      if(str8_match(doc->path, path, StringMatchFlag_CaseInsensitive|StringMatchFlag_SlashInsensitive))
+      {
+        result = doc;
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+internal RAD_Document *
+rad_document_from_path(String8 path)
+{
+  RAD_Document *doc = rad_document_lookup(path);
+  if(doc == 0 && path.size != 0)
+  {
+    doc = rad_state->free_document;
+    if(doc != 0)
+    {
+      SLLStackPop(rad_state->free_document);
+    }
+    else
+    {
+      doc = push_array_no_zero(rad_state->arena, RAD_Document, 1);
+    }
+    MemoryZeroStruct(doc);
+    doc->arena = arena_alloc();
+    doc->path = push_str8_copy(doc->arena, path);
+    doc->lang = txt_lang_kind_from_extension(str8_skip_last_dot(path));
+    doc->buffer = tb_buffer_alloc(doc->lang);
+    DLLPushBack(rad_state->first_document, rad_state->last_document, doc);
+  }
+  if(doc != 0)
+  {
+    doc->last_frame_index_touched = rad_state->frame_index;
+  }
+  return doc;
+}
+
+internal RAD_Document *
+rad_document_from_tab(CFG_Node *tab)
+{
+  RAD_Document *doc = 0;
+  if(str8_match(tab->string, str8_lit("text"), 0))
+  {
+    doc = rad_document_lookup(rad_file_path_from_tab(tab));
+  }
+  return doc;
+}
+
+internal U64
+rad_document_tab_count(RAD_Document *doc)
+{
+  // NOTE(rad): text tabs showing this document, in all windows
+  Temp scratch = scratch_begin(0, 0);
+  U64 count = 0;
+  CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
+  for(CFG_NodePtrNode *wn = windows.first; wn != 0; wn = wn->next)
+  {
+    CFG_PanelTree tree = cfg_panel_tree_from_cfg(scratch.arena, wn->v);
+    for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+    {
+      for(CFG_NodePtrNode *tn = p->tabs.first; tn != 0; tn = tn->next)
+      {
+        count += (rad_document_from_tab(tn->v) == doc);
+      }
+    }
+  }
+  scratch_end(scratch);
+  return count;
+}
+
+internal B32
+rad_document_save(RAD_Document *doc)
+{
+  B32 result = 0;
+  if(doc != 0 && tb_buffer_is_loaded(doc->buffer))
+  {
+    Access *access = access_open();
+    result = tb_buffer_save(doc->buffer, access, doc->path);
+    access_close(access);
+    if(!result)
+    {
+      log_user_errorf("Could not save \"%S\".", doc->path);
+    }
+  }
+  return result;
+}
+
+internal void
+rad_documents_tick(void)
+{
+  // NOTE(rad): feed each file stream's current content to its buffer (load,
+  // reload, "changed on disk"), let the buffer compact its patches
+  Access *access = access_open();
+  for(RAD_Document *doc = rad_state->first_document; doc != 0; doc = doc->next)
+  {
+    FileProperties props = properties_from_file_path(doc->path);
+    doc->is_missing = (props.modified == 0);
+    C_Key text_key = fs_key_from_path_range(doc->path, r1u64(0, props.size), 0);
+    U128 source_hash = {0};
+    txt_text_info_from_key_lang(access, text_key, doc->lang, &source_hash);
+    tb_buffer_observe_source(doc->buffer, access, source_hash);
+    tb_buffer_tick(doc->buffer, access, now_time_us());
+    if(tb_buffer_is_busy(doc->buffer) || (!doc->is_missing && !tb_buffer_is_loaded(doc->buffer)))
+    {
+      rad_request_frame();
+    }
+  }
+  access_close(access);
+}
+
+internal void
+rad_documents_gc(void)
+{
+  for(RAD_Document *doc = rad_state->first_document, *next = 0; doc != 0; doc = next)
+  {
+    next = doc->next;
+    if(doc->last_frame_index_touched+2 < rad_state->frame_index)
+    {
+      DLLRemove(rad_state->first_document, rad_state->last_document, doc);
+      tb_buffer_release(doc->buffer);
+      arena_release(doc->arena);
+      SLLStackPush(rad_state->free_document, doc);
+    }
+  }
+}
+
+////////////////////////////////
 //~ rad: Code Views
 
 internal void
-rad_code_view_init(RAD_CodeViewState *cv, TXT_LangKind lang_kind)
+rad_code_view_init(RAD_CodeViewState *cv)
 {
   if(cv->initialized == 0)
   {
     cv->initialized = 1;
     cv->preferred_column = 1;
-    cv->buffer = tb_buffer_alloc(lang_kind);
     cv->initial_center = 1;
     cv->center_cursor = 1;
   }
 }
 
 internal B32
-rad_code_view_undo(RAD_CodeViewState *cv)
+rad_code_view_undo(RAD_CodeViewState *cv, TB_Buffer *buffer)
 {
   U64 cursor = cv->cursor;
-  B32 result = tb_buffer_undo(cv->buffer, &cursor);
+  B32 result = tb_buffer_undo(buffer, &cursor);
   if(result)
   {
     cv->cursor = cv->mark = cursor;
+    cv->buffer_version = buffer->version;
     cv->contain_cursor = 1;
   }
   return result;
 }
 
 internal B32
-rad_code_view_redo(RAD_CodeViewState *cv)
+rad_code_view_redo(RAD_CodeViewState *cv, TB_Buffer *buffer)
 {
   U64 cursor = cv->cursor;
-  B32 result = tb_buffer_redo(cv->buffer, &cursor);
+  B32 result = tb_buffer_redo(buffer, &cursor);
   if(result)
   {
     cv->cursor = cv->mark = cursor;
+    cv->buffer_version = buffer->version;
     cv->contain_cursor = 1;
   }
   return result;
 }
 
 internal void
-rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data)
+rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data)
 {
   // NOTE(rad): port of raddbg's `rd_code_view_build` (raddbg/raddbg_views.c),
   // minus breakpoints, thread IPs, watch pins, debug-info lines, disassembly,
@@ -191,7 +327,7 @@ rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, Rng2F32 rect, TXT_LangK
   //////////////////////////////
   //- rad: do keyboard interaction, compute patched text state
   //
-  TXT_Patched text_patched = txt_patched_from_info_data_patches(scratch.arena, text_info, text_data, &cv->buffer->patches);
+  TXT_Patched text_patched = txt_patched_from_info_data_patches(scratch.arena, text_info, text_data, &buffer->patches);
   B32 snap[Axis2_COUNT] = {0};
   UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && text_is_ready)
   {
@@ -251,7 +387,7 @@ rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, Rng2F32 rect, TXT_LangK
             {
               continue;
             }
-            if(c == '\n' && cv->buffer->crlf)
+            if(c == '\n' && buffer->crlf)
             {
               normalized[normalized_size++] = '\r';
             }
@@ -423,8 +559,8 @@ rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, Rng2F32 rect, TXT_LangK
       // moving the cursor without editing ends the current undo group
       if(cv->editable && (replaced_range.max != replaced_range.min || single_line_op.replace.size != 0))
       {
-        tb_buffer_edit(cv->buffer, &text_patched, replaced_range, single_line_op.replace);
-        text_patched = txt_patched_from_info_data_patches(scratch.arena, text_info, text_data, &cv->buffer->patches);
+        tb_buffer_edit(buffer, &text_patched, replaced_range, single_line_op.replace);
+        text_patched = txt_patched_from_info_data_patches(scratch.arena, text_info, text_data, &buffer->patches);
         *cursor = *mark = replaced_range.min + single_line_op.replace.size;
         U64 line_num = txt_line_num_from_off(&text_patched.line_map, *cursor);
         Rng1U64 line_range = txt_range_from_line_num(&text_patched.line_map, line_num);
@@ -433,7 +569,7 @@ rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, Rng2F32 rect, TXT_LangK
       }
       else if(*cursor != start_cursor)
       {
-        tb_buffer_close_undo_group(cv->buffer);
+        tb_buffer_close_undo_group(buffer);
       }
 
       //- rad: consume
@@ -521,7 +657,7 @@ rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, Rng2F32 rect, TXT_LangK
     code_slice_params.line_ranges               = push_array(scratch.arena, Rng1U64, visible_line_count);
     code_slice_params.line_tokens               = push_array(scratch.arena, TXT_TokenArray, visible_line_count);
     code_slice_params.text_info                 = text_info;
-    code_slice_params.patches                   = &cv->buffer->patches;
+    code_slice_params.patches                   = &buffer->patches;
     code_slice_params.text_data                 = text_data;
     code_slice_params.font                      = code_font;
     code_slice_params.font_size                 = code_font_size;
@@ -828,29 +964,41 @@ rad_text_view_ui(CFG_Node *tab, Rng2F32 rect)
   //- rad: unpack parameterization info
   //
   String8 file_path = rad_file_path_from_tab(tab);
-  FileProperties props = properties_from_file_path(file_path);
-  B32 file_is_missing = (file_path.size != 0 && props.modified == 0);
-  C_Key text_key = fs_key_from_path_range(file_path, r1u64(0, props.size), 0);
-  TXT_LangKind lang_kind = txt_lang_kind_from_extension(str8_skip_last_dot(file_path));
-  rad_code_view_init(cv, lang_kind);
+  RAD_Document *doc = rad_document_from_path(file_path);
+  if(doc == 0)
+  {
+    access_close(access);
+    scratch_end(scratch);
+    return;
+  }
+  B32 file_is_missing = doc->is_missing;
+  TXT_LangKind lang_kind = doc->lang;
+  rad_code_view_init(cv);
   cv->editable = 1;
-  TB_Buffer *buffer = cv->buffer;
+  TB_Buffer *buffer = doc->buffer;
 
   //////////////////////////////
-  //- rad: feed the file stream's current content to the buffer (load, reload,
-  // "changed on disk"), let it compact its patches, then read its text
+  //- rad: read the document's text (loading, reloading and compaction
+  // happen in rad_documents_tick)
   //
-  U128 source_hash = {0};
-  txt_text_info_from_key_lang(access, text_key, lang_kind, &source_hash);
-  tb_buffer_observe_source(buffer, access, source_hash);
-  tb_buffer_tick(buffer, access, now_time_us());
   TB_Text text = tb_text_from_buffer(scratch.arena, access, buffer);
   TXT_TextInfo info = text.base_info;
   String8 data = text.base_data;
   B32 key_has_data = (info.lines_count != 0);
-  if(tb_buffer_is_busy(buffer))
+
+  //////////////////////////////
+  //- rad: the text changed since this view last saw it (another tab edited
+  // it, undo, a reload) -> carry cursor and mark over to the current text
+  //
+  if(cv->buffer_version != buffer->version)
   {
-    rad_request_frame();
+    if(!tb_buffer_map_offset(buffer, cv->buffer_version, &cv->cursor) ||
+       !tb_buffer_map_offset(buffer, cv->buffer_version, &cv->mark))
+    {
+      cv->cursor = Min(cv->cursor, text.patched.size);
+      cv->mark = Min(cv->mark, text.patched.size);
+    }
+    cv->buffer_version = buffer->version;
   }
 
   //////////////////////////////
@@ -884,7 +1032,8 @@ rad_text_view_ui(CFG_Node *tab, Rng2F32 rect)
   //
   if(!file_is_missing)
   {
-    rad_code_view_build(scratch.arena, cv, code_area_rect, lang_kind, &info, data);
+    rad_code_view_build(scratch.arena, cv, buffer, code_area_rect, lang_kind, &info, data);
+    cv->buffer_version = buffer->version;
   }
 
   //////////////////////////////
@@ -935,32 +1084,14 @@ rad_text_view_ui(CFG_Node *tab, Rng2F32 rect)
 internal B32
 rad_text_view_save(CFG_Node *tab)
 {
-  B32 result = 0;
-  RAD_ViewState *vs = rad_view_state_from_cfg(tab);
-  RAD_CodeViewState *cv = &vs->cv;
-  String8 file_path = rad_file_path_from_tab(tab);
-  if(cv->initialized && file_path.size != 0 && tb_buffer_is_loaded(cv->buffer))
-  {
-    Access *access = access_open();
-    result = tb_buffer_save(cv->buffer, access, file_path);
-    access_close(access);
-    if(!result)
-    {
-      log_user_errorf("Could not save \"%S\".", file_path);
-    }
-  }
-  return result;
+  return rad_document_save(rad_document_from_tab(tab));
 }
 
 internal B32
 rad_tab_is_dirty(CFG_Node *tab)
 {
-  B32 result = 0;
-  if(str8_match(tab->string, str8_lit("text"), 0))
-  {
-    RAD_ViewState *vs = rad_view_state_from_cfg(tab);
-    result = (vs != 0 && vs->cv.initialized && tb_buffer_is_dirty(vs->cv.buffer));
-  }
+  RAD_Document *doc = rad_document_from_tab(tab);
+  B32 result = (doc != 0 && tb_buffer_is_dirty(doc->buffer));
   return result;
 }
 

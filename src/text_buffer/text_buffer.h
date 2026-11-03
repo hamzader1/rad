@@ -23,6 +23,14 @@
 // `version` increments on every change of the text: edit, undo, redo,
 // reload from disk.
 //
+// Change log: the last TB_CHANGE_LOG_SIZE changes, one per version, so an
+// offset taken at an older version (another view's cursor, a language
+// server's answer) can be mapped to the current text with
+// `tb_buffer_map_offset`. Offsets stick to the character after them: an
+// insertion at an offset pushes it right; an offset whose next character is
+// replaced moves to the end of the replacement. A reload (or a version older
+// than the log) cannot be mapped.
+//
 // Undo history: one record per edit (consecutive typing / deleting merges
 // into one record until a pause), in the coordinates of the text right
 // before that edit, so it stays valid across compactions. Dirty means the
@@ -44,6 +52,19 @@
 #define TB_COMPACT_MAX_PATCHES   32
 #define TB_UNDO_GROUP_PAUSE_US   1000000
 #define TB_UNDO_GROUP_MAX_SIZE   256
+#define TB_CHANGE_LOG_SIZE       1024
+
+////////////////////////////////
+//~ rad: Change Log Types
+
+typedef struct TB_Change TB_Change;
+struct TB_Change
+{
+  U64 version;    // the version this change produced
+  Rng1U64 range;  // replaced range, in the text of version-1
+  U64 new_size;   // size of the text that replaced it
+  B32 reset;      // whole text replaced (load / reload): not mappable
+};
 
 ////////////////////////////////
 //~ rad: Edit History Types
@@ -84,6 +105,7 @@ struct TB_Buffer
   U64 version;
   U64 tick_version;
   U64 last_change_us;
+  TB_Change *change_log; // [TB_CHANGE_LOG_SIZE], slot = version % size
 
   // rad: undo history
   Arena *history_arena;
@@ -127,6 +149,7 @@ internal B32 tb_buffer_is_dirty(TB_Buffer *buffer);
 internal B32 tb_buffer_is_busy(TB_Buffer *buffer);
 internal TB_Text tb_text_from_buffer(Arena *arena, Access *access, TB_Buffer *buffer);
 internal String8 tb_string_from_buffer(Arena *arena, Access *access, TB_Buffer *buffer);
+internal B32 tb_buffer_map_offset(TB_Buffer *buffer, U64 version, U64 *off);
 
 ////////////////////////////////
 //~ rad: Editing

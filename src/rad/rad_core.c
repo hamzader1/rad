@@ -1473,6 +1473,11 @@ rad_window_frame(RAD_Window *ws)
               {
                 rad_view_state_from_cfg(tab);
               }
+              if(str8_match(tab->string, str8_lit("text"), 0))
+              {
+                // rad: keep the tab's document open (ticked even while hidden)
+                rad_document_from_path(rad_file_path_from_tab(tab));
+              }
               UI_TagF(tab != panel->selected_tab ? "inactive" : "")
               {
                 DR_FStrList tab_title_fstrs = rad_title_fstrs_from_tab(scratch.arena, tab);
@@ -2317,17 +2322,9 @@ rad_exec_cmd(RAD_Cmd *cmd)
     {
       // rad: unsaved changes anywhere -> require a second exit within a few seconds
       U64 dirty_count = 0;
-      CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
-      for(CFG_NodePtrNode *wn = windows.first; wn != 0; wn = wn->next)
+      for(RAD_Document *doc = rad_state->first_document; doc != 0; doc = doc->next)
       {
-        CFG_PanelTree tree = cfg_panel_tree_from_cfg(scratch.arena, wn->v);
-        for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
-        {
-          for(CFG_NodePtrNode *tn = p->tabs.first; tn != 0; tn = tn->next)
-          {
-            dirty_count += !!rad_tab_is_dirty(tn->v);
-          }
-        }
+        dirty_count += !!tb_buffer_is_dirty(doc->buffer);
       }
       CFG_ID confirm_id = max_U64;
       if(dirty_count == 0 || (rad_state->discard_confirm_cfg_id == confirm_id && now_time_us() < rad_state->discard_confirm_deadline_us))
@@ -2348,15 +2345,16 @@ rad_exec_cmd(RAD_Cmd *cmd)
     if(tab_cfg != &cfg_nil_node && str8_match(tab_cfg->string, str8_lit("text"), 0))
     {
       RAD_ViewState *vs = rad_view_state_from_cfg(tab_cfg);
-      if(vs->cv.initialized)
+      RAD_Document *doc = rad_document_from_tab(tab_cfg);
+      if(vs->cv.initialized && doc != 0)
       {
         if(cmd->kind == RAD_CmdKind_Undo)
         {
-          rad_code_view_undo(&vs->cv);
+          rad_code_view_undo(&vs->cv, doc->buffer);
         }
         else
         {
-          rad_code_view_redo(&vs->cv);
+          rad_code_view_redo(&vs->cv, doc->buffer);
         }
       }
     }break;
@@ -2675,9 +2673,11 @@ rad_exec_cmd(RAD_Cmd *cmd)
       // rad: the explorer cannot be closed
     }
     else if(tab_cfg != &cfg_nil_node && rad_tab_is_dirty(tab_cfg) &&
-       !(rad_state->discard_confirm_cfg_id == tab_cfg->id && now_time_us() < rad_state->discard_confirm_deadline_us))
+            rad_document_tab_count(rad_document_from_tab(tab_cfg)) == 1 &&
+            !(rad_state->discard_confirm_cfg_id == tab_cfg->id && now_time_us() < rad_state->discard_confirm_deadline_us))
     {
-      // rad: unsaved changes -> require a second close within a few seconds
+      // rad: unsaved changes in the file's last tab -> require a second close
+      // within a few seconds
       rad_state->discard_confirm_cfg_id = tab_cfg->id;
       rad_state->discard_confirm_deadline_us = now_time_us() + 4000000;
       rad_set_error(push_str8f(scratch.arena, "\"%S\" has unsaved changes. Close it again to discard them, or save first (Ctrl+S).", str8_skip_last_slash(rad_file_path_from_tab(tab_cfg))));
@@ -3365,6 +3365,11 @@ rad_frame(void)
   rad_view_state_animate();
 
   //////////////////////////////
+  //- rad: tick documents (load/reload from disk, compaction), visible or not
+  //
+  rad_documents_tick();
+
+  //////////////////////////////
   //- rad: update/render all windows
   //
   U64 build_begin_us = now_time_us();
@@ -3380,9 +3385,10 @@ rad_frame(void)
   U64 build_us = now_time_us() - build_begin_us;
 
   //////////////////////////////
-  //- rad: garbage collect untouched view states
+  //- rad: garbage collect untouched view states and documents
   //
   rad_view_state_gc();
+  rad_documents_gc();
   
   //////////////////////////////
   //- rad: clear frame request state

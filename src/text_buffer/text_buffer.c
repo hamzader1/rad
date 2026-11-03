@@ -51,6 +51,10 @@ tb_buffer_load__(TB_Buffer *buffer, Access *access, U128 hash)
   buffer->disk_hash = hash;
   buffer->changed_on_disk = 0;
   buffer->version += 1;
+  TB_Change *change = &buffer->change_log[buffer->version%TB_CHANGE_LOG_SIZE];
+  MemoryZeroStruct(change);
+  change->version = buffer->version;
+  change->reset = 1;
 }
 
 internal void
@@ -58,6 +62,11 @@ tb_buffer_push_patch__(TB_Buffer *buffer, Rng1U64 range, String8 replace)
 {
   txt_patch_list_push_new(buffer->patch_arenas[buffer->patch_arena_idx], &buffer->patches, range, replace);
   buffer->version += 1;
+  TB_Change *change = &buffer->change_log[buffer->version%TB_CHANGE_LOG_SIZE];
+  MemoryZeroStruct(change);
+  change->version = buffer->version;
+  change->range = range;
+  change->new_size = replace.size;
 }
 
 ////////////////////////////////
@@ -72,6 +81,7 @@ tb_buffer_alloc(TXT_LangKind lang)
   buffer->root = c_root_alloc();
   buffer->snapshot_key = c_key_make(buffer->root, c_id_make(0, 1));
   buffer->lang = lang;
+  buffer->change_log = push_array(arena, TB_Change, TB_CHANGE_LOG_SIZE);
   buffer->patch_arenas[0] = arena_alloc();
   buffer->patch_arenas[1] = arena_alloc();
   buffer->history_arena = arena_alloc();
@@ -227,6 +237,44 @@ tb_string_from_buffer(Arena *arena, Access *access, TB_Buffer *buffer)
   TB_Text text = tb_text_from_buffer(scratch.arena, access, buffer);
   String8 result = memory_map_data_from_range(arena, &text.patched.memory_map, r1u64(0, text.patched.size));
   scratch_end(scratch);
+  return result;
+}
+
+internal B32
+tb_buffer_map_offset(TB_Buffer *buffer, U64 version, U64 *off)
+{
+  // NOTE(rad): returns 0 if the changes since `version` are not all in the
+  // log (too old, from the future, or a reload); `*off` is then unchanged
+  // and the caller should clamp it to the text.
+  B32 result = (version <= buffer->version && buffer->version - version <= TB_CHANGE_LOG_SIZE);
+  for(U64 v = version+1; result && v <= buffer->version; v += 1)
+  {
+    TB_Change *change = &buffer->change_log[v%TB_CHANGE_LOG_SIZE];
+    result = (change->version == v && !change->reset);
+  }
+  if(result)
+  {
+    U64 o = *off;
+    for(U64 v = version+1; v <= buffer->version; v += 1)
+    {
+      TB_Change *change = &buffer->change_log[v%TB_CHANGE_LOG_SIZE];
+      if(o < change->range.min)
+      {
+        // rad: before the change: stays
+      }
+      else if(o >= change->range.max)
+      {
+        // rad: after the change (or at an insertion point): shifts
+        o = o - dim_1u64(change->range) + change->new_size;
+      }
+      else
+      {
+        // rad: its next character was replaced: end of the replacement
+        o = change->range.min + change->new_size;
+      }
+    }
+    *off = o;
+  }
   return result;
 }
 

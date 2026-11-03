@@ -212,6 +212,11 @@ struct RAD_State
   struct RAD_ViewStateSlot *view_state_slots;
   struct RAD_ViewState *free_view_state;
 
+  // rad: documents (one text buffer per open file, shared by its tabs)
+  struct RAD_Document *first_document;
+  struct RAD_Document *last_document;
+  struct RAD_Document *free_document;
+
   //- rad: windows
   RAD_Window *first_window;
   RAD_Window *last_window;

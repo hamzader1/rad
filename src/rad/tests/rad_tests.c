@@ -442,10 +442,20 @@ test_buffer_random(char *test_name, U64 seed, U64 ops_count, B32 crlf)
 {
   // rad: random edits / undos / redos / ticks / saves against a model: the
   // list of texts at each history position (each edit its own undo record)
+  // (also: a marker '@' that edits never touch; its offset is mapped through
+  // the change log after every op, like another view's cursor, and must
+  // always land on the '@')
   Temp scratch = scratch_begin(0, 0);
   U64 rng = seed;
   String8 base = test_random_text(scratch.arena, &rng, 100, crlf);
+  {
+    U64 at = test_rand(&rng)%(base.size+1);
+    if(at > 0 && at < base.size && base.str[at] == '\n' && base.str[at-1] == '\r') { at -= 1; }
+    base = push_str8f(scratch.arena, "%S@%S", str8_prefix(base, at), str8_skip(base, at));
+  }
   TestBuf t = test_buf_open(base, TXT_LangKind_Rust);
+  U64 marker_off = str8_find_needle(base, 0, str8_lit("@"), 0);
+  U64 marker_version = t.buffer->version;
   String8 save_path = push_str8f(scratch.arena, "%S/rad_tests_save.tmp", get_process_info()->binary_path);
   String8 *states = push_array(scratch.arena, String8, ops_count+1);
   U64 states_count = 1;
@@ -461,6 +471,8 @@ test_buffer_random(char *test_name, U64 seed, U64 ops_count, B32 crlf)
     {
       Rng1U64 range = test_random_range(&rng, states[pos]);
       String8 replace = test_random_snippet(&rng, crlf);
+      U64 at = str8_find_needle(states[pos], 0, str8_lit("@"), 0);
+      if(range.min <= at && at < range.max) { range.max = range.min; }
       if(range.min == range.max && replace.size == 0) { replace = str8_lit("x"); }
       tb_buffer_close_undo_group(t.buffer);
       test_buf_edit(&t, range.min, range.max, replace);
@@ -498,6 +510,9 @@ test_buffer_random(char *test_name, U64 seed, U64 ops_count, B32 crlf)
     }
     test_expect(test_name, "version moves on every text change, and only then", changed ? (t.buffer->version > last_version) : (t.buffer->version == last_version));
     test_expect(test_name, "dirty iff history position != saved position", tb_buffer_is_dirty(t.buffer) == ((S64)pos != saved_pos));
+    test_expect(test_name, "offsets map through the change log", tb_buffer_map_offset(t.buffer, marker_version, &marker_off));
+    test_expect(test_name, "a mapped offset stays on its character", marker_off == str8_find_needle(states[pos], 0, str8_lit("@"), 0));
+    marker_version = t.buffer->version;
     last_version = t.buffer->version;
     if(!test_buf_check(test_name, op_idx, &t, states[pos]))
     {
@@ -613,6 +628,12 @@ test_buffer_disk(void)
   test_buf_observe(&t, test_buf_submit_source(&t, b));
   test_expect(name, "clean buffer reloads", !t.buffer->changed_on_disk && t.buffer->version > version_before);
   test_buf_check(name, 1, &t, b);
+  {
+    U64 off = 4;
+    test_expect(name, "offsets do not map across a reload", !tb_buffer_map_offset(t.buffer, version_before, &off) && off == 4);
+    test_expect(name, "offsets map from the current version", tb_buffer_map_offset(t.buffer, t.buffer->version, &off) && off == 4);
+    test_expect(name, "offsets do not map from the future", !tb_buffer_map_offset(t.buffer, t.buffer->version+1, &off));
+  }
 
   //- rad: external change while dirty -> keep the edits, flag it
   test_buf_edit(&t, 0, 0, str8_lit("zero\n"));

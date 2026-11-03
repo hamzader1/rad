@@ -211,10 +211,11 @@ rad_script_tab_name(CFG_Node *tab)
 }
 
 internal B32
-rad_script_editor_text(Arena *arena, RAD_CodeViewState **cv_out, TB_Text *text_out, String8 *error_out)
+rad_script_editor_text(Arena *arena, RAD_CodeViewState **cv_out, RAD_Document **doc_out, TB_Text *text_out, String8 *error_out)
 {
   B32 result = 0;
   CFG_Node *tab = rad_script_editor_tab();
+  RAD_Document *doc = rad_document_from_tab(tab);
   if(tab == &cfg_nil_node)
   {
     *error_out = str8_lit("no editor view");
@@ -222,16 +223,17 @@ rad_script_editor_text(Arena *arena, RAD_CodeViewState **cv_out, TB_Text *text_o
   else
   {
     RAD_CodeViewState *cv = &rad_view_state_from_cfg(tab)->cv;
-    if(!cv->initialized || !tb_buffer_is_loaded(cv->buffer))
+    if(!cv->initialized || doc == 0 || !tb_buffer_is_loaded(doc->buffer))
     {
       *error_out = str8_lit("editor text not loaded");
     }
     else
     {
       Access *access = access_open();
-      *text_out = tb_text_from_buffer(arena, access, cv->buffer);
+      *text_out = tb_text_from_buffer(arena, access, doc->buffer);
       access_close(access);
       *cv_out = cv;
+      *doc_out = doc;
       result = (text_out->base_info.lines_count != 0);
       if(!result)
       {
@@ -295,11 +297,17 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
           str8_match(name, str8_lit("dirty"), 0))
   {
     RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
     TB_Text text = {0};
-    result = rad_script_editor_text(scratch.arena, &cv, &text, error_out);
+    result = rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out);
     if(result)
     {
+      // rad: the view maps its cursor when it is next built; map a copy now
       U64 off = (str8_match(name, str8_lit("mark_line"), 0) || str8_match(name, str8_lit("mark_col"), 0)) ? cv->mark : cv->cursor;
+      if(!tb_buffer_map_offset(doc->buffer, cv->buffer_version, &off))
+      {
+        off = Min(off, text.patched.size);
+      }
       U64 line_num = txt_line_num_from_off(&text.patched.line_map, off);
       Rng1U64 line_range = txt_range_from_line_num(&text.patched.line_map, line_num);
       if(str8_match(name, str8_lit("cursor_line"), 0) || str8_match(name, str8_lit("mark_line"), 0))
@@ -324,7 +332,7 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       }
       else if(str8_match(name, str8_lit("dirty"), 0))
       {
-        value = push_str8f(arena, "%i", !!tb_buffer_is_dirty(cv->buffer));
+        value = push_str8f(arena, "%i", !!tb_buffer_is_dirty(doc->buffer));
       }
       else
       {
@@ -397,6 +405,17 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     }
   }
 
+  //- rad: open documents (one per file, shared by its tabs)
+  else if(str8_match(name, str8_lit("doc_count"), 0))
+  {
+    U64 count = 0;
+    for(RAD_Document *doc = rad_state->first_document; doc != 0; doc = doc->next)
+    {
+      count += 1;
+    }
+    value = push_str8f(arena, "%I64u", count);
+  }
+
   //- rad: time since the script started
   else if(str8_match(name, str8_lit("elapsed_ms"), 0))
   {
@@ -439,8 +458,9 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
   if(str8_match(kind, str8_lit("code"), 0) || str8_match(kind, str8_lit("code_center"), 0))
   {
     RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
     TB_Text text = {0};
-    if(rad_script_editor_text(scratch.arena, &cv, &text, error_out))
+    if(rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out))
     {
       if(str8_match(kind, str8_lit("code_center"), 0))
       {

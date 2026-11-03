@@ -94,11 +94,23 @@ Milestone 5 details:
   is the vsync wait. "Input latency" is app-side only (the OS and the
   compositor add more, not measured).
 
+Milestone 6 details (each item with its script):
+- [x] One document per file (`RAD_Document`, script `shared_document`).
+  Tabs on the same file share text, undo, dirty, save; each keeps its own
+  cursor, mapped through the buffer's change log (`tb_buffer_map_offset`,
+  also for LSP later) when another tab edits. Documents tick every frame,
+  visible or not. Closing a dirty file's tab asks only if it is the last
+  tab on that file; Exit counts dirty files, not tabs.
+- [ ] Save All
+- [ ] Go to Line (port of raddbg's `GoToLine`)
+- [ ] Find, Find Next/Previous (port of raddbg's `Search`/`FindNext`)
+- [ ] Session memory (folder, tabs, layout, window; raddbg user-file format)
+- [ ] File watching instead of polling
+- [ ] Audit of the port against raddbg's per-frame steps
+
 ## Next steps
 
-1. Milestone 6, editor essentials: one buffer per file, Find (Ctrl+F) and
-   Go to Line ported from raddbg, session memory, Save All, file watching,
-   audit of the port against raddbg's per-frame steps. Each with a script.
+1. Milestone 6, the unchecked items above, in that order.
 2. Speed: the user will come back to what feels slow (2026-11-03: "ignore,
    we will come back later"). Measured so far: 1 frame from input to screen.
 3. Milestone 7 (Rust lexer in `text`, C lexer style, `.rs`).
@@ -111,10 +123,9 @@ Milestone 5 details:
   i.e. while typing; they come back ~100 ms after typing stops (compaction).
 - Compaction re-lexes the whole file. Fine for normal files; on very large
   files typed into very fast, patches pile up while a lex is in flight.
-- One buffer per tab, not per file. Fine while a file can only be open in
-  one tab; LSP will want one buffer per file.
-- Buffers only tick while their tab is visible (background tabs don't
-  notice disk changes until shown).
+- A tab whose cursor fell more than 1,024 changes behind (hidden while
+  another tab edits a lot), or across a reload, gets its cursor clamped
+  instead of mapped.
 - Undo history grows without limit while a file is open.
 - Open File uses the native dialog (`sh_pick_file`), not raddbg's lister.
   Open Folder likewise (`sh_pick_folder`).
@@ -178,10 +189,11 @@ Milestone 5 details:
   panels, tabs), the box renderer (verbatim), the per-frame loop.
 - `rad_widgets.h/.c`: menu bar button, icon buttons, command buttons, the
   code slice (port of `rd_code_slice`).
-- `rad_views.h/.c`: view states, the code view (port of
-  `rd_code_view_build`) with editing; the text view feeds the file stream's
-  content to the tab's `TB_Buffer` and ticks it each frame. The explorer
-  view (tab `explorer`, child `folder`) at the end of the file.
+- `rad_views.h/.c`: view states; documents (`RAD_Document`: one
+  `TB_Buffer` per open file, fed from the file stream and ticked every
+  frame in `rad_documents_tick`); the code view (port of
+  `rd_code_view_build`) with editing; the text view (tab `text`, child
+  `path`). The explorer view (tab `explorer`, child `folder`) at the end.
 - `rad_widgets.h/.c` also hold `rad_cell` (port of raddbg's `rd_cell`,
   read-only), the row widget of the explorer.
 - `rad_script.h/.c`: script mode (`--script:<file>`): parser, input
@@ -196,6 +208,17 @@ Milestone 5 details:
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (one document per file)
+- `text_buffer`: change log (last 1,024 changes, one per version) and
+  `tb_buffer_map_offset`. Offsets stick to the character after them. New
+  `rad_tests` checks: a marker character edits never touch is mapped
+  after every random op and must land on itself (36,367,785 checks pass);
+  no mapping across a reload or from a future version.
+- `rad`: `RAD_Document` table; view states no longer own buffers.
+  Script `shared_document` (30 checks) passes, with the others.
+- Script gotcha: `wait_idle` waits for the bottom-bar message to fade
+  (>4 s), so "close again to discard" checks must not wait in between.
 
 ### 2026-11-03 (explorer: special panel)
 - User decision: the explorer's tab cannot be closed; no other tabs in its

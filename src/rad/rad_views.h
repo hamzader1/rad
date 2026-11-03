@@ -5,11 +5,34 @@
 #define RAD_VIEWS_H
 
 ////////////////////////////////
+//~ rad: Document Types
+//
+// One document per open file, shared by every tab that shows the file. The
+// text (TB_Buffer: base + patches, undo history, version, saving, disk
+// tracking) belongs to the document; cursor, selection and scroll belong to
+// each tab (RAD_CodeViewState). Documents are ticked every frame, visible or
+// not, and released two frames after no tab touched them.
+
+typedef struct RAD_Document RAD_Document;
+struct RAD_Document
+{
+  RAD_Document *next;
+  RAD_Document *prev;
+  Arena *arena;
+  String8 path;
+  TXT_LangKind lang;
+  TB_Buffer *buffer;
+  B32 is_missing;
+  U64 last_frame_index_touched;
+};
+
+////////////////////////////////
 //~ rad: Code View Types
 //
 // Port of raddbg's RD_CodeViewState (raddbg/raddbg_views.h), minus
-// debugger/disassembly state. The text itself (base + patches, undo history,
-// versions, saving, disk tracking) lives in a TB_Buffer (text_buffer layer).
+// debugger/disassembly state. The text is the tab's document's TB_Buffer;
+// `buffer_version` is the buffer version `cursor` and `mark` refer to (when
+// another tab changed the text, they are mapped through the change log).
 
 typedef struct RAD_CodeViewState RAD_CodeViewState;
 struct RAD_CodeViewState
@@ -22,7 +45,7 @@ struct RAD_CodeViewState
   UI_ScrollPt2 scroll_pos;
 
   // rad: text
-  TB_Buffer *buffer;
+  U64 buffer_version;
   B32 editable;
 
   // rad: per-frame command info
@@ -135,12 +158,23 @@ internal void rad_view_state_animate(void);
 internal void rad_view_state_gc(void);
 
 ////////////////////////////////
+//~ rad: Documents
+
+internal RAD_Document *rad_document_lookup(String8 path);
+internal RAD_Document *rad_document_from_path(String8 path);
+internal RAD_Document *rad_document_from_tab(CFG_Node *tab);
+internal U64 rad_document_tab_count(RAD_Document *doc);
+internal B32 rad_document_save(RAD_Document *doc);
+internal void rad_documents_tick(void);
+internal void rad_documents_gc(void);
+
+////////////////////////////////
 //~ rad: Code Views
 
-internal void rad_code_view_init(RAD_CodeViewState *cv, TXT_LangKind lang_kind);
-internal B32 rad_code_view_undo(RAD_CodeViewState *cv);
-internal B32 rad_code_view_redo(RAD_CodeViewState *cv);
-internal void rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data);
+internal void rad_code_view_init(RAD_CodeViewState *cv);
+internal B32 rad_code_view_undo(RAD_CodeViewState *cv, TB_Buffer *buffer);
+internal B32 rad_code_view_redo(RAD_CodeViewState *cv, TB_Buffer *buffer);
+internal void rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data);
 
 ////////////////////////////////
 //~ rad: Text View

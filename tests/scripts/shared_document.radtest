@@ -1,0 +1,74 @@
+# One document per file: two tabs on the same file (in two panels) share
+# the text, the undo history and the dirty state; each tab keeps its own
+# cursor, which follows edits made in the other tab.
+
+open ../fixtures/edit.txt
+wait_idle
+expect doc_count == 1
+
+# the same file in a second panel: still one document
+cmd new_panel_right
+wait_idle
+open ../fixtures/edit.txt
+wait_idle
+expect panel_count == 3
+expect tab == "edit.txt"
+expect tab_count == 1
+expect doc_count == 1
+
+# edit in the right tab; the left tab shows it
+click code 3 6
+expect cursor_line == 3
+text "!"
+expect line 3 == "gamma!"
+expect dirty == 1
+cmd prev_panel
+wait_idle
+expect tab == "edit.txt"
+expect line 3 == "gamma!"
+expect dirty == 1
+expect cursor_line == 1
+
+# insert a line at the top in the left tab: the right tab's cursor moves
+# down with its text (line 3 col 7 -> line 4 col 7)
+key ctrl+home
+text "X"
+key return
+expect line 1 == "X"
+expect line 4 == "gamma!"
+cmd next_panel
+wait_idle
+expect cursor_line == 4
+expect cursor_col == 7
+
+# one undo history: undo in the right tab undoes the left tab's edits too
+key ctrl+z 5
+wait_idle
+expect line 1 == "alpha"
+expect line 3 == "gamma"
+expect dirty == 0
+
+# closing a tab with unsaved changes needs no confirmation while another
+# tab still shows the file
+text "?"
+expect line 3 == "gamma?"
+cmd close_tab
+wait_idle
+expect tab_count == 0
+expect doc_count == 1
+cmd prev_panel
+wait_idle
+expect tab == "edit.txt"
+expect dirty == 1
+expect line 3 == "gamma?"
+
+# the last tab asks first (close again within 4 s to discard; no wait_idle
+# in between: it would wait for the message to fade); nothing is saved
+cmd close_tab
+expect tab_count == 2
+expect error != ""
+cmd close_tab
+wait_idle
+expect tab_count == 1
+expect doc_count == 0
+expect file ../fixtures/edit.txt == "alpha\nbeta\ngamma\n"
