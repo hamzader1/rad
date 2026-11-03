@@ -31,7 +31,7 @@ optimized build in `build\release\rad.exe` at the end of every milestone.
 | 5. Test and measure                  | Done. `tests\run_scripts.ps1`: 4 scripts, 60 checks, all pass (debug and release). |
 | 6. Editor essentials                 | Done. 13 scripts, 210 checks, all pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 7. Rust syntax highlighting          | Done. Rust lexing in the `text` layer (see below, `docs/notes/04-syntax-highlighting.md`); 14 scripts, 242 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
-| 8. Cargo integration                 | Not started. |
+| 8. Cargo integration                 | In progress: `json` layer done (see journal). |
 | 9. LSP client                        | Not started. |
 | 10. Remove debugger, rebrand         | Not started. |
 | 11-13. Mac foundation, Mac UI, debugging | Not started. |
@@ -313,6 +313,14 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (milestone 8, step 1: json layer)
+- New layer `json` (`JSON_`, `src/json/`, base only): parser into an arena
+  tree (nil-safe lookups, \uXXXX + surrogate pairs, exact integers, depth
+  cap 512, error offset), string escaping, compact writer. `rad_tests`:
+  hand-written values/escapes, 18 malformed inputs with their error
+  offsets, 400 random documents round-tripped, every prefix and one-byte
+  corruption parsed; 37,594,203 checks pass.
 
 ### 2026-11-03 (milestone 7: Rust syntax highlighting)
 - The visible-range tokenizer, the whole-file pt scan and the edit re-lex
