@@ -495,17 +495,45 @@ rad_window_open(CFG_Node *window_cfg)
     }
   }
 
+  //- rad: unpack position + monitor (same as raddbg's window open)
+  CFG_Node *pos_cfg = cfg_node_child_from_string(window_cfg, str8_lit("pos"));
+  B32 has_pos = (pos_cfg != &cfg_nil_node);
+  Vec2F32 pos = v2f32((F32)f64_from_str8(pos_cfg->first->string), (F32)f64_from_str8(pos_cfg->first->next->string));
+  WM_Monitor preferred_monitor = {0};
+  {
+    CFG_Node *monitor_cfg = cfg_node_child_from_string(window_cfg, str8_lit("monitor"));
+    WM_MonitorArray monitors = wm_push_monitors_array(scratch.arena);
+    for EachIndex(idx, monitors.count)
+    {
+      String8 monitor_name = wm_name_from_monitor(scratch.arena, monitors.v[idx]);
+      if(str8_match(monitor_name, monitor_cfg->first->string, StringMatchFlag_CaseInsensitive))
+      {
+        preferred_monitor = monitors.v[idx];
+        break;
+      }
+    }
+  }
+
   //- rad: create wm window, equip for rendering
   String8 title = rad_push_window_title(scratch.arena);
-  WM_WindowFlags window_flags = WM_WindowFlag_UseDefaultPosition|WM_WindowFlag_CustomBorder;
+  WM_WindowFlags window_flags = (!has_pos*WM_WindowFlag_UseDefaultPosition)|WM_WindowFlag_CustomBorder;
   if(rad_script_is_active())
   {
     // rad: scripted tests never take the user's keyboard focus
     window_flags |= WM_WindowFlag_NoActivate;
   }
-  ws->os = wm_window_open(r2f32p(0, 0, size.x, size.y), window_flags, title);
+  ws->os = wm_window_open(r2f32p(pos.x, pos.y, pos.x+size.x, pos.y+size.y), window_flags, title);
   ws->r = r_window_equip(ws->os);
   ws->last_dpi = wm_dpi_from_window(ws->os);
+  WM_Monitor zero_monitor = {0};
+  if(!wm_monitor_match(zero_monitor, preferred_monitor))
+  {
+    wm_window_set_monitor(ws->os, preferred_monitor);
+  }
+  if(!rad_script_is_active() && cfg_node_child_from_string(window_cfg, str8_lit("fullscreen")) != &cfg_nil_node)
+  {
+    wm_window_set_fullscreen(ws->os, 1);
+  }
   if(!rad_script_is_active() && cfg_node_child_from_string(window_cfg, str8_lit("maximized")) != &cfg_nil_node)
   {
     wm_window_set_maximized(ws->os, 1);
@@ -2467,6 +2495,73 @@ rad_window_frame(RAD_Window *ws)
   }
 
   //////////////////////////////
+  //- rad: commit window's position/status to the cfg tree (port of raddbg's
+  // @window_frame_part, minus the DPI font-size transform), so the session
+  // file restores it
+  //
+  {
+    Temp scratch = scratch_begin(0, 0);
+    CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+    B32 is_fullscreen = wm_window_is_fullscreen(ws->os);
+    B32 is_maximized = wm_window_is_maximized(ws->os);
+    B32 is_minimized = wm_window_is_minimized(ws->os);
+    if(is_fullscreen)
+    {
+      cfg_node_child_from_string_or_alloc(rad_state->cfg, window, str8_lit("fullscreen"));
+    }
+    else
+    {
+      cfg_node_release(rad_state->cfg, cfg_node_child_from_string(window, str8_lit("fullscreen")));
+    }
+    if(is_maximized)
+    {
+      cfg_node_child_from_string_or_alloc(rad_state->cfg, window, str8_lit("maximized"));
+    }
+    else
+    {
+      cfg_node_release(rad_state->cfg, cfg_node_child_from_string(window, str8_lit("maximized")));
+    }
+    Rng2F32 window_rect = wm_rect_from_window(ws->os);
+    if(!is_fullscreen && !is_maximized && !is_minimized)
+    {
+      Vec2F32 pairs[2] = {window_rect.p0, dim_2f32(window_rect)};
+      String8 names[2] = {str8_lit("pos"), str8_lit("size")};
+      for EachIndex(idx, 2)
+      {
+        CFG_Node *root = cfg_node_child_from_string_or_alloc(rad_state->cfg, window, names[idx]);
+        if((S32)pairs[idx].x != (S32)f64_from_str8(root->first->string) ||
+           (S32)pairs[idx].y != (S32)f64_from_str8(root->last->string))
+        {
+          CFG_Node *x = root->first;
+          if(x == &cfg_nil_node)
+          {
+            x = cfg_node_alloc(rad_state->cfg);
+            cfg_node_insert_child(rad_state->cfg, root, &cfg_nil_node, x);
+          }
+          CFG_Node *y = x->next;
+          if(y == &cfg_nil_node)
+          {
+            y = cfg_node_alloc(rad_state->cfg);
+            cfg_node_insert_child(rad_state->cfg, root, x, y);
+          }
+          cfg_node_equip_stringf(rad_state->cfg, x, "%i", (S32)pairs[idx].x);
+          cfg_node_equip_stringf(rad_state->cfg, y, "%i", (S32)pairs[idx].y);
+        }
+      }
+    }
+    if(!is_minimized)
+    {
+      String8 monitor_name = wm_name_from_monitor(scratch.arena, wm_monitor_from_window(ws->os));
+      CFG_Node *monitor_root = cfg_node_child_from_string_or_alloc(rad_state->cfg, window, str8_lit("monitor"));
+      if(!str8_match(monitor_root->first->string, monitor_name, 0))
+      {
+        cfg_node_new_replace(rad_state->cfg, monitor_root, monitor_name);
+      }
+    }
+    scratch_end(scratch);
+  }
+
+  //////////////////////////////
   //- rad: update per-window frame counters/info
   //
   ws->frames_alive += 1;
@@ -3053,6 +3148,98 @@ rad_exec_cmd(RAD_Cmd *cmd)
 }
 
 ////////////////////////////////
+//~ rad: User Data (Session)
+
+internal String8
+rad_user_data_string(Arena *arena)
+{
+  // NOTE(rad): same layout as raddbg's user file: a header line, then each
+  // child of the `user` cfg root
+  Temp scratch = scratch_begin(&arena, 1);
+  CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+  String8List strings = {0};
+  str8_list_pushf(scratch.arena, &strings, "// rad %s user file\n\n", BUILD_VERSION_STRING_LITERAL);
+  for(CFG_Node *child = user->first; child != &cfg_nil_node; child = child->next)
+  {
+    str8_list_push(scratch.arena, &strings, cfg_string_from_tree(scratch.arena, rad_state->cfg_schema_table, str8_chop_last_slash(rad_state->user_path), child));
+  }
+  String8 result = str8_list_join(arena, &strings, 0);
+  scratch_end(scratch);
+  return result;
+}
+
+internal B32
+rad_user_data_load(String8 path)
+{
+  // NOTE(rad): port of raddbg's RD_CmdKind_OpenUser, minus legacy formats,
+  // projects and key bindings: parse the file into the `user` cfg root.
+  // returns 1 if it held a window with panels (else the caller builds the
+  // default layout). a file that is not a rad user file is left alone (the
+  // path is dropped, so it is never overwritten).
+  Temp scratch = scratch_begin(0, 0);
+  B32 result = 0;
+  String8 data = data_from_file_path(scratch.arena, path);
+  B32 file_is_okay = (data.size == 0 || str8_match(str8_prefix(data, 7), str8_lit("// rad "), 0));
+  if(!file_is_okay)
+  {
+    log_user_errorf("\"%S\" is not a rad user file; it is left as it is, and the session is not saved.", path);
+    rad_state->user_path = str8_zero();
+  }
+  else if(data.size != 0)
+  {
+    CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+    CFG_NodePtrList cfgs = cfg_node_ptr_list_from_string(scratch.arena, rad_state->cfg, rad_state->cfg_schema_table, str8_chop_last_slash(path), data);
+    for(CFG_NodePtrNode *n = cfgs.first; n != 0; n = n->next)
+    {
+      cfg_node_insert_child(rad_state->cfg, user, user->last, n->v);
+    }
+    CFG_Node *window = cfg_node_child_from_string(user, str8_lit("window"));
+    result = (cfg_node_child_from_string(window, str8_lit("panels")) != &cfg_nil_node);
+    if(!result)
+    {
+      cfg_node_release_all_children(rad_state->cfg, user);
+    }
+    rad_state->user_data_hash = u64_hash_from_str8(rad_user_data_string(scratch.arena));
+  }
+  scratch_end(scratch);
+  return result;
+}
+
+internal void
+rad_user_data_write(void)
+{
+  // NOTE(rad): port of raddbg's RD_CmdKind_WriteUserData: write a temp file,
+  // move the old file aside, move the temp file in, delete the old file
+  if(rad_state->user_path.size != 0)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    String8 dst_path = rad_state->user_path;
+    String8 data = rad_user_data_string(scratch.arena);
+    B32 dst_exists = (properties_from_file_path(dst_path).created != 0);
+    String8 temp_path = push_str8f(scratch.arena, "%S.temp", dst_path);
+    String8 overwritten_path = push_str8f(scratch.arena, "%S.old", dst_path);
+    B32 temp_write_good = write_data_to_file_path(temp_path, data);
+    B32 old_del_good    = (temp_write_good && delete_file_at_path(overwritten_path));
+    B32 old_move_good   = (temp_write_good && (!dst_exists || move_file_path(overwritten_path, dst_path)));
+    B32 new_move_good   = (old_move_good && move_file_path(dst_path, temp_path));
+    (void)old_del_good;
+    if(new_move_good && dst_exists)
+    {
+      delete_file_at_path(overwritten_path);
+    }
+    else if(!new_move_good && old_move_good && dst_exists)
+    {
+      move_file_path(dst_path, overwritten_path);
+    }
+    if(new_move_good)
+    {
+      rad_state->user_data_hash = u64_hash_from_str8(data);
+    }
+    scratch_end(scratch);
+  }
+}
+
+////////////////////////////////
 //~ rad: Main Layer Top-Level Calls
 
 #if !defined(STBI_INCLUDE_STB_IMAGE_H)
@@ -3118,6 +3305,39 @@ rad_init(CmdLine *cmdln)
     rad_state->view_state_slots = push_array(rad_state->arena, RAD_ViewStateSlot, rad_state->view_state_slots_count);
   }
 
+  //- rad: user data file (session; port of raddbg's user file): --user:<path>,
+  // else %APPDATA%/rad/default.rad_user; scripted tests use none unless given
+  B32 user_loaded = 0;
+  {
+    String8 user_path = cmd_line_string(cmdln, str8_lit("user"));
+    if(user_path.size == 0 && cmd_line_string(cmdln, str8_lit("script")).size == 0)
+    {
+      String8 folder = push_str8f(scratch.arena, "%S/rad", get_process_info()->user_program_config_data_path);
+      make_directory(folder);
+      user_path = push_str8f(scratch.arena, "%S/default.rad_user", folder);
+    }
+    if(user_path.size != 0)
+    {
+      user_path = path_absolute_dst_from_relative_dst_src(scratch.arena, user_path, get_process_info()->initial_path);
+      rad_state->user_path = path_normalized_from_string(rad_state->arena, user_path);
+      user_loaded = rad_user_data_load(rad_state->user_path);
+    }
+  }
+
+  //- rad: restored session -> command line inputs go into it (folder: the
+  // explorer's; files: opened like Open File)
+  if(user_loaded)
+  {
+    CFG_Node *window = cfg_node_child_from_string(cfg_node_child_from_string(cfg_node_root(), str8_lit("user")), str8_lit("window"));
+    for(String8Node *n = cmdln->inputs.first; n != 0; n = n->next)
+    {
+      String8 path = path_absolute_dst_from_relative_dst_src(scratch.arena, n->string, get_process_info()->initial_path);
+      path = path_normalized_from_string(scratch.arena, path);
+      B32 is_folder = !!(properties_from_file_path(path).flags & FilePropertyFlag_IsFolder);
+      rad_cmd(is_folder ? RAD_CmdKind_OpenFolder : RAD_CmdKind_OpenFile, .window = window->id, .file_path = path);
+    }
+  }
+
   //- rad: build default window layout
   //
   // NOTE(rad): built like raddbg's RD_CmdKind_ResetToDefaultPanels: a root
@@ -3126,6 +3346,7 @@ rad_init(CmdLine *cmdln)
   // started" tab when there is none. the explorer's folder is the first
   // folder argument, else the folder of the first file argument.
   //
+  if(!user_loaded)
   {
     CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
     CFG_NodePtrList cfgs = cfg_node_ptr_list_from_string(scratch.arena, rad_state->cfg, rad_state->cfg_schema_table, str8_zero(),
@@ -3733,6 +3954,20 @@ rad_frame(void)
   //
   rad_view_state_gc();
   rad_documents_gc();
+
+  //////////////////////////////
+  //- rad: save the session (user data) when it changed: checked every 2 s
+  // and at exit
+  //
+  if(rad_state->user_path.size != 0 && (rad_state->quit || now_time_us() >= rad_state->user_data_check_us))
+  {
+    rad_state->user_data_check_us = now_time_us() + 2000000;
+    String8 user_data = rad_user_data_string(scratch.arena);
+    if(u64_hash_from_str8(user_data) != rad_state->user_data_hash)
+    {
+      rad_user_data_write();
+    }
+  }
   
   //////////////////////////////
   //- rad: clear frame request state

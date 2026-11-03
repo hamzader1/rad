@@ -1,0 +1,18 @@
+#! args: --user:"{work}\session.rad_user"
+# Session memory, part 1 (part 2 restarts rad on the same user file):
+# set up a folder, tabs and a panel layout, then quit (rad saves at exit).
+
+expect panel_count == 2
+open_folder ../fixtures/project
+wait_idle
+open ../fixtures/edit.txt
+wait_idle
+open ../fixtures/lines_3000.txt
+wait_idle
+cmd new_panel_down
+wait_idle
+open ../fixtures/project/src/main.rs
+wait_idle
+expect panel_count == 3
+expect tab == "main.rs"
+quit

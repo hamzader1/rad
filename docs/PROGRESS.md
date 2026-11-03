@@ -118,7 +118,17 @@ Milestone 6 details (each item with its script):
   a range ends at 0 (would walk ~2^52 chunks). NOT compared side by side
   with raddbg's bar yet (needs raddbg focused; the code is a line-by-line
   port with the same tags and sizes).
-- [ ] Session memory (folder, tabs, layout, window; raddbg user-file format)
+- [x] Session memory (scripts `session_1` + `session_2`: restart on the same
+  user file restores folder, panels, tabs, focused panel/tab). The `user`
+  cfg tree is written like raddbg's user file (`// rad <version> user file`
+  header, `cfg_string_from_tree`, temp/old file dance) to
+  `%APPDATA%/rad/default.rad_user` (or `--user:<path>`), when it changes
+  (checked every 2 s) and at exit; loaded at startup instead of the default
+  layout. Window pos/size/monitor/maximized/fullscreen committed to cfg
+  every frame (port of raddbg's). Arguments go into the restored session
+  (folder -> Open Folder, files -> Open File). Script runs use no user file
+  unless `#! args: --user:...` is the script's first line. Not saved:
+  cursor/scroll positions (view state, not cfg).
 - [ ] File watching instead of polling
 - [ ] Audit of the port against raddbg's per-frame steps
 
@@ -222,6 +232,10 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (session memory)
+- User file load/save + window state commit; runner supports `#! args:`.
+  10 scripts, 173 checks pass (on a test copy: `buildad.exe` was open).
 
 ### 2026-11-03 (Go to Line, Find)
 - Ported raddbg's query bar, search/goto commands and line editing; see

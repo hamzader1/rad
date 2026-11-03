@@ -245,6 +245,12 @@ struct RAD_State
   struct RAD_ViewStateSlot *view_state_slots;
   struct RAD_ViewState *free_view_state;
 
+  // rad: user data file (session: windows, panels, tabs, explorer folder;
+  // port of raddbg's user file). empty path = no file (scripted tests)
+  String8 user_path;
+  U64 user_data_hash;
+  U64 user_data_check_us;
+
   // rad: documents (one text buffer per open file, shared by its tabs)
   struct RAD_Document *first_document;
   struct RAD_Document *last_document;
@@ -280,6 +286,13 @@ internal void rad_set_error(String8 string);
 internal void rad_push_cmd(RAD_CmdKind kind, RAD_CmdParams *params);
 #define rad_cmd(kind, ...) rad_push_cmd((kind), &(RAD_CmdParams){.window = 0, __VA_ARGS__})
 internal void rad_exec_cmd(RAD_Cmd *cmd);
+
+////////////////////////////////
+//~ rad: User Data (Session) Functions
+
+internal String8 rad_user_data_string(Arena *arena);
+internal B32 rad_user_data_load(String8 path);
+internal void rad_user_data_write(void);
 
 ////////////////////////////////
 //~ rad: Fonts

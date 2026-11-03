@@ -27,6 +27,10 @@ foreach ($script in $scripts) {
   Copy-Item -Recurse (Join-Path $tests "scripts") $dir
   $results = Join-Path $dir "results.txt"
   $argline = "--script:`"$dir\scripts\$($script.Name)`" --script_out:`"$results`" --logs:`"$dir\logs`""
+  # optional first line "#! args: <more args>"; {work} = the shared work folder
+  # (scripts run in name order, so e.g. session_1 can leave a file for session_2)
+  $first = Get-Content $script.FullName -TotalCount 1
+  if ($first -match '^#!\s*args:\s*(.*)$') { $argline += " " + $Matches[1].Replace("{work}", $work) }
 
   # run, with a time limit
   $sw = [Diagnostics.Stopwatch]::StartNew()
