@@ -805,6 +805,89 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
         scratch_end(scratch2);
       }
     }
+
+    // rad: not in raddbg: the last cargo command's diagnostics in this file,
+    // where they are now (they follow edits). an error colors its line and
+    // annotates it like raddbg's exception line ("bad_pop"); a warning
+    // annotates only. both underline their span.
+    // NOTE(rad): the theme has no warning color; `thread_0` is the yellow /
+    // orange of every preset (rustc prints warnings in yellow).
+    RAD_Document *doc = rad_document_from_tab(tab);
+    if(doc != 0 && rad_cargo->diags_count != 0 && text_is_ready)
+    {
+      Vec4F32 error_line_color = {0};
+      Vec4F32 error_text_color = {0};
+      Vec4F32 error_mark_color = {0};
+      Vec4F32 weak_text_color = {0};
+      Vec4F32 warning_mark_color = ui_color_from_name(str8_lit("thread_0"));
+      UI_TagF("bad_pop")
+      {
+        error_line_color = ui_color_from_name(str8_lit("background"));
+        error_text_color = ui_color_from_name(str8_lit("text"));
+      }
+      UI_TagF("bad")
+      {
+        error_mark_color = ui_color_from_name(str8_lit("text"));
+      }
+      UI_TagF("weak")
+      {
+        weak_text_color = ui_color_from_name(str8_lit("text"));
+      }
+      code_slice_params.line_bg_colors   = push_array(scratch.arena, Vec4F32, visible_line_count);
+      code_slice_params.line_annotations = push_array(scratch.arena, DR_FStrList, visible_line_count);
+      RAD_CodeSliceUnderline *last_underline = 0;
+      DR_FStrParams fstr_params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), weak_text_color, code_font_size};
+      for EachIndex(diag_idx, rad_cargo->diags_count)
+      {
+        RAD_Diagnostic *diag = rad_cargo->diags[diag_idx];
+        if(!str8_match(diag->path, doc->path, StringMatchFlag_CaseInsensitive|StringMatchFlag_SlashInsensitive))
+        {
+          continue;
+        }
+        Rng1U64 range = rad_diagnostic_range_from_document(diag, doc, &text_patched);
+        B32 is_error = (diag->kind == RAD_DiagnosticKind_Error);
+        B32 is_warning = (diag->kind == RAD_DiagnosticKind_Warning);
+
+        // rad: span underline
+        if((is_error || is_warning) && range.min <= visible_byte_range.max && visible_byte_range.min <= range.max)
+        {
+          RAD_CodeSliceUnderline *underline = push_array(scratch.arena, RAD_CodeSliceUnderline, 1);
+          underline->range = range;
+          underline->color = (is_error ? error_mark_color : warning_mark_color);
+          if(is_error && txt_line_num_from_off(&text_patched.line_map, range.min) == txt_line_num_from_off(&text_patched.line_map, range.max))
+          {
+            // rad: on its error-colored line, a red mark would vanish
+            underline->color = error_text_color;
+          }
+          SLLQueuePush(code_slice_params.first_underline, last_underline, underline);
+        }
+
+        // rad: line color + annotation: [icon] message
+        S64 line_num = (S64)txt_line_num_from_off(&text_patched.line_map, range.min);
+        if(visible_line_num_range.min <= line_num && line_num <= visible_line_num_range.max)
+        {
+          U64 line_idx = (U64)(line_num - visible_line_num_range.min);
+          DR_FStrList *fstrs = &code_slice_params.line_annotations[line_idx];
+          RAD_IconKind icon_kind = (is_error ? RAD_IconKind_WarningBig : is_warning ? RAD_IconKind_WarningSmall : RAD_IconKind_Info);
+          Vec4F32 icon_color = (is_error ? error_text_color : is_warning ? warning_mark_color : weak_text_color);
+          Vec4F32 text_color = (is_error ? error_text_color : weak_text_color);
+          if(is_error)
+          {
+            code_slice_params.line_bg_colors[line_idx] = error_line_color;
+          }
+          if(fstrs->node_count != 0)
+          {
+            dr_fstrs_push_new(scratch.arena, fstrs, &fstr_params, str8_lit("    "));
+          }
+          dr_fstrs_push_new(scratch.arena, fstrs, &fstr_params, rad_icon_kind_text_table[icon_kind],
+                            .font = rad_font_from_slot(RAD_FontSlot_Icons),
+                            .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons),
+                            .color = icon_color);
+          dr_fstrs_push_new(scratch.arena, fstrs, &fstr_params, str8_lit("  "));
+          dr_fstrs_push_new(scratch.arena, fstrs, &fstr_params, diag->message, .color = text_color);
+        }
+      }
+    }
   }
 
   //////////////////////////////

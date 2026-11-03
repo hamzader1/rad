@@ -48,6 +48,8 @@
 //   wait_frames <count>
 //   wait_idle [timeout_ms]      until rad requests no more frames (text loaded,
 //                               animations and compaction done); default 10 s
+//   wait_cargo [timeout_ms]     until no cargo command runs or waits to; 120 s
+//   wait_output "<text>" [timeout_ms]  until the cargo output contains it; 120 s
 //   expect <field> <op> <value> ops: == != < <= > >= ; numbers compare as numbers
 //   print <field>
 //   measure_begin <name>
@@ -65,6 +67,9 @@
 //   explorer <name>             middle of the visible explorer row named <name>
 //   explorer_expander <name>    that row's expander arrow
 //   explorer_center             middle of the explorer view
+//   output <line> <col>         a visible text position in the Output tab
+//   output_text "<text>"        the first Output line containing it, at its start
+//   problem <n>                 middle of visible Problems row n (1-based)
 //   <x> <y>                     window client pixels
 //
 // Fields (the editor view is the focused panel's text tab, else the last
@@ -93,6 +98,19 @@
 //   query_open query_input      the editor tab's query bar (Find, Go To Line)
 //   doc_count                   open documents (one per file, shared by tabs)
 //   error                       bottom bar error message ("" when none)
+//   cargo_status                none, running, stopped, launch_failed, failed
+//                               (exit code != 0), finished
+//   cargo_cmd cargo_exit_code   last cargo command ("cargo build") and its exit code
+//   diag_count diag_errors diag_warnings   diagnostics of the last command
+//   diag <n>                    "<kind> <path>:<line>:<col> <message>" (path
+//                               relative to the workspace root)
+//   diag_selected               Next/Previous Error position (= Problems selection)
+//   line_diag <n>               kind of the diagnostic now on editor line n, or ""
+//   output_lines                lines written to the cargo output so far
+//   output_line <n>             one of them
+//   output_has "<text>"         1 if the output contains the text
+//   output_line_count output_cursor_line output_cursor_at_end   the Output tab's
+//                               text and cursor (it shows the output <= 100 ms later)
 //   elapsed_ms                  time since the script started
 //   last_sleep_ms               duration of the last sleep_until_woken
 
@@ -153,6 +171,7 @@ typedef enum RAD_ScriptWaitKind
   RAD_ScriptWaitKind_Idle,
   RAD_ScriptWaitKind_Woken,
   RAD_ScriptWaitKind_Cargo,
+  RAD_ScriptWaitKind_Output,
 }
 RAD_ScriptWaitKind;
 
@@ -183,6 +202,8 @@ struct RAD_ScriptState
   U64 wait_frames_left;
   U64 sleep_begin_us;
   U64 last_sleep_us;
+  U8 wait_text_buffer[256];
+  U64 wait_text_size;
 
   //- rad: queued input steps (one per frame)
   Arena *input_arena;

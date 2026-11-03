@@ -27,20 +27,45 @@ expect diag 2 == "warning src/main.rs:2:9 unused variable: `unused`"
 expect output_has "Compiling cargo_errors v0.1.0" == 1
 expect output_has "error[E0425]: cannot find value `reslt` in this scope" == 1
 expect output_has "[exit code 101," == 1
-print output_line 1
-print output_line 2
-print output_line 3
-print output_line 4
-print output_lines
-print output_line_count
-print output_cursor_line
+expect output_line 3 == "error[E0425]: cannot find value `reslt` in this scope"
+expect output_cursor_at_end == 1
 
-# Next / Previous Error: through both, around the ends
+# Output tab: double-click a compiler message's first line -> its location
+double_click output_text "error[E0425]"
+wait_idle
+expect panel == "text"
+expect cursor_line == 8
+expect cursor_col == 29
+double_click output_text "unused variable"
+wait_idle
+expect panel == "text"
+expect cursor_line == 2
+expect cursor_col == 9
+
+# the editor shows them on their lines; they follow edits (a new first line
+# moves them down; Next Error goes to the moved place; undo moves them back)
+expect line_diag 8 == "error"
+expect line_diag 2 == "warning"
+expect line_diag 5 == ""
+key ctrl+home
+key return
+wait_idle
+expect line_diag 9 == "error"
+expect line_diag 3 == "warning"
+expect line_diag 8 == ""
 key f8
 wait_idle
 expect diag_selected == 1
-expect cursor_line == 8
+expect cursor_line == 9
 expect cursor_col == 29
+key ctrl+z
+wait_idle
+expect dirty == 0
+expect line_diag 8 == "error"
+expect line_diag 2 == "warning"
+
+# Next / Previous Error: through both, around the ends
+key ctrl+home
 key f8
 wait_idle
 expect diag_selected == 2
@@ -50,18 +75,35 @@ key f8
 wait_idle
 expect diag_selected == 1
 expect cursor_line == 8
+expect cursor_col == 29
 key shift+f8
 wait_idle
 expect diag_selected == 2
 expect cursor_line == 2
 
-# Problems tab: double-click a row -> there, keyboard to the editor
+# Problems tab: Up + Enter, or a double-click, go there (keyboard to the
+# editor)
 cmd show_problems
 wait_idle
 expect panel == "problems"
-double_click problem 1
+expect diag_selected == 2
+key up
+key return
 wait_idle
 expect panel == "text"
+expect diag_selected == 1
+expect cursor_line == 8
+expect cursor_col == 29
+cmd show_problems
+wait_idle
+double_click problem 2
+wait_idle
+expect panel == "text"
+expect diag_selected == 2
+expect cursor_line == 2
+expect cursor_col == 9
+key f8
+wait_idle
 expect cursor_line == 8
 expect cursor_col == 29
 

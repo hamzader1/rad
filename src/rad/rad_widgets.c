@@ -1204,6 +1204,54 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
   }
 
   //////////////////////////////
+  //- rad: determine starting offset for each line, at which we can begin
+  // placing extra info to the right (same as raddbg, minus its margins)
+  //
+  F32 *line_extras_off = push_array(scratch.arena, F32, dim_1s64(params->line_num_range)+1);
+  if(params->line_annotations != 0)
+  {
+    U64 line_idx = 0;
+    for(S64 line_num = params->line_num_range.min;
+        line_num <= params->line_num_range.max;
+        line_num += 1, line_idx += 1)
+    {
+      // NOTE(rad): raddbg's offset also counts its priority/catchall margins,
+      // which rad does not have; the line's text padding takes their place
+      F32 line_text_dim = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, params->line_text[line_idx]).x + params->line_num_width_px + line_num_padding_px;
+      line_extras_off[line_idx] = Max(line_text_dim, params->font_size*30);
+    }
+  }
+
+  //////////////////////////////
+  //- rad: build per-line annotations (port of raddbg's per-line extra
+  // annotation containers + exception annotations; built before the line
+  // text, so they draw over a colored line)
+  //
+  if(params->line_annotations != 0)
+    UI_PrefWidth(ui_children_sum(1)) UI_PrefHeight(ui_px(params->line_height_px, 1.f)) UI_Parent(text_container_box) UI_Focus(UI_FocusKind_Off)
+  {
+    U64 line_idx = 0;
+    for(S64 line_num = params->line_num_range.min;
+        line_num < params->line_num_range.max;
+        line_num += 1, line_idx += 1)
+    {
+      if(params->line_annotations[line_idx].node_count == 0)
+      {
+        continue;
+      }
+      ui_set_next_fixed_x(line_extras_off[line_idx]);
+      ui_set_next_fixed_y(line_idx*params->line_height_px);
+      UI_Box *line_extras_box = ui_build_box_from_stringf(0, "###extras_%I64x", line_idx);
+      UI_Parent(line_extras_box) UI_PrefWidth(ui_text_dim(10, 1)) UI_TextAlignment(UI_TextAlign_Center) UI_PrefHeight(ui_px(params->line_height_px, 1.f))
+      {
+        ui_spacer(ui_em(1.5f, 1.f));
+        UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawText, "###annotation");
+        ui_box_equip_display_fstrs(box, &params->line_annotations[line_idx]);
+      }
+    }
+  }
+
+  //////////////////////////////
   //- rad: (cursor*mark) -> list(text_range*color)
   //
   typedef struct TxtRngColorPairNode TxtRngColorPairNode;
@@ -1254,6 +1302,12 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
         DR_FStrList line_fstrs = lines_fstrs[line_idx];
         ui_set_next_text_padding(line_num_padding_px);
         UI_Key line_key = ui_key_from_stringf(top_container_box->key, "ln_%I64x", line_num);
+        Vec4F32 line_bg_color = (params->line_bg_colors != 0 ? params->line_bg_colors[line_idx] : v4f32(0, 0, 0, 0));
+        if(line_bg_color.w != 0)
+        {
+          ui_set_next_flags(UI_BoxFlag_DrawBackground);
+          ui_set_next_background_color(line_bg_color);
+        }
         ui_set_next_tab_size(params->tab_size);
         UI_Box *line_box = ui_build_box_from_key(UI_BoxFlag_DisableTextTrunc|UI_BoxFlag_DrawText|UI_BoxFlag_DisableIDString, line_key);
         DR_Bucket *line_bucket = dr_bucket_make();
@@ -1334,6 +1388,36 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
               inst->corner_radii[Corner_01] = (!next_line_good || next_line_selection_off_range.min > crnt_line_selection_off_range.min || next_line_selection_off_range.max < crnt_line_selection_off_range.min) ? rounded_radius : 0.f;
               inst->corner_radii[Corner_11] = !next_line_good || crnt_line_selection_off_range.max > next_line_selection_off_range.max ? rounded_radius : 0.f;
             }
+          }
+        }
+
+        // rad: not in raddbg: underlined ranges (diagnostic spans). an empty
+        // range, or one that only covers the line end, underlines one column.
+        for(RAD_CodeSliceUnderline *u = params->first_underline; u != 0; u = u->next)
+        {
+          Rng1U64 range_in_line = intersect_1u64(u->range, line_range);
+          B32 starts_here = (line_range.min <= u->range.min && u->range.min <= line_range.max);
+          B32 overlaps = (range_in_line.min < range_in_line.max);
+          if(starts_here || overlaps)
+          {
+            U64 min_col = (Max(u->range.min, line_range.min) - line_range.min);
+            U64 max_col = (Min(u->range.max, line_range.max) - line_range.min);
+            F32 x0 = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, min_col)).x;
+            F32 x1 = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, max_col)).x;
+            if(x1 <= x0)
+            {
+              x1 = x0 + fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_lit("H")).x;
+            }
+            F32 thickness = ClampBot(1.f, floor_f32(line_box->font_size/8.f));
+            F32 y = floor_f32(center_2f32(line_box->rect).y + line_box->font_size*0.7f);
+            Rng2F32 underline_rect = r2f32p(ui_box_text_position(line_box).x + x0, y,
+                                            ui_box_text_position(line_box).x + x1, y + thickness);
+            Vec4F32 color = u->color;
+            if(!is_focused)
+            {
+              color.w *= 0.75f;
+            }
+            dr_rect(underline_rect, color, 0, 0, 0.f);
           }
         }
 

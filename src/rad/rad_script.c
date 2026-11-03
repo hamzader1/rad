@@ -684,7 +684,8 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   }
 
   //- rad: the Output tab's cursor line (follows the end while it is there)
-  else if(str8_match(name, str8_lit("output_cursor_line"), 0) || str8_match(name, str8_lit("output_line_count"), 0))
+  else if(str8_match(name, str8_lit("output_cursor_line"), 0) || str8_match(name, str8_lit("output_line_count"), 0) ||
+          str8_match(name, str8_lit("output_cursor_at_end"), 0))
   {
     CFG_Node *tab = rad_script_window_tab(str8_lit("output"));
     if(tab == &cfg_nil_node)
@@ -700,7 +701,9 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       RAD_CodeViewState *cv = &rad_view_state_from_cfg(tab)->cv;
       U64 count = (text.base_info.lines_count != 0 ? text.patched.line_map.total_line_count : 0);
       U64 line = (count != 0 ? txt_line_num_from_off(&text.patched.line_map, Min(cv->cursor, text.patched.size)) : 0);
-      value = push_str8f(arena, "%I64u", str8_match(name, str8_lit("output_line_count"), 0) ? count : line);
+      value = push_str8f(arena, "%I64u", (str8_match(name, str8_lit("output_line_count"), 0) ? count :
+                                          str8_match(name, str8_lit("output_cursor_at_end"), 0) ? (U64)(line == count) :
+                                          line));
     }
   }
 
@@ -881,6 +884,53 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
         pos.x = cv->layout_text_rect.x0 + cv->layout_text_x_off + advance + 1.f;
         pos.y = cv->layout_text_rect.y0 + ((F32)(line_num - cv->layout_visible_lines.min) + 0.5f)*cv->layout_line_height;
         args_used = 3;
+        result = 1;
+      }
+    }
+  }
+
+  //- rad: Output tab: the first line containing a text, at the text's start
+  else if(str8_match(kind, str8_lit("output_text"), 0))
+  {
+    CFG_Node *tab = rad_script_window_tab(str8_lit("output"));
+    if(tab == &cfg_nil_node || args_count < 2 || args[1].size == 0)
+    {
+      *error_out = str8_lit("output_text: needs an output tab and \"<text>\"");
+    }
+    else
+    {
+      RAD_CodeViewState *cv = &rad_view_state_from_cfg(tab)->cv;
+      Access *access = access_open();
+      TB_Text text = tb_text_from_buffer(scratch.arena, access, rad_cargo->output_buffer);
+      access_close(access);
+      U64 line_count = (text.base_info.lines_count != 0 ? text.patched.line_map.total_line_count : 0);
+      S64 found_line = 0;
+      U64 found_col = 0;
+      for(U64 line_num = 1; line_num <= line_count && found_line == 0; line_num += 1)
+      {
+        String8 line_text = rad_script_line_text(scratch.arena, &text, (S64)line_num);
+        U64 pos = str8_find_needle(line_text, 0, args[1], 0);
+        if(pos < line_text.size)
+        {
+          found_line = (S64)line_num;
+          found_col = pos;
+        }
+      }
+      if(found_line == 0)
+      {
+        *error_out = push_str8f(arena, "output_text: no line contains \"%S\"", args[1]);
+      }
+      else if(found_line < cv->layout_visible_lines.min || cv->layout_visible_lines.max < found_line)
+      {
+        *error_out = push_str8f(arena, "output_text: line %I64d is not visible (visible: %I64d-%I64d)", found_line, cv->layout_visible_lines.min, cv->layout_visible_lines.max);
+      }
+      else
+      {
+        String8 line_text = rad_script_line_text(scratch.arena, &text, found_line);
+        F32 advance = fnt_dim_from_tag_size_string(cv->layout_font, cv->layout_font_size, 0, cv->layout_tab_size, str8_prefix(line_text, found_col)).x;
+        pos.x = cv->layout_text_rect.x0 + cv->layout_text_x_off + advance + 1.f;
+        pos.y = cv->layout_text_rect.y0 + ((F32)(found_line - cv->layout_visible_lines.min) + 0.5f)*cv->layout_line_height;
+        args_used = 2;
         result = 1;
       }
     }
@@ -1272,6 +1322,23 @@ rad_script_run_line(RAD_ScriptLine *line)
       rad_script->wait_until_us = now_time_us() + ms*1000;
     }
   }
+  else if(str8_match(cmd, str8_lit("wait_output"), 0))
+  {
+    U64 ms = 120000;
+    if(args_count < 1 || args[0].size == 0 || args[0].size > sizeof(rad_script->wait_text_buffer) ||
+       (args_count >= 2 && !try_u64_from_str8_c_rules(args[1], &ms)))
+    {
+      error = str8_lit("wait_output: needs \"<text>\" [timeout_ms]");
+    }
+    else
+    {
+      rad_script->wait_kind = RAD_ScriptWaitKind_Output;
+      rad_script->wait_line_num = line->line_num;
+      rad_script->wait_until_us = now_time_us() + ms*1000;
+      rad_script->wait_text_size = args[0].size;
+      MemoryCopy(rad_script->wait_text_buffer, args[0].str, args[0].size);
+    }
+  }
   else if(str8_match(cmd, str8_lit("wait_idle"), 0))
   {
     U64 ms = RAD_SCRIPT_DEFAULT_TIMEOUT_US/1000;
@@ -1521,6 +1588,24 @@ rad_script_tick(void)
       }
       rad_script->error_count += 1;
       rad_script_resultf("ERROR %I64u: wait_cargo timed out", rad_script->wait_line_num);
+    }break;
+    case RAD_ScriptWaitKind_Output:
+    {
+      B32 found = 0;
+      String8 needle = str8(rad_script->wait_text_buffer, rad_script->wait_text_size);
+      MutexScope(rad_cargo->mutex)
+      {
+        found = (str8_find_needle(str8(rad_cargo->output_base, rad_cargo->output_size), 0, needle, 0) < rad_cargo->output_size);
+      }
+      if(!found)
+      {
+        if(now_us < rad_script->wait_until_us)
+        {
+          return;
+        }
+        rad_script->error_count += 1;
+        rad_script_resultf("ERROR %I64u: wait_output timed out", rad_script->wait_line_num);
+      }
     }break;
     case RAD_ScriptWaitKind_Idle:
     if(rad_state->num_frames_requested != 0)

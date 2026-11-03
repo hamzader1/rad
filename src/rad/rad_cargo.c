@@ -840,6 +840,7 @@ rad_cargo_tick(void)
     done = c->done;
     output_gen = c->output_gen;
   }
+  U64 first_new_idx = c->diags_count;
   for(RAD_Diagnostic *diag = first_new, *next = 0; diag != 0; diag = next)
   {
     next = diag->next;
@@ -864,6 +865,31 @@ rad_cargo_tick(void)
   {
     c->diags_gen += 1;
     rad_request_frame();
+  }
+
+  //- rad: new diagnostics in open files -> anchor them in the text now, so
+  // edits from here on move them (views anchor the rest when they show them)
+  if(first_new != 0)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    Access *access = access_open();
+    for(U64 idx = first_new_idx; idx < c->diags_count; idx += 1)
+    {
+      RAD_Diagnostic *diag = c->diags[idx];
+      RAD_Document *doc = rad_document_lookup(diag->path);
+      if(doc != 0 && tb_buffer_is_loaded(doc->buffer))
+      {
+        Temp temp = temp_begin(scratch.arena);
+        TB_Text text = tb_text_from_buffer(temp.arena, access, doc->buffer);
+        if(text.base_info.lines_count != 0)
+        {
+          rad_diagnostic_range_from_document(diag, doc, &text.patched);
+        }
+        temp_end(temp);
+      }
+    }
+    access_close(access);
+    scratch_end(scratch);
   }
 
   //- rad: the run is over -> join the runner

@@ -314,6 +314,20 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-03 (milestone 8, step 3: diagnostics in the editor, scripts)
+- Code slice takes per-line background colors, per-line annotations and
+  underlined ranges (ports of raddbg's per-line backgrounds and per-line
+  extras / exception annotation). An error line looks like raddbg's
+  exception line (`bad_pop` + annotation); warnings annotate only, with
+  `thread_0` (yellow/orange in every preset; the theme has no warning color).
+  Diagnostics anchor in open documents when they arrive and follow edits
+  through the change log. Screenshots checked.
+- Scripts: `cargo_build` (63), `cargo_run` (23: run exit code, stdout/stderr
+  order, failing test, panic location double-click, Clear Output),
+  `cargo_stop` (16: no project, Stop kills the job in ~5 frames, Output
+  follows only at the end, a command during a run). New: `wait_output`,
+  target `output_text`. 17 scripts pass.
+
 ### 2026-11-03 (milestone 8, step 2: cargo runner, Output, Problems)
 - `rad_cargo.c/.h`: Build (Ctrl+Shift+B), Check (F7), Run (F5), Test
   (Ctrl+Shift+T), Stop (Shift+F5); Run/Stop take raddbg's Run/Kill All keys.

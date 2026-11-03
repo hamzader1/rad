@@ -66,13 +66,23 @@ struct RAD_CellParams
 //~ rad: Code Slice Types
 //
 // Port of raddbg's RD_CodeSliceParams/RD_CodeSliceSignal, minus breakpoint,
-// thread, watch pin, and debug-info line data.
+// thread, watch pin, and debug-info line data. Where raddbg colors a line and
+// annotates it from debugger state (a thread stopped by an exception), rad
+// takes the colors and annotations as parameters (cargo diagnostics).
 
 typedef U32 RAD_CodeSliceFlags;
 enum
 {
   RAD_CodeSliceFlag_Clickable = (1<<0),
   RAD_CodeSliceFlag_LineNums  = (1<<1),
+};
+
+typedef struct RAD_CodeSliceUnderline RAD_CodeSliceUnderline;
+struct RAD_CodeSliceUnderline
+{
+  RAD_CodeSliceUnderline *next;
+  Rng1U64 range;
+  Vec4F32 color;
 };
 
 typedef struct RAD_CodeSliceParams RAD_CodeSliceParams;
@@ -87,6 +97,14 @@ struct RAD_CodeSliceParams
   TXT_TextInfo *text_info;
   TXT_PatchList *patches;
   String8 text_data;
+
+  // rad: per visible line (optional): a background color (alpha 0 = none)
+  // and text drawn after the line - ports of raddbg's per-line background
+  // colors and per-line extras (its exception annotation); text ranges to
+  // underline (diagnostic spans)
+  Vec4F32 *line_bg_colors;
+  DR_FStrList *line_annotations;
+  RAD_CodeSliceUnderline *first_underline;
 
   // rad: visual parameters
   FNT_Tag font;

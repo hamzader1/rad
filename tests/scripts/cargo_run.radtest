@@ -1,0 +1,56 @@
+# Run (F5) and Test (Ctrl+Shift+T): the program's stdout and stderr in the
+# Output tab in order, its exit code; a failing test's panic location,
+# opened by double-clicking it in the Output tab.
+
+open_folder ../fixtures/cargo_run
+wait_idle
+open ../fixtures/cargo_run/src/main.rs
+wait_idle
+
+# run: exit code 3 is a failed run; no diagnostics
+key f5
+wait_cargo
+wait_idle
+expect cargo_cmd == "cargo run"
+expect cargo_status == "failed"
+expect cargo_exit_code == 3
+expect diag_count == 0
+expect output_has "hello from cargo_run\na line on stderr\n2 + 3 = 5\n" == 1
+expect output_has "process didn't exit successfully" == 1
+expect output_has "[exit code 3," == 1
+expect panel == "text"
+
+# test: one passes, one fails
+key ctrl+shift+t
+wait_cargo
+wait_idle
+expect cargo_cmd == "cargo test"
+expect cargo_status == "failed"
+expect cargo_exit_code == 101
+expect output_has "hello from cargo_run" == 0
+expect output_has "test tests::adds ... ok" == 1
+expect output_has "test tests::fails ... FAILED" == 1
+expect output_has "panicked at src\\main.rs:23:9:" == 1
+
+# double-click the panic line -> the assertion in the editor
+double_click output_text "panicked at"
+wait_idle
+expect panel == "text"
+expect tab == "main.rs"
+expect cursor_line == 23
+expect cursor_col == 9
+
+# a line without a location: nothing happens
+cmd show_output
+wait_idle
+expect panel == "output"
+double_click output_text "running 2 tests"
+wait_idle
+expect panel == "output"
+
+# Clear Output
+cmd clear_output
+wait_idle
+expect output_lines == 0
+expect output_line_count == 1
+quit

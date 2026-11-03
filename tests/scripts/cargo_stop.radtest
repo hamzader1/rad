@@ -1,0 +1,55 @@
+# No project: a cargo command says so. Stop (Shift+F5) ends a run at once,
+# killing cargo and the program (which would sleep for a minute: the run
+# only ends when the program's end of the output pipe closes). A command
+# started during a run stops it, then starts. The Output tab follows new
+# output only while its cursor is at the end.
+
+# no folder, no file -> no project
+cmd cargo_build
+wait_frames 5
+expect cargo_status == "none"
+expect error == "No Cargo project found: open a folder with a Cargo.toml (File > Open Folder)."
+
+open_folder ../fixtures/cargo_sleep
+wait_idle
+
+# run, stop while the program runs
+key f5
+wait_output "started"
+expect cargo_status == "running"
+measure_begin stop
+key shift+f5
+wait_cargo 10000
+measure_end stop
+expect cargo_status == "stopped"
+expect output_has "[stopped after" == 1
+expect output_has "finished" == 0
+
+# the Output tab: cursor moved away (Ctrl+Home) stays; at the end, it follows
+key f5
+wait_output "started"
+wait_idle
+cmd show_output
+wait_idle
+expect panel == "output"
+expect output_cursor_at_end == 1
+key ctrl+home
+wait_idle
+expect output_cursor_line == 1
+expect output_cursor_at_end == 0
+wait_output "tick"
+wait_idle
+expect output_cursor_line == 1
+key ctrl+end
+wait_idle
+expect output_cursor_at_end == 1
+
+# a command during a run: the run stops, then the command runs
+key ctrl+shift+b
+wait_cargo
+wait_idle
+expect cargo_cmd == "cargo build"
+expect cargo_status == "finished"
+expect output_has "started" == 0
+expect output_has "Finished `dev` profile" == 1
+quit
