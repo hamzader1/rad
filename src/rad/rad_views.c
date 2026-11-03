@@ -623,6 +623,16 @@ rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, Rng2F32 rect, TXT_LangK
       sig = rad_code_slicef(&code_slice_params, &cv->cursor, &cv->mark, &cv->preferred_column, "code_slice");
     }
 
+    //- rad: record layout (for scripted input)
+    cv->layout_code_rect     = container_box->rect;
+    cv->layout_text_rect     = sig.text_rect;
+    cv->layout_text_x_off    = sig.text_x_off;
+    cv->layout_line_height   = code_line_height;
+    cv->layout_visible_lines = visible_line_num_range;
+    cv->layout_font          = code_font;
+    cv->layout_font_size     = code_font_size;
+    cv->layout_tab_size      = code_tab_size;
+
     //- rad: dragging & outside region? -> contain cursor
     if(ui_dragging(sig.base) && sig.base.event_flags == 0)
     {
@@ -1293,6 +1303,9 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
   S64 rows_count = (root.size != 0 ? (S64)ex->rows_count : 0);
   String8 toggle_path = {0};
   String8 open_path = {0};
+  ex->layout_rect = rect;
+  ex->layout_row_height = row_height_px;
+  ex->layout_font_size = ui_top_font_size();
 
   //////////////////////////////
   //- rad: keyboard: Left/Right collapse/expand (or move to parent/child),
@@ -1415,6 +1428,13 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
         ui_set_next_pref_height(ui_px(row_height_px, 1.f));
         ui_set_next_focus_hot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off);
         UI_Box *row_box = ui_build_box_from_stringf(row_flags|((row_idx+1 == rows_count)*UI_BoxFlag_DrawSideBottom)|UI_BoxFlag_Clickable, "row_%I64x", row_hash);
+
+        //- rad: record layout (for scripted input)
+        if(row_idx == visible_row_rng.min)
+        {
+          ex->layout_first_row      = row_idx;
+          ex->layout_first_row_rect = row_box->rect;
+        }
 
         //- rad: build cell
         UI_Signal sig = {0};

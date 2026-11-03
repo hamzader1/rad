@@ -317,10 +317,16 @@ rad_window_open(CFG_Node *window_cfg)
 
   //- rad: create wm window, equip for rendering
   String8 title = rad_push_window_title(scratch.arena);
-  ws->os = wm_window_open(r2f32p(0, 0, size.x, size.y), WM_WindowFlag_UseDefaultPosition|WM_WindowFlag_CustomBorder, title);
+  WM_WindowFlags window_flags = WM_WindowFlag_UseDefaultPosition|WM_WindowFlag_CustomBorder;
+  if(rad_script_is_active())
+  {
+    // rad: scripted tests never take the user's keyboard focus
+    window_flags |= WM_WindowFlag_NoActivate;
+  }
+  ws->os = wm_window_open(r2f32p(0, 0, size.x, size.y), window_flags, title);
   ws->r = r_window_equip(ws->os);
   ws->last_dpi = wm_dpi_from_window(ws->os);
-  if(cfg_node_child_from_string(window_cfg, str8_lit("maximized")) != &cfg_nil_node)
+  if(!rad_script_is_active() && cfg_node_child_from_string(window_cfg, str8_lit("maximized")) != &cfg_nil_node)
   {
     wm_window_set_maximized(ws->os, 1);
   }
@@ -2869,6 +2875,9 @@ rad_init(CmdLine *cmdln)
     stbi_image_free(image_data);
   }
 
+  //- rad: scripted tests (`--script:<file>`, see rad_script.h)
+  rad_script_init(cmdln);
+
   ProfEnd();
   scratch_end(scratch);
 }
@@ -3028,9 +3037,14 @@ rad_frame(void)
   arena_clear(rad_frame_arena());
 
   //////////////////////////////
+  //- rad: scripted tests: run the script (queues simulated input for this frame)
+  //
+  rad_script_tick();
+
+  //////////////////////////////
   //- rad: get events from the OS
   //
-  WM_EventList events = wm_get_events(scratch.arena, rad_state->num_frames_requested == 0);
+  WM_EventList events = wm_get_events(scratch.arena, rad_state->num_frames_requested == 0 && !rad_script_is_active());
 
   //////////////////////////////
   //- rad: open windows for all window configs which do not have one yet
@@ -3280,6 +3294,7 @@ rad_frame(void)
   //////////////////////////////
   //- rad: update/render all windows
   //
+  U64 build_begin_us = now_time_us();
   {
     dr_begin_frame(rad_font_from_slot(RAD_FontSlot_Icons));
     for(RAD_Window *w = rad_state->first_window; w != 0; w = w->next)
@@ -3289,6 +3304,7 @@ rad_frame(void)
       MemoryZeroStruct(&w->ui_events);
     }
   }
+  U64 build_us = now_time_us() - build_begin_us;
 
   //////////////////////////////
   //- rad: garbage collect untouched view states
@@ -3335,6 +3351,7 @@ rad_frame(void)
   U64 end_time_us = now_time_us();
   U64 frame_time_us = end_time_us-begin_time_us;
   rad_state->frame_time_us_history[rad_state->frame_index%ArrayCount(rad_state->frame_time_us_history)] = frame_time_us;
+  rad_script_frame_end(frame_time_us, build_us);
 
   //////////////////////////////
   //- rad: bump frame time counters

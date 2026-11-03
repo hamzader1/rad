@@ -87,6 +87,8 @@ struct RAD_CodeSliceSignal
 {
   UI_Signal base;
   U64 mouse_off;
+  Rng2F32 text_rect;  // rad: text container (line numbers + text), window pixels
+  F32 text_x_off;     // rad: x of column 1, relative to text_rect.x0
 };
 
 ////////////////////////////////

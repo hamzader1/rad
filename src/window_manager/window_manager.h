@@ -23,6 +23,7 @@ enum
 {
   WM_WindowFlag_CustomBorder       = (1<<0),
   WM_WindowFlag_UseDefaultPosition = (1<<1),
+  WM_WindowFlag_NoActivate         = (1<<2), // rad: shown without taking keyboard focus
 };
 
 typedef struct WM_Window WM_Window;
@@ -134,6 +135,32 @@ struct WM_EventList
 };
 
 ////////////////////////////////
+//~ rad: Simulated Input Types
+//
+// Scripted input for tests (rad's `--script` mode). While enabled:
+// - the per-OS input queries (wm_window_is_focused, wm_get_modifiers,
+//   wm_key_is_down, wm_mouse_from_window) answer from this state;
+// - wm_get_events drops real input events (keys, text, mouse, focus loss,
+//   file drops) and delivers the queued simulated events instead, so the
+//   user's own input can never mix into a test;
+// - the clipboard is a private string (tests never touch the user's real
+//   clipboard), and the mouse cursor shape is left alone.
+// Per-OS implementations ask `wm_sim_is_enabled()` in those functions.
+
+typedef struct WM_SimState WM_SimState;
+struct WM_SimState
+{
+  B32 enabled;
+  Arena *events_arena;
+  WM_EventList events;
+  Arena *clipboard_arena;
+  String8 clipboard;
+  WM_Modifiers modifiers;
+  Vec2F32 mouse;
+  B8 key_is_down[WM_Key_COUNT];
+};
+
+////////////////////////////////
 //~ rjf: Application-Defined Frame Hook Forward Declaration
 
 internal B32 frame(void);
@@ -159,6 +186,26 @@ internal B32 wm_text(WM_EventList *events, WM_Window window, U32 character);
 internal WM_EventList wm_event_list_copy(Arena *arena, WM_EventList *src);
 internal void wm_event_list_concat_in_place(WM_EventList *dst, WM_EventList *to_push);
 internal WM_Event *wm_event_list_push_new(Arena *arena, WM_EventList *evts, WM_EventKind kind);
+
+////////////////////////////////
+//~ rad: Simulated Input Functions (Helpers, Implemented Once)
+
+//- rad: driving side (scripts)
+internal void wm_sim_set_enabled(B32 enabled);
+internal WM_Event *wm_sim_push_event(WM_Window window, WM_EventKind kind);
+internal void wm_sim_set_mouse(Vec2F32 mouse);
+internal void wm_sim_set_modifiers(WM_Modifiers modifiers);
+internal void wm_sim_set_key_is_down(WM_Key key, B32 is_down);
+
+//- rad: answering side (per-OS implementations)
+internal B32 wm_sim_is_enabled(void);
+internal B32 wm_sim_events_pending(void);
+internal void wm_sim_take_events(Arena *arena, WM_EventList *events);
+internal Vec2F32 wm_sim_mouse(void);
+internal WM_Modifiers wm_sim_modifiers(void);
+internal B32 wm_sim_key_is_down(WM_Key key);
+internal void wm_sim_set_clipboard_text(String8 string);
+internal String8 wm_sim_get_clipboard_text(Arena *arena);
 
 ////////////////////////////////
 //~ rjf: @per_os_impl Main Initialization API (Implemented Per-OS)

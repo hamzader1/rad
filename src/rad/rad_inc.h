@@ -7,5 +7,6 @@
 #include "rad_core.h"
 #include "rad_widgets.h"
 #include "rad_views.h"
+#include "rad_script.h"
 
 #endif // RAD_INC_H

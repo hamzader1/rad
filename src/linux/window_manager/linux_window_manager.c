@@ -571,6 +571,7 @@ wm_get_system_info(void)
 internal void
 wm_set_clipboard_text(String8 string)
 {
+  if(wm_sim_is_enabled()) {wm_sim_set_clipboard_text(string); return;}
   arena_clear(lnx_wm_state->clipboard_arena);
   lnx_wm_state->clipboard_text = str8_copy(lnx_wm_state->clipboard_arena, string);
   XSetSelectionOwner(lnx_wm_state->display, lnx_wm_state->clipboard, lnx_wm_state->global_invisible_window, CurrentTime);
@@ -580,6 +581,10 @@ internal String8
 wm_get_clipboard_text(Arena *arena)
 {
   String8 result = str8_copy(arena, lnx_wm_state->clipboard_text);
+  if(wm_sim_is_enabled())
+  {
+    result = wm_sim_get_clipboard_text(arena);
+  }
   return result;
 }
 
@@ -759,6 +764,7 @@ internal B32
 wm_window_is_focused(WM_Window handle)
 {
   if(wm_window_match(handle, wm_window_zero())) {return 0;}
+  if(wm_sim_is_enabled()) {return 1;}
   LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
   Window focused_window = 0;
   int revert_to = 0;
@@ -1136,6 +1142,10 @@ internal WM_EventList
 wm_get_events(Arena *arena, B32 wait)
 {
   WM_EventList evts = {0};
+  if(wm_sim_events_pending())
+  {
+    wait = 0;
+  }
   for(;;)
   {
     if(XPending(lnx_wm_state->display) == 0)
@@ -1510,6 +1520,7 @@ wm_get_events(Arena *arena, B32 wait)
       break;
     }
   }
+  wm_sim_take_events(arena, &evts);
   return evts;
 }
 
@@ -1517,6 +1528,10 @@ internal WM_Modifiers
 wm_get_modifiers(void)
 {
   WM_Modifiers mods = lnx_wm_state->modifier_state;
+  if(wm_sim_is_enabled())
+  {
+    mods = wm_sim_modifiers();
+  }
   return mods;
 }
 
@@ -1524,6 +1539,10 @@ internal B32
 wm_key_is_down(WM_Key key)
 {
   B32 result = !!(lnx_wm_state->key_down_state[key/64] & (1ull<<(key%64)));
+  if(wm_sim_is_enabled())
+  {
+    result = wm_sim_key_is_down(key);
+  }
   return result;
 }
 
@@ -1531,6 +1550,7 @@ internal Vec2F32
 wm_mouse_from_window(WM_Window handle)
 {
   if(wm_window_match(handle, wm_window_zero())) {return v2f32(0, 0);}
+  if(wm_sim_is_enabled()) {return wm_sim_mouse();}
   LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
   Vec2F32 result = {0};
   {

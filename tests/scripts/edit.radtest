@@ -1,0 +1,50 @@
+# Editing: click to place the cursor, typing, Enter, Backspace, copy/paste,
+# undo/redo, save; dirty tracking. (The clipboard is private in script mode.)
+
+open ../fixtures/edit.txt
+wait_idle
+expect line 1 == "alpha"
+expect line_count == 4
+expect dirty == 0
+
+# click at the end of line 1, type
+click code 1 6
+expect cursor_line == 1
+expect cursor_col == 6
+text " one"
+expect line 1 == "alpha one"
+expect dirty == 1
+
+# Enter keeps going on a new line; Backspace deletes
+key return
+text "new"
+expect line 2 == "new"
+expect line 3 == "beta"
+key backspace
+expect line 2 == "ne"
+
+# select "beta" with the mouse, copy, paste at the end of line 4
+drag code 3 1 code 3 5
+key ctrl+c
+click code 4 6
+key ctrl+v
+expect line 4 == "gammabeta"
+
+# undo everything, back to the saved text, then redo everything
+key ctrl+z 20
+wait_idle
+expect line 1 == "alpha"
+expect line 2 == "beta"
+expect line_count == 4
+expect dirty == 0
+key ctrl+y 20
+wait_idle
+expect line 1 == "alpha one"
+expect line 4 == "gammabeta"
+expect dirty == 1
+
+# save writes the file, clears dirty
+key ctrl+s
+wait_idle
+expect dirty == 0
+expect file ../fixtures/edit.txt == "alpha one\nne\nbeta\ngammabeta\n"

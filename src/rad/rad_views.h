@@ -31,6 +31,17 @@ struct RAD_CodeViewState
   B32 center_cursor;
   B32 contain_cursor;
   B32 force_contain_only;
+
+  // rad: layout of the last build, in window pixels (scripted input aims
+  // with it; see rad_script.h)
+  Rng2F32 layout_code_rect;
+  Rng2F32 layout_text_rect;
+  F32 layout_text_x_off;
+  F32 layout_line_height;
+  Rng1S64 layout_visible_lines;
+  FNT_Tag layout_font;
+  F32 layout_font_size;
+  F32 layout_tab_size;
 };
 
 ////////////////////////////////
@@ -85,6 +96,15 @@ struct RAD_ExplorerState
   Vec2S64 mark;
   U8 selected_path_buffer[4096];
   U64 selected_path_size;
+
+  // rad: layout of the last build, in window pixels (scripted input aims
+  // with it; see rad_script.h). `layout_first_row_rect` is the rect of row
+  // `layout_first_row` (0-based); rows are `layout_row_height` apart.
+  Rng2F32 layout_rect;
+  S64 layout_first_row;
+  Rng2F32 layout_first_row_rect;
+  F32 layout_row_height;
+  F32 layout_font_size;
 };
 
 ////////////////////////////////

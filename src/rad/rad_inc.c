@@ -4,3 +4,4 @@
 #include "rad_core.c"
 #include "rad_widgets.c"
 #include "rad_views.c"
+#include "rad_script.c"

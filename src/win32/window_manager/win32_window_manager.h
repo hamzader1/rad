@@ -41,6 +41,7 @@ struct W32_WM_Window
   WINDOWPLACEMENT last_window_placement;
   F32 dpi;
   B32 first_paint_done;
+  B32 no_activate;
   B32 maximized;
   B32 custom_border;
   F32 custom_border_title_thickness;

@@ -514,6 +514,8 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
     }
 
     result.mouse_off = mouse_off;
+    result.text_rect = text_container_box->rect;
+    result.text_x_off = params->line_num_width_px + line_num_padding_px;
   }
 
   //////////////////////////////

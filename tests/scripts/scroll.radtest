@@ -1,0 +1,42 @@
+# Editor scrolling with the mouse wheel and the keyboard.
+# (Bug fixed 2026-11-03: the wheel moved the scroll bar but not the text.)
+
+open ../fixtures/lines_3000.txt
+wait_idle
+expect panel == "text"
+expect tab == "lines_3000.txt"
+expect line_count == 3001
+expect line 3000 == "line 3000"
+expect visible_first == 1
+
+# wheel: 3 lines per notch, both directions, clamped at the top
+wheel 10 code_center
+wait_idle
+expect visible_first == 31
+wheel -4 code_center
+wait_idle
+expect visible_first == 19
+wheel -100 code_center
+wait_idle
+expect visible_first == 1
+
+# keyboard: the view follows the cursor
+key ctrl+end
+wait_idle
+expect cursor_line == 3001
+expect visible_last == 3001
+key ctrl+home
+wait_idle
+expect cursor_line == 1
+expect visible_first == 1
+key page_down 3
+wait_idle
+expect cursor_line > 100
+expect visible_first > 1
+
+# a long scroll lands where it should
+key ctrl+home
+wait_idle
+wheel 200 code_center
+wait_idle
+expect visible_first == 601

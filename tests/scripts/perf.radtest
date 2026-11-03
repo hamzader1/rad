@@ -1,0 +1,26 @@
+# Timing baselines: typing and wheel scrolling in a 3,000-line file.
+# Read the MEASURE lines; times are not pass/fail (yet).
+#   frame:         includes the vsync wait, so ~16.7 ms at 60 Hz is the floor
+#   ui build:      CPU time building + laying out the UI
+#   input latency: input injected -> its frame presented (app side only)
+
+open ../fixtures/lines_3000.txt
+wait_idle
+click code 10 1
+wait_idle
+
+measure_begin typing
+text "the quick brown fox jumps over the lazy dog, then the quick brown fox jumps again"
+measure_end typing
+expect line 10 == "the quick brown fox jumps over the lazy dog, then the quick brown fox jumps againline 10"
+wait_idle
+
+measure_begin wheel
+wheel 100 code_center
+wait_idle
+measure_end wheel
+expect visible_first == 301
+
+measure_begin idle_frames
+wait_frames 60
+measure_end idle_frames

@@ -299,3 +299,141 @@ wm_event_list_push_new(Arena *arena, WM_EventList *evts, WM_EventKind kind)
   evt->kind = kind;
   return evt;
 }
+
+////////////////////////////////
+//~ rad: Simulated Input Functions (Helpers, Implemented Once)
+
+global WM_SimState wm_sim_state = {0};
+
+//- rad: driving side (scripts)
+
+internal void
+wm_sim_set_enabled(B32 enabled)
+{
+  if(enabled && wm_sim_state.events_arena == 0)
+  {
+    wm_sim_state.events_arena = arena_alloc();
+    wm_sim_state.clipboard_arena = arena_alloc();
+  }
+  wm_sim_state.enabled = enabled;
+}
+
+internal WM_Event *
+wm_sim_push_event(WM_Window window, WM_EventKind kind)
+{
+  WM_Event *evt = wm_event_list_push_new(wm_sim_state.events_arena, &wm_sim_state.events, kind);
+  evt->window = window;
+  return evt;
+}
+
+internal void
+wm_sim_set_mouse(Vec2F32 mouse)
+{
+  wm_sim_state.mouse = mouse;
+}
+
+internal void
+wm_sim_set_modifiers(WM_Modifiers modifiers)
+{
+  wm_sim_state.modifiers = modifiers;
+}
+
+internal void
+wm_sim_set_key_is_down(WM_Key key, B32 is_down)
+{
+  if(key < WM_Key_COUNT)
+  {
+    wm_sim_state.key_is_down[key] = (B8)!!is_down;
+  }
+}
+
+//- rad: answering side (per-OS implementations)
+
+internal B32
+wm_sim_is_enabled(void)
+{
+  return wm_sim_state.enabled;
+}
+
+internal B32
+wm_sim_events_pending(void)
+{
+  return (wm_sim_state.enabled && wm_sim_state.events.count != 0);
+}
+
+internal void
+wm_sim_take_events(Arena *arena, WM_EventList *events)
+{
+  if(wm_sim_state.enabled)
+  {
+    //- rad: drop real input
+    for(WM_Event *evt = events->first, *next = 0; evt != 0; evt = next)
+    {
+      next = evt->next;
+      switch(evt->kind)
+      {
+        default:{}break;
+        case WM_EventKind_Press:
+        case WM_EventKind_Release:
+        case WM_EventKind_MouseMove:
+        case WM_EventKind_Text:
+        case WM_EventKind_Scroll:
+        case WM_EventKind_WindowLoseFocus:
+        case WM_EventKind_FileDrop:
+        {
+          wm_eat_event(events, evt);
+        }break;
+      }
+    }
+
+    //- rad: deliver queued simulated events (copied: the queue's arena is reset)
+    for(WM_Event *src = wm_sim_state.events.first; src != 0; src = src->next)
+    {
+      WM_Event *dst = wm_event_list_push_new(arena, events, src->kind);
+      WM_Event *dst_next = dst->next;
+      WM_Event *dst_prev = dst->prev;
+      MemoryCopyStruct(dst, src);
+      dst->next = dst_next;
+      dst->prev = dst_prev;
+      dst->strings = str8_list_copy(arena, &src->strings);
+    }
+    arena_clear(wm_sim_state.events_arena);
+    MemoryZeroStruct(&wm_sim_state.events);
+  }
+}
+
+internal Vec2F32
+wm_sim_mouse(void)
+{
+  return wm_sim_state.mouse;
+}
+
+internal WM_Modifiers
+wm_sim_modifiers(void)
+{
+  return wm_sim_state.modifiers;
+}
+
+internal B32
+wm_sim_key_is_down(WM_Key key)
+{
+  B32 result = 0;
+  if(key < WM_Key_COUNT)
+  {
+    result = wm_sim_state.key_is_down[key];
+  }
+  return result;
+}
+
+internal void
+wm_sim_set_clipboard_text(String8 string)
+{
+  arena_clear(wm_sim_state.clipboard_arena);
+  wm_sim_state.clipboard = push_str8_copy(wm_sim_state.clipboard_arena, string);
+}
+
+internal String8
+wm_sim_get_clipboard_text(Arena *arena)
+{
+  return push_str8_copy(arena, wm_sim_state.clipboard);
+}

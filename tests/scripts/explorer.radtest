@@ -1,0 +1,49 @@
+# Explorer: open a folder, rows (folders first), expand/collapse with the
+# mouse and the keyboard, open files with Enter and double-click.
+
+open_folder ../fixtures/project
+wait_idle
+expect explorer_root == "project"
+expect panel == "explorer"
+expect explorer_rows == 4
+expect explorer_row 1 == "src"
+expect explorer_row 2 == "tests"
+expect explorer_row 3 == "Cargo.toml"
+expect explorer_row 4 == "README.md"
+
+# expander click opens a folder in place
+click explorer_expander src
+wait_idle
+expect explorer_rows == 7
+expect explorer_row 2 == "util"
+expect explorer_row 3 == "lib.rs"
+expect explorer_row 4 == "main.rs"
+
+# click selects; Enter opens the file in the editor panel
+click explorer main.rs
+expect explorer_selected == "main.rs"
+expect panel == "explorer"
+key return
+wait_idle
+expect panel == "text"
+expect tab == "main.rs"
+expect line 1 == "mod util;"
+
+# keyboard: back to the explorer, Left collapses, Right expands
+key ctrl+comma
+expect panel == "explorer"
+key up 3
+expect explorer_selected == "src"
+key left
+wait_idle
+expect explorer_rows == 4
+key right
+wait_idle
+expect explorer_rows == 7
+
+# double-click opens a file too
+double_click explorer lib.rs
+wait_idle
+expect panel == "text"
+expect tab == "lib.rs"
+expect line 1 == "pub fn add(a: i32, b: i32) -> i32 {"

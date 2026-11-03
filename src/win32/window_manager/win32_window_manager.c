@@ -1015,7 +1015,11 @@ internal void
 wm_set_clipboard_text(String8 string)
 {
   Temp scratch = scratch_begin(0, 0);
-  if(OpenClipboard(0))
+  if(wm_sim_is_enabled())
+  {
+    wm_sim_set_clipboard_text(string);
+  }
+  else if(OpenClipboard(0))
   {
     EmptyClipboard();
     String16 string16 = str16_from_8(scratch.arena, string);
@@ -1037,8 +1041,12 @@ internal String8
 wm_get_clipboard_text(Arena *arena)
 {
   String8 result = {0};
-  if(IsClipboardFormatAvailable(CF_UNICODETEXT) &&
-     OpenClipboard(0))
+  if(wm_sim_is_enabled())
+  {
+    result = wm_sim_get_clipboard_text(arena);
+  }
+  else if(IsClipboardFormatAvailable(CF_UNICODETEXT) &&
+          OpenClipboard(0))
   {
     HANDLE data_handle = GetClipboardData(CF_UNICODETEXT);
     if(data_handle)
@@ -1122,6 +1130,9 @@ wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
     window->custom_border = 1;
     window->paint_arena = arena_alloc();
   }
+
+  //- rad: shown without taking keyboard focus
+  window->no_activate = !!(flags & WM_WindowFlag_NoActivate);
   
   //- rjf: convert to handle + return
   WM_Window result = w32_wm_handle_from_window(window);
@@ -1158,10 +1169,17 @@ wm_window_first_paint(WM_Window window_handle)
   if(window != 0)
   {
     window->first_paint_done = 1;
-    ShowWindow(window->hwnd, SW_SHOW);
-    if(window->maximized)
+    if(window->no_activate)
     {
-      ShowWindow(window->hwnd, SW_MAXIMIZE);
+      ShowWindow(window->hwnd, SW_SHOWNOACTIVATE);
+    }
+    else
+    {
+      ShowWindow(window->hwnd, SW_SHOW);
+      if(window->maximized)
+      {
+        ShowWindow(window->hwnd, SW_MAXIMIZE);
+      }
     }
   }
 }
@@ -1182,7 +1200,11 @@ wm_window_is_focused(WM_Window handle)
 {
   B32 result = 0;
   W32_WM_Window *window = w32_wm_window_from_handle(handle);
-  if(window != 0)
+  if(window != 0 && wm_sim_is_enabled())
+  {
+    result = 1;
+  }
+  else if(window != 0)
   {
     HWND active_hwnd = GetForegroundWindow();
     result = active_hwnd == window->hwnd;
@@ -1549,6 +1571,10 @@ wm_get_events(Arena *arena, B32 wait)
   w32_wm_event_arena = arena;
   MemoryZeroStruct(&w32_wm_event_list);
   MSG msg = {0};
+  if(wm_sim_events_pending())
+  {
+    wait = 0;
+  }
   if(!wait || GetMessageW(&msg, 0, 0, 0))
   {
     B32 first_wait = wait;
@@ -1562,6 +1588,7 @@ wm_get_events(Arena *arena, B32 wait)
       }
     }
   }
+  wm_sim_take_events(arena, &w32_wm_event_list);
   return w32_wm_event_list;
 }
 
@@ -1569,17 +1596,24 @@ internal WM_Modifiers
 wm_get_modifiers(void)
 {
   WM_Modifiers modifiers = 0;
-  if(GetKeyState(VK_CONTROL) & 0x8000)
+  if(wm_sim_is_enabled())
   {
-    modifiers |= WM_Modifier_Ctrl;
+    modifiers = wm_sim_modifiers();
   }
-  if(GetKeyState(VK_SHIFT) & 0x8000)
+  else
   {
-    modifiers |= WM_Modifier_Shift;
-  }
-  if(GetKeyState(VK_MENU) & 0x8000)
-  {
-    modifiers |= WM_Modifier_Alt;
+    if(GetKeyState(VK_CONTROL) & 0x8000)
+    {
+      modifiers |= WM_Modifier_Ctrl;
+    }
+    if(GetKeyState(VK_SHIFT) & 0x8000)
+    {
+      modifiers |= WM_Modifier_Shift;
+    }
+    if(GetKeyState(VK_MENU) & 0x8000)
+    {
+      modifiers |= WM_Modifier_Alt;
+    }
   }
   return modifiers;
 }
@@ -1589,7 +1623,11 @@ wm_key_is_down(WM_Key key)
 {
   B32 down = 0;
   WPARAM vkey = w32_wm_vkey_from_os_key(key);
-  if(GetKeyState(vkey) & 0x8000)
+  if(wm_sim_is_enabled())
+  {
+    down = wm_sim_key_is_down(key);
+  }
+  else if(GetKeyState(vkey) & 0x8000)
   {
     down = 1;
   }
@@ -1602,7 +1640,11 @@ wm_mouse_from_window(WM_Window handle)
   ProfBeginFunction();
   Vec2F32 v = {0};
   POINT p;
-  if(GetCursorPos(&p))
+  if(wm_sim_is_enabled())
+  {
+    v = wm_sim_mouse();
+  }
+  else if(GetCursorPos(&p))
   {
     W32_WM_Window *window = w32_wm_window_from_handle(handle);
     ScreenToClient(window->hwnd, &p);
@@ -1642,7 +1684,7 @@ hcursor = curs; }break;
 #undef CursorCase
 #undef Win32CursorXList
   }
-  if(valid_cursor && !w32_wm_resizing)
+  if(valid_cursor && !w32_wm_resizing && !wm_sim_is_enabled())
   {
     if(hcursor != w32_wm_state->hCursor)
     {

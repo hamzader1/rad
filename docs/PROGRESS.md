@@ -16,7 +16,7 @@ optimized build in `build\release\rad.exe` at the end of every milestone.
 | 2. Editor view without a debugger    | Done. |
 | 3. Editable text core                | Mostly done, see below (rest folds into 6). |
 | 4. File explorer                     | Done (keyboard, mouse, Open Folder checked). "+" in its panel = Open Folder. |
-| 5. Test and measure                  | In progress. |
+| 5. Test and measure                  | Done. `tests\run_scripts.ps1`: 4 scripts, 60 checks, all pass (debug and release). |
 | 6. Editor essentials                 | Not started. |
 | 7. Rust syntax highlighting          | Not started. |
 | 8. Cargo integration                 | Not started. |
@@ -65,16 +65,45 @@ Milestone 4 details:
 - NOT checked in the app yet: a folder argument, refresh after files
   change on disk.
 
+Milestone 5 details:
+- `rad --script:<file> [--script_out:<file>]` runs a test script and exits.
+  Language, fields and targets: top of `src/rad/rad_script.h`.
+- Input is simulated in the `window_manager` layer ("Simulated Input" in
+  `window_manager.h`): queued events come out of `wm_get_events`, and the
+  focus, mouse, modifier, key-down and clipboard queries answer from the
+  simulated state, so the UI code runs exactly as with OS input. Real
+  keyboard/mouse events are dropped while a script runs, the window opens
+  without activating (`WM_WindowFlag_NoActivate`), the clipboard is private.
+- `tests\run_scripts.ps1` runs every `tests\scripts\*.radtest` on a fresh
+  copy of `tests\` in `%TEMP%\rad_script_tests`, prints OK/FAIL, failing
+  lines and MEASURE lines; exit code = failed scripts. Ran while the user
+  worked: no focus taken.
+- Scripts: `scroll` (wheel both ways, clamp, Ctrl+End/Home, PageDown, long
+  scroll), `edit` (click, typing, Enter, Backspace, mouse selection, copy,
+  paste, 20x undo back to clean, 20x redo, save -> exact bytes on disk),
+  `explorer` (rows, folders first, expander click, click select, Enter and
+  double-click open, Left/Right collapse/expand), `perf` (timings).
+- Timings (`perf`, 3,000-line file, 60 Hz display):
+
+  | build   | UI build per frame (avg / p95) | input -> frame presented |
+  |---------|--------------------------------|--------------------------|
+  | debug   | typing 4.1 / 4.7 ms, wheel 3.9 / 4.6 ms | 16.6 ms (1 frame) |
+  | release | typing 2.4 / 3.3 ms, wheel 2.2 / 3.0 ms | 16.6 ms (1 frame) |
+
+  Every input shows up in the next presented frame; the rest of the frame
+  is the vsync wait. "Input latency" is app-side only (the OS and the
+  compositor add more, not measured).
+
 ## Next steps
 
-1. Milestone 5, test and measure: `--script:<file>` mode in rad (input
-   injection without focus, state checks, frame/latency timing, results
-   file) and a runner in `tests/`. Then scripts for scroll, typing,
-   undo/redo, save, explorer.
+1. Milestone 6, editor essentials: one buffer per file, Find (Ctrl+F) and
+   Go to Line ported from raddbg, session memory, Save All, file watching,
+   audit of the port against raddbg's per-frame steps. Each with a script.
 2. Open questions for the user: explorer as a "special panel" beyond "+"
    (tab not closable? fixed-width sidebar? other tabs kept out of it?);
    what exactly feels slow (typing delay, scrolling, opening, startup).
-3. Milestone 6 then 7 (Rust lexer in `text`, C lexer style, `.rs`).
+   Measured: 1 frame from input to screen, see milestone 5.
+3. Milestone 7 (Rust lexer in `text`, C lexer style, `.rs`).
 4. For milestone 11 (Mac, at the end), already known: `base_core.h:276-277`
    and `base_core.c:667` need ARM64 guards; drop `-mcx16` on ARM64.
 
@@ -100,6 +129,14 @@ Milestone 4 details:
 - Settings are hardcoded raddbg defaults (`rad_default_settings`). Window
   position and panel layout are not saved between runs.
 - Tab inserts 4 spaces. No smart indent after `{`.
+- Script mode injects input after the OS layer (as `WM_Event`s), so the
+  win32 message translation (WM_KEYDOWN/WM_CHAR -> events) is not covered;
+  typed text comes from `wm_codepoint_from_modifiers_and_key` (US layout).
+  The linux simulated-input hooks are written but NOT compiled or run.
+- Script timings are reported, not checked (no pass/fail thresholds yet).
+- The first launch of a freshly built exe took 15-25 s longer (seen 3
+  times, debug and release); the same exe then starts in ~2 s. Cause not
+  verified (suspect: antivirus scanning a new exe).
 
 ## Build, run, test (Windows)
 
@@ -117,12 +154,16 @@ Milestone 4 details:
   which breaks build.bat's bare `metagen.exe` call. Unset it, put
   `C:\Program Files (x86)\Microsoft Visual Studio\Installer` on PATH, call
   `vcvars64.bat`, then `build.bat`.
-- Driving the UI from a script: screenshot with `PrintWindow(hwnd, hdc, 2)`.
-  Plain keys work through `PostMessage`; Ctrl/Shift do not (the win32 layer
-  reads them with `GetKeyState`), so chords need `keybd_event` while rad is
-  the foreground window. rad ignores keys when its window is not focused.
-  Taking the foreground interrupts the user, and their own keystrokes then
-  land in rad (happened once). Prefer `rad_tests`; keep app runs short.
+- UI tests: `powershell -ExecutionPolicy Bypass -File tests\run_scripts.ps1
+  [-Exe build\rad.exe] [-Filter scroll]`. They take no focus, so they can
+  run while you work. A new check = a line in a `tests\scripts\*.radtest`
+  (language at the top of `src/rad/rad_script.h`).
+- If `build\rad.exe` is open, linking it fails (LNK1104); build the same cl
+  line to another exe name and pass it with `-Exe`.
+- Old way, avoid: driving the real window with `PostMessage`/`keybd_event`
+  needs the foreground, interrupts the user, and their keystrokes then land
+  in rad (happened once). `PrintWindow` on a background rad window can
+  block for a minute or return blank pixels.
 
 ## Code map (`src/rad/`)
 
@@ -140,12 +181,30 @@ Milestone 4 details:
   view (tab `explorer`, child `folder`) at the end of the file.
 - `rad_widgets.h/.c` also hold `rad_cell` (port of raddbg's `rd_cell`,
   read-only), the row widget of the explorer.
+- `rad_script.h/.c`: script mode (`--script:<file>`): parser, input
+  queue (one step per frame), state fields, targets from the last frame's
+  layout (`layout_*` fields in the code view and explorer states), timing.
 - `tests/rad_tests.c`: console tests on base/content/text/text_buffer.
+- Repo root `tests/` (not `src/rad/tests/`): `run_scripts.ps1`,
+  `scripts/*.radtest`, `fixtures/` (stored byte-exact: `-text` in
+  `.gitattributes`): app-level UI tests.
 
 `src/text_buffer/` (`TB_`): the editable buffer, see the notes at the top
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (milestone 5: test and measure)
+- Script mode + simulated input in `window_manager` + runner, 4 scripts,
+  60 checks; all pass on the debug build and on the optimized build
+  (`build\release\rad.exe`, the milestone build for the user).
+- Bug found by the runner: rad sometimes never exited after a script. The
+  script ends during the frame's tick, before that frame's event wait;
+  with no frame requested the wait blocked until an OS message arrived,
+  which for a background window can be never. Fix: request a frame on
+  finish. 12 runs in a row exited in ~2 s (the first run had hung before).
+- Measured: every input shows up in the next presented frame (16.6 ms at
+  60 Hz); UI build ~2.2 ms release, ~4 ms debug. Table under milestone 5.
 
 ### 2026-11-03 (plan revised)
 - Agreed with the user: new milestones 5 (test and measure) and 6 (editor
