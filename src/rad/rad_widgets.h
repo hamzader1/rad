@@ -12,6 +12,40 @@
 // (config-driven rebinding, eval-driven names).
 
 ////////////////////////////////
+//~ rad: Cell Types
+//
+// Port of raddbg's RD_CellFlags/RD_CellParams, the read-only subset: depth
+// indentation, expander, value text. No line editing, toggle switches,
+// sliders, bindings, notes, locks, or name/description column.
+
+typedef U32 RAD_CellFlags;
+enum
+{
+  //- rad: expander
+  RAD_CellFlag_Expander            = (1<<0),
+  RAD_CellFlag_ExpanderSpace       = (1<<1),
+  RAD_CellFlag_ExpanderPlaceholder = (1<<2),
+
+  //- rad: behavior
+  RAD_CellFlag_KeyboardClickable   = (1<<3),
+  RAD_CellFlag_SingleClickActivate = (1<<4),
+
+  //- rad: appearance
+  RAD_CellFlag_Border              = (1<<5),
+  RAD_CellFlag_NoBackground        = (1<<6),
+  RAD_CellFlag_Button              = (1<<7),
+};
+
+typedef struct RAD_CellParams RAD_CellParams;
+struct RAD_CellParams
+{
+  RAD_CellFlags flags;
+  S32 depth;
+  DR_FStrList value_fstrs;
+  B32 *expanded_out;
+};
+
+////////////////////////////////
 //~ rad: Code Slice Types
 //
 // Port of raddbg's RD_CodeSliceParams/RD_CodeSliceSignal, minus breakpoint,
@@ -68,6 +102,12 @@ internal UI_Signal rad_icon_buttonf(RAD_IconKind kind, FuzzyMatchRangeList *matc
 internal void rad_cmd_binding_labels(RAD_CmdKind kind);
 internal UI_Signal rad_cmd_spec_button(RAD_CmdKind kind);
 internal void rad_cmd_list_menu_buttons(U64 count, RAD_CmdKind *kinds, U32 *fastpath_codepoints);
+
+////////////////////////////////
+//~ rad: Cells
+
+internal UI_Signal rad_cell(RAD_CellParams *params, String8 string);
+internal UI_Signal rad_cellf(RAD_CellParams *params, char *fmt, ...);
 
 ////////////////////////////////
 //~ rad: Code Slice

@@ -60,6 +60,11 @@ rad_view_state_gc(void)
         {
           tb_buffer_release(vs->cv.buffer);
         }
+        if(vs->ex.initialized)
+        {
+          arena_release(vs->ex.expansions_arena);
+          arena_release(vs->ex.rows_arena);
+        }
         arena_release(vs->arena);
         SLLStackPush_N(rad_state->free_view_state, vs, hash_next);
       }
@@ -909,4 +914,503 @@ rad_tab_is_dirty(CFG_Node *tab)
     result = (vs != 0 && vs->cv.initialized && tb_buffer_is_dirty(vs->cv.buffer));
   }
   return result;
+}
+
+////////////////////////////////
+//~ rad: Explorer
+
+#define RAD_EXPLORER_MAX_ROWS 100000
+#define RAD_EXPLORER_REFRESH_US 1000000
+
+typedef struct RAD_ExplorerRowNode RAD_ExplorerRowNode;
+struct RAD_ExplorerRowNode
+{
+  RAD_ExplorerRowNode *next;
+  RAD_ExplorerRow v;
+};
+
+typedef struct RAD_ExplorerRowList RAD_ExplorerRowList;
+struct RAD_ExplorerRowList
+{
+  RAD_ExplorerRowNode *first;
+  RAD_ExplorerRowNode *last;
+  U64 count;
+};
+
+internal String8
+rad_explorer_folder_from_tab(CFG_Node *tab)
+{
+  String8 result = cfg_node_child_from_string(tab, str8_lit("folder"))->first->string;
+  return result;
+}
+
+internal B32
+rad_explorer_is_expanded(RAD_ExplorerState *ex, String8 path)
+{
+  B32 result = 0;
+  for(RAD_ExplorerExpansion *e = ex->first_expansion; e != 0; e = e->next)
+  {
+    if(str8_match(e->path, path, 0))
+    {
+      result = 1;
+      break;
+    }
+  }
+  return result;
+}
+
+internal void
+rad_explorer_set_expanded(RAD_ExplorerState *ex, String8 path, B32 expanded)
+{
+  RAD_ExplorerExpansion *existing = 0;
+  for(RAD_ExplorerExpansion *e = ex->first_expansion; e != 0; e = e->next)
+  {
+    if(str8_match(e->path, path, 0))
+    {
+      existing = e;
+      break;
+    }
+  }
+  if(expanded && existing == 0)
+  {
+    RAD_ExplorerExpansion *e = ex->free_expansion;
+    if(e != 0)
+    {
+      SLLStackPop(ex->free_expansion);
+    }
+    else
+    {
+      e = push_array_no_zero(ex->expansions_arena, RAD_ExplorerExpansion, 1);
+    }
+    MemoryZeroStruct(e);
+    e->path = push_str8_copy(ex->expansions_arena, path);
+    DLLPushBack(ex->first_expansion, ex->last_expansion, e);
+  }
+  else if(!expanded && existing != 0)
+  {
+    DLLRemove(ex->first_expansion, ex->last_expansion, existing);
+    SLLStackPush(ex->free_expansion, existing);
+  }
+  ex->rows_dirty = 1;
+}
+
+internal int
+rad_explorer_file_info_compare(FileInfo *a, FileInfo *b)
+{
+  // NOTE(rad): folders first, then by name (case-insensitive, then exact)
+  int result = 0;
+  B32 a_is_folder = !!(a->props.flags & FilePropertyFlag_IsFolder);
+  B32 b_is_folder = !!(b->props.flags & FilePropertyFlag_IsFolder);
+  if(a_is_folder != b_is_folder)
+  {
+    result = (a_is_folder ? -1 : +1);
+  }
+  for(U64 idx = 0; result == 0 && idx < a->name.size && idx < b->name.size; idx += 1)
+  {
+    U8 ca = lower_from_char(a->name.str[idx]);
+    U8 cb = lower_from_char(b->name.str[idx]);
+    result = (ca < cb ? -1 : ca > cb ? +1 : 0);
+  }
+  if(result == 0)
+  {
+    result = (a->name.size < b->name.size ? -1 : a->name.size > b->name.size ? +1 : 0);
+  }
+  if(result == 0)
+  {
+    result = (str8_is_before(a->name, b->name) ? -1 : str8_is_before(b->name, a->name) ? +1 : 0);
+  }
+  return result;
+}
+
+internal void
+rad_explorer_rows_push_folder__(Arena *arena, RAD_ExplorerState *ex, RAD_ExplorerRowList *rows, String8 folder, S32 depth)
+{
+  Temp scratch = scratch_begin(&arena, 1);
+
+  //- rad: list the folder
+  typedef struct InfoNode InfoNode;
+  struct InfoNode
+  {
+    InfoNode *next;
+    FileInfo v;
+  };
+  InfoNode *first_info = 0;
+  InfoNode *last_info = 0;
+  U64 infos_count = 0;
+  FileIter *it = file_iter_begin(scratch.arena, folder, 0);
+  for(FileInfo info = {0}; file_iter_next(scratch.arena, it, &info);)
+  {
+    if(str8_match(info.name, str8_lit(".git"), 0))
+    {
+      continue;
+    }
+    InfoNode *n = push_array(scratch.arena, InfoNode, 1);
+    n->v = info;
+    SLLQueuePush(first_info, last_info, n);
+    infos_count += 1;
+  }
+  file_iter_end(it);
+
+  //- rad: sort: folders first, then by name
+  FileInfo *infos = push_array(scratch.arena, FileInfo, infos_count);
+  {
+    U64 idx = 0;
+    for(InfoNode *n = first_info; n != 0; n = n->next, idx += 1)
+    {
+      infos[idx] = n->v;
+    }
+  }
+  quick_sort(infos, infos_count, sizeof(infos[0]), rad_explorer_file_info_compare);
+
+  //- rad: push rows; recurse into expanded folders
+  B32 folder_has_trailing_slash = (folder.size != 0 && (folder.str[folder.size-1] == '/' || folder.str[folder.size-1] == '\\'));
+  for EachIndex(idx, infos_count)
+  {
+    if(rows->count >= RAD_EXPLORER_MAX_ROWS)
+    {
+      break;
+    }
+    FileInfo *info = &infos[idx];
+    RAD_ExplorerRowNode *n = push_array(arena, RAD_ExplorerRowNode, 1);
+    n->v.path = push_str8f(arena, "%S%s%S", folder, folder_has_trailing_slash ? "" : "/", info->name);
+    n->v.name = str8_skip_last_slash(n->v.path);
+    n->v.depth = depth;
+    n->v.is_folder = !!(info->props.flags & FilePropertyFlag_IsFolder);
+    n->v.is_expanded = (n->v.is_folder && rad_explorer_is_expanded(ex, n->v.path));
+    SLLQueuePush(rows->first, rows->last, n);
+    rows->count += 1;
+    if(n->v.is_expanded)
+    {
+      rad_explorer_rows_push_folder__(arena, ex, rows, n->v.path, depth+1);
+    }
+  }
+
+  scratch_end(scratch);
+}
+
+internal void
+rad_explorer_rows_build(RAD_ExplorerState *ex, String8 root)
+{
+  arena_clear(ex->rows_arena);
+  ex->rows_root = push_str8_copy(ex->rows_arena, root);
+  RAD_ExplorerRowList rows = {0};
+  rad_explorer_rows_push_folder__(ex->rows_arena, ex, &rows, ex->rows_root, 0);
+  ex->rows = push_array(ex->rows_arena, RAD_ExplorerRow, rows.count);
+  ex->rows_count = rows.count;
+  {
+    U64 idx = 0;
+    for(RAD_ExplorerRowNode *n = rows.first; n != 0; n = n->next, idx += 1)
+    {
+      ex->rows[idx] = n->v;
+    }
+  }
+  ex->rows_build_us = now_time_us();
+  ex->rows_dirty = 0;
+
+  //- rad: keep the selection on the same path
+  String8 selected_path = str8(ex->selected_path_buffer, ex->selected_path_size);
+  if(selected_path.size != 0)
+  {
+    for EachIndex(idx, ex->rows_count)
+    {
+      if(str8_match(ex->rows[idx].path, selected_path, 0))
+      {
+        ex->cursor = ex->mark = v2s64(0, (S64)idx+1);
+        break;
+      }
+    }
+  }
+  ex->cursor.y = Clamp(0, ex->cursor.y, (S64)ex->rows_count);
+  ex->mark.y = Clamp(0, ex->mark.y, (S64)ex->rows_count);
+}
+
+internal CFG_Node *
+rad_explorer_target_panel_from_tab(CFG_Node *tab)
+{
+  // NOTE(rad): files open in the last focused panel that does not show an
+  // explorer; otherwise in the first other leaf panel; otherwise here.
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *explorer_panel = tab->parent;
+  CFG_Node *result = cfg_node_from_id(rad_state->last_editor_panel);
+  CFG_PanelTree panel_tree = cfg_panel_tree_from_cfg(scratch.arena, explorer_panel);
+  B32 result_is_in_tree = 0;
+  CFG_Node *first_other_leaf = &cfg_nil_node;
+  for(CFG_PanelNode *p = panel_tree.root;
+      p != &cfg_nil_panel_node;
+      p = cfg_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
+  {
+    if(p->first == &cfg_nil_panel_node && p->cfg != explorer_panel)
+    {
+      if(first_other_leaf == &cfg_nil_node)
+      {
+        first_other_leaf = p->cfg;
+      }
+      if(p->cfg == result)
+      {
+        result_is_in_tree = 1;
+      }
+    }
+  }
+  if(!result_is_in_tree)
+  {
+    result = first_other_leaf;
+  }
+  if(result == &cfg_nil_node)
+  {
+    result = explorer_panel;
+  }
+  scratch_end(scratch);
+  return result;
+}
+
+internal void
+rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RAD_ViewState *vs = rad_view_state_from_cfg(tab);
+  RAD_ExplorerState *ex = &vs->ex;
+  if(!ex->initialized)
+  {
+    ex->initialized = 1;
+    ex->expansions_arena = arena_alloc();
+    ex->rows_arena = arena_alloc();
+    ex->rows_dirty = 1;
+  }
+  String8 root = rad_explorer_folder_from_tab(tab);
+
+  //////////////////////////////
+  //- rad: no folder -> empty state (same layout as the text view's missing file)
+  //
+  if(root.size == 0)
+  {
+    UI_WidthFill UI_HeightFill UI_Column UI_Padding(ui_pct(1, 0))
+    {
+      UI_PrefWidth(ui_children_sum(1)) UI_PrefHeight(ui_em(3, 1))
+        UI_Row UI_Padding(ui_pct(1, 0))
+        UI_PrefWidth(ui_text_dim(1, 1))
+        UI_TagF("weak")
+      {
+        ui_labelf("No folder open.");
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: rebuild rows when stale
+  //
+  if(root.size != 0 && (ex->rows_dirty || !str8_match(ex->rows_root, root, 0) || now_time_us() >= ex->rows_build_us + RAD_EXPLORER_REFRESH_US))
+  {
+    rad_explorer_rows_build(ex, root);
+  }
+
+  //////////////////////////////
+  //- rad: unpack
+  //
+  F32 row_height_px = ui_top_px_height();
+  Vec2F32 rect_dim = dim_2f32(rect);
+  F32 contents_width_px = (rect_dim.x - floor_f32(ui_bottom_font_size()*1.5f));
+  S64 rows_count = (root.size != 0 ? (S64)ex->rows_count : 0);
+  String8 toggle_path = {0};
+  String8 open_path = {0};
+
+  //////////////////////////////
+  //- rad: keyboard: Left/Right collapse/expand (or move to parent/child),
+  // Enter opens a file or toggles a folder
+  //
+  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && rows_count != 0)
+  {
+    for(UI_Event *evt = 0; ui_next_event(&evt);)
+    {
+      S64 row_idx = ex->cursor.y - 1;
+      if(row_idx < 0 || row_idx >= rows_count)
+      {
+        continue;
+      }
+      RAD_ExplorerRow *row = &ex->rows[row_idx];
+      if(evt->kind == UI_EventKind_Navigate && evt->delta_unit == UI_EventDeltaUnit_Char &&
+         evt->delta_2s32.y == 0 && evt->delta_2s32.x != 0)
+      {
+        if(evt->delta_2s32.x > 0)
+        {
+          if(row->is_folder && !row->is_expanded)
+          {
+            toggle_path = push_str8_copy(scratch.arena, row->path);
+          }
+          else if(row->is_folder && row_idx+1 < rows_count && ex->rows[row_idx+1].depth > row->depth)
+          {
+            ex->cursor = ex->mark = v2s64(0, row_idx+2);
+          }
+        }
+        else
+        {
+          if(row->is_folder && row->is_expanded)
+          {
+            toggle_path = push_str8_copy(scratch.arena, row->path);
+          }
+          else for(S64 idx = row_idx-1; idx >= 0; idx -= 1)
+          {
+            if(ex->rows[idx].depth < row->depth)
+            {
+              ex->cursor = ex->mark = v2s64(0, idx+1);
+              break;
+            }
+          }
+        }
+        ui_eat_event(evt);
+      }
+      else if(evt->kind == UI_EventKind_Press && evt->key == WM_Key_Return && evt->modifiers == 0)
+      {
+        if(row->is_folder)
+        {
+          toggle_path = push_str8_copy(scratch.arena, row->path);
+        }
+        else
+        {
+          open_path = push_str8_copy(scratch.arena, row->path);
+        }
+        ui_eat_event(evt);
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: build table (port of raddbg's watch view table: scroll list,
+  // row boxes, one cell per row)
+  //
+  if(root.size != 0)
+  {
+    UI_ScrollListParams scroll_list_params = {0};
+    {
+      scroll_list_params.flags         = UI_ScrollListFlag_All;
+      scroll_list_params.row_height_px = row_height_px;
+      scroll_list_params.dim_px        = rect_dim;
+      scroll_list_params.cursor_range  = r2s64(v2s64(0, 0), v2s64(0, rows_count));
+      scroll_list_params.item_range    = r1s64(0, rows_count);
+      scroll_list_params.cursor_min_is_empty_selection[Axis2_Y] = 1;
+    }
+    Rng1S64 visible_row_rng = {0};
+    UI_ScrollListSignal scroll_list_sig = {0};
+    UI_Focus(UI_FocusKind_On)
+      UI_ScrollList(&scroll_list_params, &ex->scroll_pos.y, &ex->cursor, &ex->mark, &visible_row_rng, &scroll_list_sig)
+      UI_Focus(UI_FocusKind_Null)
+    {
+      ui_set_next_pref_height(ui_children_sum(1));
+      ui_set_next_child_layout_axis(Axis2_Y);
+      UI_Box *table = ui_build_box_from_string(0, str8_lit("table"));
+      UI_Parent(table)
+        for(S64 row_idx = visible_row_rng.min; row_idx <= visible_row_rng.max && row_idx < rows_count; row_idx += 1)
+      {
+        RAD_ExplorerRow *row = &ex->rows[row_idx];
+        U64 row_hash = u64_hash_from_str8(row->path);
+        B32 row_selected = (ex->cursor.y == row_idx+1);
+
+        //- rad: row title (same layout as raddbg's rd_title_fstrs_from_file_path)
+        DR_FStrList fstrs = {0};
+        {
+          RAD_IconKind icon_kind = (!row->is_folder ? RAD_IconKind_FileOutline :
+                                    row->is_expanded ? RAD_IconKind_FolderOpenFilled :
+                                    RAD_IconKind_FolderClosedFilled);
+          DR_FStrParams params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+          UI_TagF("weak")
+          {
+            dr_fstrs_push_new(scratch.arena, &fstrs, &params,
+                              rad_icon_kind_text_table[icon_kind],
+                              .font = rad_font_from_slot(RAD_FontSlot_Icons),
+                              .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons),
+                              .color = ui_color_from_name(str8_lit("text")));
+          }
+          dr_fstrs_push_new(scratch.arena, &fstrs, &params, str8_lit("  "));
+          dr_fstrs_push_new(scratch.arena, &fstrs, &params, row->name);
+        }
+
+        //- rad: build row box
+        UI_BoxFlags row_flags = UI_BoxFlag_DisableFocusOverlay;
+        if(row_idx & 1)
+        {
+          ui_set_next_tag(str8_lit("alt"));
+          row_flags |= UI_BoxFlag_DrawBackground;
+        }
+        ui_set_next_pref_width(ui_px(contents_width_px, 1.f));
+        ui_set_next_pref_height(ui_px(row_height_px, 1.f));
+        ui_set_next_focus_hot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off);
+        UI_Box *row_box = ui_build_box_from_stringf(row_flags|((row_idx+1 == rows_count)*UI_BoxFlag_DrawSideBottom)|UI_BoxFlag_Clickable, "row_%I64x", row_hash);
+
+        //- rad: build cell
+        UI_Signal sig = {0};
+        B32 next_expanded = row->is_expanded;
+        UI_Parent(row_box)
+        {
+          UI_Box *cell_box = &ui_nil_box;
+          UI_PrefWidth(ui_px(contents_width_px, 1.f))
+          {
+            ui_set_next_fixed_height(floor_f32(row_height_px));
+            cell_box = ui_build_box_from_stringf(UI_BoxFlag_DrawSideLeft, "cell_%I64x", row_hash);
+          }
+          RAD_CellParams cell_params = {0};
+          cell_params.flags        = (RAD_CellFlag_KeyboardClickable|RAD_CellFlag_NoBackground|
+                                      (row->is_folder ? RAD_CellFlag_Expander : RAD_CellFlag_ExpanderSpace));
+          cell_params.depth        = row->depth;
+          cell_params.value_fstrs  = fstrs;
+          cell_params.expanded_out = &next_expanded;
+          UI_Parent(cell_box)
+            UI_FocusHot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off)
+            UI_FocusActive(UI_FocusKind_Off)
+            RAD_Font(RAD_FontSlot_Code)
+            UI_TagF("weak")
+          {
+            sig = rad_cellf(&cell_params, "###cell_%I64x", row_hash);
+          }
+        }
+        UI_Signal row_sig = ui_signal_from_box(row_box);
+
+        //- rad: interactions: press selects; double-click opens a file or
+        // toggles a folder; the expander toggles
+        if(ui_pressed(sig) || ui_pressed(row_sig))
+        {
+          ex->cursor = ex->mark = v2s64(0, row_idx+1);
+          rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
+        }
+        if(ui_double_clicked(sig) || ui_double_clicked(row_sig))
+        {
+          if(row->is_folder)
+          {
+            toggle_path = push_str8_copy(scratch.arena, row->path);
+          }
+          else
+          {
+            open_path = push_str8_copy(scratch.arena, row->path);
+          }
+        }
+        if(next_expanded != row->is_expanded)
+        {
+          toggle_path = push_str8_copy(scratch.arena, row->path);
+        }
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: remember the selected path (selection survives row rebuilds)
+  //
+  if(1 <= ex->cursor.y && ex->cursor.y <= rows_count)
+  {
+    String8 path = ex->rows[ex->cursor.y-1].path;
+    ex->selected_path_size = Min(path.size, sizeof(ex->selected_path_buffer));
+    MemoryCopy(ex->selected_path_buffer, path.str, ex->selected_path_size);
+  }
+
+  //////////////////////////////
+  //- rad: apply deferred actions (rows rebuild next frame)
+  //
+  if(toggle_path.size != 0)
+  {
+    rad_explorer_set_expanded(ex, toggle_path, !rad_explorer_is_expanded(ex, toggle_path));
+    rad_request_frame();
+  }
+  if(open_path.size != 0)
+  {
+    rad_cmd(RAD_CmdKind_OpenFile, .panel = rad_explorer_target_panel_from_tab(tab)->id, .file_path = open_path);
+  }
+
+  scratch_end(scratch);
 }

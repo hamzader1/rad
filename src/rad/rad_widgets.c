@@ -176,6 +176,184 @@ rad_cmd_list_menu_buttons(U64 count, RAD_CmdKind *kinds, U32 *fastpath_codepoint
 }
 
 ////////////////////////////////
+//~ rad: Cells
+
+internal UI_Signal
+rad_cell(RAD_CellParams *params, String8 string)
+{
+  // NOTE(rad): port of raddbg's rd_cell (raddbg/raddbg_widgets.c), the
+  // non-editing path: same boxes, flags, sizes and tags.
+  ProfBeginFunction();
+  Temp scratch = scratch_begin(0, 0);
+
+  //////////////////////////////
+  //- rad: unpack visual metrics
+  //
+  F32 expander_size_px = floor_f32(ui_top_font_size()*2.f);
+
+  //////////////////////////////
+  //- rad: make key
+  //
+  UI_Key key = ui_key_from_string(ui_active_seed_key(), string);
+
+  //////////////////////////////
+  //- rad: calculate & push focus
+  //
+  B32 is_auto_focus_hot = ui_is_key_auto_focus_hot(key);
+  B32 is_auto_focus_active = ui_is_key_auto_focus_active(key);
+  if(is_auto_focus_hot) { ui_push_focus_hot(UI_FocusKind_On); }
+  if(is_auto_focus_active) { ui_push_focus_active(UI_FocusKind_On); }
+
+  //////////////////////////////
+  //- rad: build top-level box
+  //
+  UI_Box *box = ui_build_box_from_key(UI_BoxFlag_MouseClickable|
+                                      (!!(params->flags & RAD_CellFlag_KeyboardClickable)*UI_BoxFlag_KeyboardClickable)|
+                                      UI_BoxFlag_ClickToFocus|
+                                      (!!(params->flags & RAD_CellFlag_Button)*UI_BoxFlag_DrawHotEffects)|
+                                      (!!(params->flags & RAD_CellFlag_SingleClickActivate)*UI_BoxFlag_DrawActiveEffects)|
+                                      (!(params->flags & RAD_CellFlag_NoBackground)*UI_BoxFlag_DrawBackground)|
+                                      (!!(params->flags & RAD_CellFlag_Border)*UI_BoxFlag_DrawBorder)|
+                                      ((is_auto_focus_hot || is_auto_focus_active)*UI_BoxFlag_KeyboardClickable),
+                                      key);
+
+  //////////////////////////////
+  //- rad: build indent
+  //
+  UI_Parent(box) for(S32 idx = 0; idx < params->depth; idx += 1)
+  {
+    ui_set_next_flags(UI_BoxFlag_DrawSideLeft);
+    ui_spacer(ui_em(1.f, 1.f));
+  }
+
+  //////////////////////////////
+  //- rad: build expander (or placeholder, or space)
+  //
+  {
+    //- rad: build expander
+    if(params->flags & RAD_CellFlag_Expander) UI_PrefWidth(ui_px(expander_size_px, 1.f)) UI_Parent(box)
+      UI_Flags(UI_BoxFlag_DrawSideLeft)
+      UI_Focus(UI_FocusKind_Off)
+    {
+      UI_Signal expander_sig = ui_expanderf(params->expanded_out[0], "expander");
+      if(ui_pressed(expander_sig))
+      {
+        params->expanded_out[0] ^= 1;
+      }
+    }
+
+    //- rad: build expander placeholder
+    else if(params->flags & RAD_CellFlag_ExpanderPlaceholder) UI_Parent(box) UI_PrefWidth(ui_px(expander_size_px, 1.f)) UI_Focus(UI_FocusKind_Off)
+    {
+      UI_TagF("weak")
+        UI_Flags(UI_BoxFlag_DrawSideLeft)
+        RAD_Font(RAD_FontSlot_Icons)
+        UI_TextAlignment(UI_TextAlign_Center)
+        ui_label(rad_icon_kind_text_table[RAD_IconKind_Dot]);
+    }
+
+    //- rad: build expander space
+    else if(params->flags & RAD_CellFlag_ExpanderSpace) UI_Parent(box) UI_Focus(UI_FocusKind_Off)
+    {
+      UI_Flags(UI_BoxFlag_DrawSideLeft) ui_spacer(ui_px(expander_size_px, 1.f));
+    }
+  }
+
+  //////////////////////////////
+  //- rad: build line edit container box
+  //
+  UI_Box *edit_box = &ui_nil_box;
+  UI_Parent(box) UI_PrefWidth(ui_pct(1, 0))
+  {
+    if(ui_top_px_height() > ui_top_font_size()*3.f)
+    {
+      ui_set_next_pref_width(ui_children_sum(1));
+      UI_Column UI_Padding(ui_em(1, 0)) UI_Focus(UI_FocusKind_On)
+      {
+        UI_PrefHeight(ui_em(3.f, 1.f)) UI_CornerRadius(ui_top_font_size()*0.5f)
+          edit_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                               UI_BoxFlag_DisableFocusOverlay,
+                                               "edit_box");
+      }
+      if(ui_top_text_alignment() == UI_TextAlign_Left)
+      {
+        ui_spacer(ui_em(1.f, 1.f));
+      }
+    }
+    else
+    {
+      edit_box = ui_build_box_from_stringf(0, "edit_box");
+    }
+  }
+
+  //////////////////////////////
+  //- rad: build scrollable container box
+  //
+  UI_Box *scrollable_box = &ui_nil_box;
+  UI_Parent(edit_box) UI_PrefWidth(ui_children_sum(0))
+  {
+    scrollable_box = ui_build_box_from_stringf(0, "scroll_box");
+  }
+
+  //////////////////////////////
+  //- rad: get signal
+  //
+  UI_Signal sig = ui_signal_from_box(box);
+
+  //////////////////////////////
+  //- rad: compute fancy strings
+  //
+  DR_FStrList fstrs = params->value_fstrs;
+  if(fstrs.total_size == 0)
+  {
+    String8 display_string = ui_display_part_from_key_string(string);
+    UI_TagF("weak")
+    {
+      DR_FStrParams fstr_params = {ui_top_font(), ui_top_text_raster_flags(), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+      dr_fstrs_push_new(scratch.arena, &fstrs, &fstr_params, display_string);
+    }
+  }
+
+  //////////////////////////////
+  //- rad: build scrolled contents
+  //
+  UI_Parent(scrollable_box)
+  {
+    if(ui_top_text_alignment() == UI_TextAlign_Left && (params->flags & (RAD_CellFlag_Expander|RAD_CellFlag_ExpanderSpace|RAD_CellFlag_ExpanderPlaceholder)) == 0)
+    {
+      ui_spacer(ui_em(0.5f, 1.f));
+    }
+    ui_set_next_pref_width(ui_text_dim(ui_top_font_size()*0.5f, 0));
+    UI_Box *text_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText, "###text_box");
+    ui_box_equip_display_fstrs(text_box, &fstrs);
+  }
+  scrollable_box->view_off_target.x = scrollable_box->view_off.x = 0;
+
+  //////////////////////////////
+  //- rad: pop focus
+  //
+  if(is_auto_focus_hot) { ui_pop_focus_hot(); }
+  if(is_auto_focus_active) { ui_pop_focus_active(); }
+
+  ProfEnd();
+  scratch_end(scratch);
+  return sig;
+}
+
+internal UI_Signal
+rad_cellf(RAD_CellParams *params, char *fmt, ...)
+{
+  Temp scratch = scratch_begin(0, 0);
+  va_list args;
+  va_start(args, fmt);
+  String8 string = push_str8fv(scratch.arena, fmt, args);
+  va_end(args);
+  UI_Signal sig = rad_cell(params, string);
+  scratch_end(scratch);
+  return sig;
+}
+
+////////////////////////////////
 //~ rad: Code Slice
 //
 // NOTE(rad): port of raddbg's `rd_code_slice` (raddbg/raddbg_widgets.c). Kept

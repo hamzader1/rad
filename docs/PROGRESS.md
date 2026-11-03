@@ -13,7 +13,8 @@ Windows only for now; macOS is milestones 9-10, at the very end (decided 2026-11
 | 1. Build and read                    | Done. `build rad` works; notes in `docs/notes/`; option B chosen. |
 | 2. Editor view without a debugger    | Done. |
 | 3. Editable text core                | Mostly done, see below. |
-| 4 to 11                              | Not started. |
+| 4. File explorer                     | In progress: explorer panel works; "Open Folder" left. |
+| 5 to 11                              | Not started. |
 
 Milestone 3 details:
 - The buffer is the `text_buffer` layer (`TB_`), used by the code view.
@@ -28,11 +29,30 @@ Milestone 3 details:
 - NOT checked yet in the app: Ctrl+X / Ctrl+V, "close/exit again to
   discard" guards, panel split/close, external file change.
 
+User confirmed in the app (2026-11-03): cut/paste, redo, Ctrl+W guard.
+
+Milestone 4 details:
+- Default layout: explorer panel on the left (20%), editor panel on the
+  right (80%, focused). `rad.exe <folder>` roots the explorer there;
+  `rad.exe <file>` roots it at the file's folder; no argument: the
+  explorer says "No folder open."
+- Explorer rows are raddbg's watch-table rows (`rad_cell`, port of
+  `rd_cell`): same row height, alternating "alt" rows, bottom border,
+  indent guides, expander, focus-hot selection. Compared side by side with
+  raddbg's settings table (`watch: expression: "query:user_settings"`).
+- Checked in the app: Ctrl+Comma focuses it; Up/Down select; Right
+  expands, Left collapses; Enter on a file opens it in the editor panel
+  (not next to the explorer) and focuses that panel. File > Open File
+  while the explorer is focused also opens into the editor panel.
+- NOT checked in the app yet: mouse (click selects, double-click opens,
+  expander click), a folder argument, refresh after files change on disk.
+
 ## Next steps
 
-1. Check the untested items above in the app (best done by the user: the
-   scripted tests steal keyboard focus, see "Driving the UI" below).
-2. Milestone 4: file explorer panel.
+1. Milestone 4: "Open Folder" command (File menu + a button in the
+   explorer's "No folder open." state). Needs `sh_pick_folder` in the shell
+   layer, win32 via IFileOpenDialog + FOS_PICKFOLDERS. Sets the explorer
+   tab's `folder` child.
 4. For milestone 9 (Mac, at the end), already known: `base_core.h:276-277`
    and `base_core.c:667` need ARM64 guards; drop `-mcx16` on ARM64.
 
@@ -87,13 +107,28 @@ Milestone 3 details:
   code slice (port of `rd_code_slice`).
 - `rad_views.h/.c`: view states, the code view (port of
   `rd_code_view_build`) with editing; the text view feeds the file stream's
-  content to the tab's `TB_Buffer` and ticks it each frame.
+  content to the tab's `TB_Buffer` and ticks it each frame. The explorer
+  view (tab `explorer`, child `folder`) at the end of the file.
+- `rad_widgets.h/.c` also hold `rad_cell` (port of raddbg's `rd_cell`,
+  read-only), the row widget of the explorer.
 - `tests/rad_tests.c`: console tests on base/content/text/text_buffer.
 
 `src/text_buffer/` (`TB_`): the editable buffer, see the notes at the top
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (explorer)
+- Explorer view hooked up: view dispatch, tab title (folder icon + folder
+  name), view-state touch + GC of its arenas, default 20/80 layout,
+  `last_editor_panel` (where the explorer opens files).
+- Build fix: `char_to_lower` does not exist in `base`; it is
+  `lower_from_char` (C's implicit declaration let it compile, link failed).
+- Scripted run: once, after expand + Enter on `src/rad`, `rad_views.c`
+  showed the unsaved-changes dot. The same key sequence twice on scratch
+  files stayed clean, and keys only reach the focused panel; the run right
+  after could not get the foreground (user active). Likely a user keystroke
+  while rad held the foreground; not proven. Nothing was saved.
 
 ### 2026-11-03
 - Decided: Windows only until the IDE is done; macOS at the very end.

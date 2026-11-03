@@ -159,6 +159,11 @@ rad_focus_panel(CFG_Node *panel)
     {
       ws->menu_bar_focused = 0;
     }
+    CFG_PanelNode *panel_node = cfg_panel_node_from_tree_cfg(panel_tree.root, panel);
+    if(panel_node->first == &cfg_nil_panel_node && !str8_match(panel_node->selected_tab->string, str8_lit("explorer"), 0))
+    {
+      rad_state->last_editor_panel = panel->id;
+    }
   }
   scratch_end(scratch);
 }
@@ -229,6 +234,16 @@ rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab)
   {
     icon_kind = RAD_IconKind_QuestionMark;
     name = str8_lit("Getting Started");
+  }
+  else if(str8_match(tab->string, str8_lit("explorer"), 0))
+  {
+    String8 folder = rad_explorer_folder_from_tab(tab);
+    icon_kind = RAD_IconKind_FolderClosedFilled;
+    name = str8_skip_last_slash(folder);
+    if(name.size == 0)
+    {
+      name = (folder.size != 0 ? folder : str8_lit("Explorer"));
+    }
   }
   else
   {
@@ -461,6 +476,14 @@ rad_view_ui(CFG_Node *tab, Rng2F32 rect)
   else if(str8_match(tab->string, str8_lit("text"), 0))
   {
     rad_text_view_ui(tab, rect);
+  }
+
+  //////////////////////////////
+  //- rad: explorer view
+  //
+  else if(str8_match(tab->string, str8_lit("explorer"), 0))
+  {
+    rad_explorer_view_ui(tab, rect);
   }
 }
 
@@ -1373,7 +1396,8 @@ rad_window_frame(RAD_Window *ws)
             for(CFG_NodePtrNode *n = panel->tabs.first; n != 0; n = n->next)
             {
               CFG_Node *tab = n->v;
-              if(str8_match(tab->string, str8_lit("text"), 0))
+              if(str8_match(tab->string, str8_lit("text"), 0) ||
+                 str8_match(tab->string, str8_lit("explorer"), 0))
               {
                 rad_view_state_from_cfg(tab);
               }
@@ -2114,6 +2138,18 @@ rad_exec_cmd(RAD_Cmd *cmd)
       {
         file_path = sh_pick_file(scratch.arena, str8_lit("Open File"), str8_zero());
       }
+
+      // rad: no explicit panel & focused panel shows an explorer -> open in
+      // the editor panel instead
+      if(cmd->params.panel == 0)
+      {
+        CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, panel_cfg);
+        if(str8_match(panel->selected_tab->string, str8_lit("explorer"), 0))
+        {
+          panel_cfg = rad_explorer_target_panel_from_tab(panel->selected_tab);
+        }
+      }
+
       if(file_path.size != 0 && panel_cfg != &cfg_nil_node)
       {
         file_path = path_normalized_from_string(scratch.arena, file_path);
@@ -2612,27 +2648,49 @@ rad_init(CmdLine *cmdln)
 
   //- rad: build default window layout
   //
-  // NOTE(rad): one root panel. with no file arguments, it holds a "getting
-  // started" tab (like the RAD Debugger); otherwise one text tab per file.
+  // NOTE(rad): built like raddbg's RD_CmdKind_ResetToDefaultPanels: a root
+  // split on x. the left panel (20%) holds the explorer; the right panel
+  // (80%, focused) holds one text tab per file argument, or a "getting
+  // started" tab when there is none. the explorer's folder is the first
+  // folder argument, else the folder of the first file argument.
   //
   {
     CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
     CFG_NodePtrList cfgs = cfg_node_ptr_list_from_string(scratch.arena, rad_state->cfg, rad_state->cfg_schema_table, str8_zero(),
-                                                         str8_lit("window: { split_x panels: { 1.0: selected } }"));
+                                                         str8_lit("window: { split_x }"));
     for(CFG_NodePtrNode *n = cfgs.first; n != 0; n = n->next)
     {
       cfg_node_insert_child(rad_state->cfg, user, user->last, n->v);
     }
     CFG_Node *window = cfg_node_child_from_string(user, str8_lit("window"));
-    CFG_Node *panels = cfg_node_child_from_string(window, str8_lit("panels"));
-    CFG_Node *root_panel = panels->first;
+    CFG_Node *panels = cfg_node_new(rad_state->cfg, window, str8_lit("panels"));
+    CFG_Node *explorer_panel = cfg_node_new(rad_state->cfg, panels, str8_lit("0.20"));
+    CFG_Node *editor_panel = cfg_node_new(rad_state->cfg, panels, str8_lit("0.80"));
+    cfg_node_new(rad_state->cfg, editor_panel, str8_lit("selected"));
+
+    //- rad: command line inputs which are not flags -> folder for the
+    // explorer, files to open
+    String8 root_folder = {0};
+    String8 first_file_folder = {0};
     B32 opened_file = 0;
-    // NOTE(rad): command line inputs which are not flags -> files to open
     for(String8Node *n = cmdln->inputs.first; n != 0; n = n->next)
     {
       String8 path = path_absolute_dst_from_relative_dst_src(scratch.arena, n->string, get_process_info()->initial_path);
       path = path_normalized_from_string(scratch.arena, path);
-      CFG_Node *tab = cfg_node_new(rad_state->cfg, root_panel, str8_lit("text"));
+      FileProperties props = properties_from_file_path(path);
+      if(props.flags & FilePropertyFlag_IsFolder)
+      {
+        if(root_folder.size == 0)
+        {
+          root_folder = path;
+        }
+        continue;
+      }
+      if(first_file_folder.size == 0)
+      {
+        first_file_folder = str8_chop_last_slash(path);
+      }
+      CFG_Node *tab = cfg_node_new(rad_state->cfg, editor_panel, str8_lit("text"));
       CFG_Node *path_cfg = cfg_node_new(rad_state->cfg, tab, str8_lit("path"));
       cfg_node_new(rad_state->cfg, path_cfg, path);
       rad_focus_tab(tab);
@@ -2640,9 +2698,25 @@ rad_init(CmdLine *cmdln)
     }
     if(!opened_file)
     {
-      CFG_Node *tab = cfg_node_new(rad_state->cfg, root_panel, str8_lit("getting_started"));
+      CFG_Node *tab = cfg_node_new(rad_state->cfg, editor_panel, str8_lit("getting_started"));
       rad_focus_tab(tab);
     }
+    if(root_folder.size == 0)
+    {
+      root_folder = first_file_folder;
+    }
+
+    //- rad: explorer tab
+    {
+      CFG_Node *tab = cfg_node_new(rad_state->cfg, explorer_panel, str8_lit("explorer"));
+      if(root_folder.size != 0)
+      {
+        CFG_Node *folder_cfg = cfg_node_new(rad_state->cfg, tab, str8_lit("folder"));
+        cfg_node_new(rad_state->cfg, folder_cfg, root_folder);
+      }
+      rad_focus_tab(tab);
+    }
+    rad_state->last_editor_panel = editor_panel->id;
   }
 
   //- rad: unpack icon image data (same ICO decode as raddbg's rd_init)

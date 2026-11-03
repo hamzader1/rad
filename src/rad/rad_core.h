@@ -203,6 +203,10 @@ struct RAD_State
   CFG_ID discard_confirm_cfg_id;
   U64 discard_confirm_deadline_us;
 
+  //- rad: last focused panel that is not showing an explorer (where the
+  // explorer opens files)
+  CFG_ID last_editor_panel;
+
   //- rad: per-tab view states
   U64 view_state_slots_count;
   struct RAD_ViewStateSlot *view_state_slots;
