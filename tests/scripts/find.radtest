@@ -1,0 +1,96 @@
+# Go to Line (Ctrl+G) and Find (Ctrl+F, Ctrl+R, F3, Shift+F3): ports of
+# raddbg's goto_line / search / search_backwards / find_next / find_prev,
+# typed into the query bar at the top of the tab.
+
+open ../fixtures/lines_3000.txt
+wait_idle
+
+# Ctrl+G asks for a line number; Enter jumps there and closes the bar
+key ctrl+g
+wait_frames 3
+expect query_open == 1
+text "2500"
+expect query_input == "2500"
+key return
+wait_idle
+expect query_open == 0
+expect cursor_line == 2500
+expect cursor_col == 1
+expect visible_first <= 2500
+expect visible_last >= 2500
+expect dirty == 0
+
+# Ctrl+F searches forward from the cursor; the match gets selected and the
+# bar stays open; the typed text went to the bar, not into the file
+key ctrl+f
+wait_frames 3
+expect query_open == 1
+text "line 2600"
+key return
+wait_idle
+expect query_open == 1
+expect cursor_line == 2600
+expect selection == "line 2600"
+expect dirty == 0
+
+# F3 / Shift+F3 repeat it forward / backward, wrapping around the file
+key backspace 9
+text "line 30"
+key return
+wait_idle
+expect cursor_line == 3000
+expect selection == "line 30"
+key f3
+wait_idle
+expect cursor_line == 30
+key f3
+wait_idle
+expect cursor_line == 300
+key shift+f3
+wait_idle
+expect cursor_line == 30
+key shift+f3
+wait_idle
+expect cursor_line == 3000
+
+# Ctrl+R searches backwards
+key ctrl+r
+wait_frames 3
+key backspace 7
+text "line 1000"
+key return
+wait_idle
+expect cursor_line == 1000
+
+# not found: the cursor stays, an error is shown
+key backspace 9
+text "nothing like this"
+key return
+expect cursor_line == 1000
+expect error != ""
+
+# Esc closes the bar
+key esc
+wait_idle
+expect query_open == 0
+expect dirty == 0
+
+# with the bar open, clicking into the code gives it the keyboard back:
+# typing and Enter edit the file instead of searching
+key ctrl+f
+wait_frames 3
+expect query_open == 1
+click code 1000 6
+text "X"
+key return
+expect line 1000 == "line X"
+expect line 1001 == "1000"
+expect query_open == 1
+expect dirty == 1
+key ctrl+z 3
+wait_idle
+expect line 1000 == "line 1000"
+expect dirty == 0
+key esc
+wait_idle
+expect query_open == 0

@@ -131,6 +131,11 @@ RAD_CmdKind_SaveAll,
 RAD_CmdKind_Exit,
 RAD_CmdKind_Undo,
 RAD_CmdKind_Redo,
+RAD_CmdKind_GoToLine,
+RAD_CmdKind_Search,
+RAD_CmdKind_SearchBackwards,
+RAD_CmdKind_FindNext,
+RAD_CmdKind_FindPrev,
 RAD_CmdKind_ToggleFullscreen,
 RAD_CmdKind_IncWindowFontSize,
 RAD_CmdKind_DecWindowFontSize,
@@ -154,6 +159,7 @@ String8 code_name;
 String8 display_name;
 RAD_IconKind icon_kind;
 CFG_Binding default_binding;
+RAD_Query query;
 };
 
 C_LINKAGE_BEGIN

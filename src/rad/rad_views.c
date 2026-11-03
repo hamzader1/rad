@@ -293,7 +293,7 @@ rad_code_view_redo(RAD_CodeViewState *cv, TB_Buffer *buffer)
 }
 
 internal void
-rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data)
+rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data, String8 search_query)
 {
   // NOTE(rad): port of raddbg's `rd_code_view_build` (raddbg/raddbg_views.c),
   // minus breakpoints, thread IPs, watch pins, debug-info lines, disassembly,
@@ -663,6 +663,7 @@ rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2
     code_slice_params.font_size                 = code_font_size;
     code_slice_params.tab_size                  = code_tab_size;
     code_slice_params.line_height_px            = code_line_height;
+    code_slice_params.search_query              = search_query;
     code_slice_params.line_num_width_px         = line_num_width_px;
     code_slice_params.line_text_max_width_px    = (F32)line_size_x;
     code_slice_params.margin_float_off_px       = scroll_pos.x.idx + floor_f32(scroll_pos.x.off);
@@ -728,6 +729,115 @@ rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2
                                               UI_BoxFlag_AllowOverflowX|
                                               UI_BoxFlag_AllowOverflowY,
                                               "###code_area");
+  }
+
+  //////////////////////////////
+  //- rad: do searching operations (port of raddbg's code view search; the
+  // match is selected, mark at its start, cursor at its end)
+  //
+  if(cv->find_text_size != 0 && text_is_ready)
+  {
+    U64 search_chunk_size = KB(4);
+    String8 needle = str8(cv->find_text_buffer, cv->find_text_size);
+
+    //- rad: find text (forward)
+    if(!cv->find_text_backward)
+    {
+      Rng1U64 ranges[] =
+      {
+        r1u64(cv->cursor+1, text_patched.size),
+        r1u64(0, cv->cursor+1),
+      };
+      B32 found = 0;
+      for EachElement(range_idx, ranges)
+      {
+        for(U64 off = ranges[range_idx].min; off < ranges[range_idx].max; off += search_chunk_size)
+        {
+          Temp temp = temp_begin(scratch.arena);
+          String8 data = memory_map_data_from_range(temp.arena, &text_patched.memory_map, r1u64(off, off+search_chunk_size));
+          U64 hint_needle_pos = str8_find_needle(data, 0, needle, StringMatchFlag_CaseInsensitive|StringMatchFlag_RightSideSloppy);
+          if(hint_needle_pos < data.size)
+          {
+            String8 candidate = memory_map_data_from_range(temp.arena, &text_patched.memory_map, r1u64(off+hint_needle_pos, off+hint_needle_pos+needle.size));
+            if(str8_match(candidate, needle, StringMatchFlag_CaseInsensitive))
+            {
+              found = 1;
+              cv->mark = off+hint_needle_pos;
+              cv->cursor = cv->mark + needle.size;
+            }
+          }
+          temp_end(temp);
+          if(found) { goto done_fwd; }
+        }
+      }
+      done_fwd:;
+      if(!found)
+      {
+        log_user_errorf("Could not find `%S`", needle);
+      }
+      cv->center_cursor = found;
+    }
+
+    //- rad: find text (backward)
+    else if(cv->cursor > 0)
+    {
+      Rng1U64 ranges[] =
+      {
+        r1u64(0, Min(cv->cursor, cv->mark)),
+        r1u64(cv->cursor+1, text_patched.size),
+      };
+      B32 found = 0;
+      for EachElement(range_idx, ranges)
+      {
+        // NOTE(rad): not in raddbg: an empty range ending at 0 would wrap
+        // start_off around to ~2^64 and walk down ~2^52 empty chunks
+        if(ranges[range_idx].max == 0)
+        {
+          continue;
+        }
+        U64 start_off = ranges[range_idx].max + (search_chunk_size-1);
+        start_off -= start_off%search_chunk_size;
+        start_off -= search_chunk_size;
+        for(U64 off = start_off;; off -= search_chunk_size)
+        {
+          Temp temp = temp_begin(scratch.arena);
+          String8 data = memory_map_data_from_range(temp.arena, &text_patched.memory_map, r1u64(off, Min(off+search_chunk_size, ranges[range_idx].max)));
+          U64 hint_needle_pos = str8_find_needle(data, 0, needle, StringMatchFlag_CaseInsensitive|StringMatchFlag_RightSideSloppy);
+          for(;hint_needle_pos < data.size;)
+          {
+            U64 next_hint_needle_pos = str8_find_needle(data, hint_needle_pos+1, needle, StringMatchFlag_CaseInsensitive|StringMatchFlag_RightSideSloppy);
+            if(next_hint_needle_pos < data.size)
+            {
+              hint_needle_pos = next_hint_needle_pos;
+            }
+            else
+            {
+              break;
+            }
+          }
+          if(hint_needle_pos < data.size)
+          {
+            String8 candidate = memory_map_data_from_range(temp.arena, &text_patched.memory_map, r1u64(off+hint_needle_pos, off+hint_needle_pos+needle.size));
+            if(str8_match(candidate, needle, StringMatchFlag_CaseInsensitive))
+            {
+              found = 1;
+              cv->mark = off+hint_needle_pos;
+              cv->cursor = cv->mark + needle.size;
+            }
+          }
+          temp_end(temp);
+          if(found) { goto done_bwd; }
+          if(off == 0) { break; }
+        }
+      }
+      done_bwd:;
+      if(!found)
+      {
+        log_user_errorf("Could not find `%S`", needle);
+      }
+      cv->center_cursor = found;
+    }
+    cv->find_text_size = 0;
   }
 
   //////////////////////////////
@@ -1032,7 +1142,8 @@ rad_text_view_ui(CFG_Node *tab, Rng2F32 rect)
   //
   if(!file_is_missing)
   {
-    rad_code_view_build(scratch.arena, cv, buffer, code_area_rect, lang_kind, &info, data);
+    String8 search_query = cfg_node_child_from_string(cfg_node_child_from_string(tab, str8_lit("query")), str8_lit("input"))->first->string;
+    rad_code_view_build(scratch.arena, cv, buffer, code_area_rect, lang_kind, &info, data, search_query);
     cv->buffer_version = buffer->version;
   }
 

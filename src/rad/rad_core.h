@@ -31,6 +31,37 @@ typedef enum RAD_FontSlot
 RAD_FontSlot;
 
 ////////////////////////////////
+//~ rad: Command Query Types
+//
+// Port of raddbg's RD_Query: a command that needs an input (a line number,
+// a string) and is run without one opens the query bar of the tab it targets;
+// Enter runs it with the typed input (see rad.mdesk, RAD_CmdTable q_* columns).
+
+typedef enum RAD_QuerySlot
+{
+  RAD_QuerySlot_Null,
+  RAD_QuerySlot_LineNum,
+  RAD_QuerySlot_String,
+}
+RAD_QuerySlot;
+
+typedef U32 RAD_QueryFlags;
+enum
+{
+  RAD_QueryFlag_KeepOldInput   = (1<<0),
+  RAD_QueryFlag_SelectOldInput = (1<<1),
+  RAD_QueryFlag_CodeInput      = (1<<2),
+  RAD_QueryFlag_Required       = (1<<3),
+};
+
+typedef struct RAD_Query RAD_Query;
+struct RAD_Query
+{
+  RAD_QuerySlot slot;
+  RAD_QueryFlags flags;
+};
+
+////////////////////////////////
 //~ rad: Generated Code
 
 #include "rad/generated/rad.meta.h"
@@ -80,6 +111,8 @@ struct RAD_CmdParams
   CFG_ID panel;
   CFG_ID tab;
   String8 file_path;
+  S64 line_num;
+  String8 string;
 };
 
 typedef struct RAD_Cmd RAD_Cmd;
@@ -263,6 +296,10 @@ internal void rad_focus_panel(CFG_Node *panel);
 internal void rad_focus_tab(CFG_Node *tab);
 internal CFG_Node *rad_explorer_tab_from_panel(CFG_Node *panel);
 internal CFG_Node *rad_panel_alloc_at_window_edge(CFG_Node *window, Side side, F32 pct);
+internal RAD_CmdKind rad_cmd_kind_from_code_name(String8 code_name);
+internal String8 rad_tab_query_input(CFG_Node *tab);
+internal void rad_tab_query_open(CFG_Node *tab, RAD_CmdKind kind);
+internal void rad_tab_query_complete(CFG_Node *tab);
 internal String8 rad_file_path_from_tab(CFG_Node *tab);
 internal DR_FStrList rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab);
 

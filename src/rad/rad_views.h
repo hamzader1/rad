@@ -50,6 +50,9 @@ struct RAD_CodeViewState
 
   // rad: per-frame command info
   S64 goto_line_num;
+  U8 find_text_buffer[1024];
+  U64 find_text_size;
+  B32 find_text_backward;
   B32 initial_center;
   B32 center_cursor;
   B32 contain_cursor;
@@ -142,6 +145,15 @@ struct RAD_ViewState
   Arena *arena;
   RAD_CodeViewState cv;
   RAD_ExplorerState ex;
+
+  // rad: query bar (port of raddbg's RD_ViewState query state; the command
+  // and committed input live in the tab's `query` cfg child)
+  B32 query_is_open;
+  B32 contents_are_focused;
+  U64 query_cursor;
+  U64 query_mark;
+  U8 query_buffer[1024];
+  U64 query_string_size;
 };
 
 typedef struct RAD_ViewStateSlot RAD_ViewStateSlot;
@@ -174,7 +186,7 @@ internal void rad_documents_gc(void);
 internal void rad_code_view_init(RAD_CodeViewState *cv);
 internal B32 rad_code_view_undo(RAD_CodeViewState *cv, TB_Buffer *buffer);
 internal B32 rad_code_view_redo(RAD_CodeViewState *cv, TB_Buffer *buffer);
-internal void rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data);
+internal void rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data, String8 search_query);
 
 ////////////////////////////////
 //~ rad: Text View

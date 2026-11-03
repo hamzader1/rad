@@ -77,6 +77,8 @@
 //   file_size <path>            its size in bytes
 //   explorer_root explorer_rows explorer_selected
 //   explorer_row <n>            name of explorer row n (1-based)
+//   selection                   the editor's selected text (mark..cursor)
+//   query_open query_input      the editor tab's query bar (Find, Go To Line)
 //   doc_count                   open documents (one per file, shared by tabs)
 //   error                       bottom bar error message ("" when none)
 //   elapsed_ms                  time since the script started

@@ -409,6 +409,46 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     }
   }
 
+  //- rad: the editor tab's query bar
+  else if(str8_match(name, str8_lit("query_open"), 0) || str8_match(name, str8_lit("query_input"), 0))
+  {
+    CFG_Node *tab = rad_script_editor_tab();
+    if(tab == &cfg_nil_node)
+    {
+      *error_out = str8_lit("no editor view");
+      result = 0;
+    }
+    else if(str8_match(name, str8_lit("query_open"), 0))
+    {
+      value = push_str8f(arena, "%i", !!rad_view_state_from_cfg(tab)->query_is_open);
+    }
+    else
+    {
+      value = push_str8_copy(arena, rad_tab_query_input(tab));
+    }
+  }
+
+  //- rad: the editor's selected text (between mark and cursor)
+  else if(str8_match(name, str8_lit("selection"), 0))
+  {
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    result = rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out);
+    if(result)
+    {
+      U64 cursor = cv->cursor;
+      U64 mark = cv->mark;
+      if(!tb_buffer_map_offset(doc->buffer, cv->buffer_version, &cursor) ||
+         !tb_buffer_map_offset(doc->buffer, cv->buffer_version, &mark))
+      {
+        cursor = Min(cursor, text.patched.size);
+        mark = Min(mark, text.patched.size);
+      }
+      value = memory_map_data_from_range(arena, &text.patched.memory_map, r1u64(Min(cursor, mark), Max(cursor, mark)));
+    }
+  }
+
   //- rad: open documents (one per file, shared by its tabs)
   else if(str8_match(name, str8_lit("doc_count"), 0))
   {

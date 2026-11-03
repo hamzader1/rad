@@ -14,9 +14,10 @@
 ////////////////////////////////
 //~ rad: Cell Types
 //
-// Port of raddbg's RD_CellFlags/RD_CellParams, the read-only subset: depth
-// indentation, expander, value text. No line editing, toggle switches,
-// sliders, bindings, notes, locks, or name/description column.
+// Port of raddbg's RD_CellFlags/RD_CellParams: depth indentation, expander,
+// value text, and single-line editing (cells with an `edit_buffer`). No
+// toggle switches, sliders, bindings, notes, locks, autocompletion, or
+// name/description column.
 
 typedef U32 RAD_CellFlags;
 enum
@@ -29,6 +30,10 @@ enum
   //- rad: behavior
   RAD_CellFlag_KeyboardClickable   = (1<<3),
   RAD_CellFlag_SingleClickActivate = (1<<4),
+  RAD_CellFlag_DisableEdit         = (1<<8),
+
+  //- rad: contents
+  RAD_CellFlag_CodeContents        = (1<<9),
 
   //- rad: appearance
   RAD_CellFlag_Border              = (1<<5),
@@ -39,10 +44,22 @@ enum
 typedef struct RAD_CellParams RAD_CellParams;
 struct RAD_CellParams
 {
+  //- rad: catchall parameters
   RAD_CellFlags flags;
   S32 depth;
+  String8 pre_edit_value;
   DR_FStrList value_fstrs;
+
+  //- rad: expander r/w info
   B32 *expanded_out;
+
+  //- rad: text editing r/w info
+  U64 *cursor;
+  U64 *mark;
+  U8 *edit_buffer;
+  U64 edit_buffer_size;
+  U64 *edit_string_size_out;
+  UI_Key *line_edit_key_out;
 };
 
 ////////////////////////////////
@@ -116,6 +133,7 @@ internal UI_Signal rad_cellf(RAD_CellParams *params, char *fmt, ...);
 
 internal RAD_CodeColorSlot rad_code_color_slot_from_txt_token_kind(TXT_TokenKind kind);
 internal Vec4F32 rad_rgba_from_code_color_slot(RAD_CodeColorSlot slot);
+internal DR_FStrList rad_fstrs_from_code_string(Arena *arena, F32 alpha, Vec4F32 base_color, String8 string);
 internal RAD_CodeSliceSignal rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferred_column, String8 string);
 internal RAD_CodeSliceSignal rad_code_slicef(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferred_column, char *fmt, ...);
 

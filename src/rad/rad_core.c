@@ -76,6 +76,7 @@ rad_push_cmd(RAD_CmdKind kind, RAD_CmdParams *params)
   {
     MemoryCopyStruct(&n->cmd.params, params);
     n->cmd.params.file_path = push_str8_copy(rad_state->cmds_arenas[0], params->file_path);
+    n->cmd.params.string = push_str8_copy(rad_state->cmds_arenas[0], params->string);
   }
   if(n->cmd.params.window == 0 && rad_state->current_window != 0)
   {
@@ -267,6 +268,121 @@ rad_panel_alloc_at_window_edge(CFG_Node *window, Side side, F32 pct)
   return panel;
 }
 
+internal RAD_CmdKind
+rad_cmd_kind_from_code_name(String8 code_name)
+{
+  RAD_CmdKind result = RAD_CmdKind_Null;
+  if(code_name.size != 0)
+  {
+    for EachNonZeroEnumVal(RAD_CmdKind, k)
+    {
+      if(str8_match(rad_cmd_kind_info_table[k].code_name, code_name, 0))
+      {
+        result = k;
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+internal String8
+rad_tab_query_input(CFG_Node *tab)
+{
+  // NOTE(rad): port of raddbg's rd_view_query_input
+  CFG_Node *query = cfg_node_child_from_string(tab, str8_lit("query"));
+  CFG_Node *input = cfg_node_child_from_string(query, str8_lit("input"));
+  return input->first->string;
+}
+
+internal void
+rad_tab_query_open(CFG_Node *tab, RAD_CmdKind kind)
+{
+  // NOTE(rad): port of raddbg's query setup for a tab-embedded query (the
+  // non-floating, non-lister path): same cmd/input cfg, same open/toggle and
+  // select-old-input rules
+  Temp scratch = scratch_begin(0, 0);
+  RAD_CmdKindInfo *cmd_kind_info = &rad_cmd_kind_info_table[kind];
+  String8 cmd_name = cmd_kind_info->code_name;
+  CFG_Node *query = cfg_node_child_from_string_or_alloc(rad_state->cfg, tab, str8_lit("query"));
+  CFG_Node *cmd = cfg_node_child_from_string_or_alloc(rad_state->cfg, query, str8_lit("cmd"));
+  CFG_Node *input = cfg_node_child_from_string_or_alloc(rad_state->cfg, query, str8_lit("input"));
+
+  // rad: choose initial input string
+  String8 initial_input = {0};
+  if(cmd_kind_info->query.flags & RAD_QueryFlag_KeepOldInput)
+  {
+    initial_input = push_str8_copy(scratch.arena, input->first->string);
+  }
+
+  // rad: build query state
+  String8 current_query_cmd_name = push_str8_copy(scratch.arena, cmd->first->string);
+  cfg_node_new_replace(rad_state->cfg, input, initial_input);
+  cfg_node_new_replace(rad_state->cfg, cmd, cmd_name);
+  RAD_ViewState *vs = rad_view_state_from_cfg(tab);
+  if(!vs->query_is_open && cmd_kind_info->query.flags & RAD_QueryFlag_SelectOldInput)
+  {
+    vs->query_cursor = initial_input.size;
+    vs->query_mark = 0;
+  }
+  else
+  {
+    vs->query_cursor = initial_input.size;
+    vs->query_mark = vs->query_cursor;
+  }
+  if(!str8_match(current_query_cmd_name, cmd_name, 0))
+  {
+    vs->query_is_open = 1;
+  }
+  else
+  {
+    vs->query_is_open ^= 1;
+  }
+  vs->contents_are_focused = 0;
+  scratch_end(scratch);
+}
+
+internal void
+rad_tab_query_complete(CFG_Node *tab)
+{
+  // NOTE(rad): port of raddbg's RD_CmdKind_CompleteQuery for a tab-embedded
+  // query: run the query's command with the input in its slot, then close
+  // the query unless the command keeps its input (search)
+  CFG_Node *query = cfg_node_child_from_string(tab, str8_lit("query"));
+  String8 cmd_name = cfg_node_child_from_string(query, str8_lit("cmd"))->first->string;
+  String8 input = rad_tab_query_input(tab);
+  RAD_CmdKind kind = rad_cmd_kind_from_code_name(cmd_name);
+  RAD_CmdKindInfo *cmd_kind_info = &rad_cmd_kind_info_table[kind];
+  if(kind != RAD_CmdKind_Null)
+  {
+    switch(cmd_kind_info->query.slot)
+    {
+      default:
+      {
+        rad_cmd(kind, .panel = tab->parent->id, .tab = tab->id);
+      }break;
+      case RAD_QuerySlot_LineNum:
+      {
+        S64 line_num = 0;
+        if(try_s64_from_str8_c_rules(str8_skip_chop_whitespace(input), &line_num) && line_num > 0)
+        {
+          rad_cmd(kind, .panel = tab->parent->id, .tab = tab->id, .line_num = line_num);
+        }
+      }break;
+      case RAD_QuerySlot_String:
+      {
+        rad_cmd(kind, .panel = tab->parent->id, .tab = tab->id, .string = input);
+      }break;
+    }
+  }
+  if(!(cmd_kind_info->query.flags & RAD_QueryFlag_KeepOldInput))
+  {
+    RAD_ViewState *vs = rad_view_state_from_cfg(tab);
+    vs->query_is_open = 0;
+    vs->query_string_size = 0;
+  }
+}
+
 internal String8
 rad_file_path_from_tab(CFG_Node *tab)
 {
@@ -435,125 +551,292 @@ rad_window_from_cfg(CFG_Node *window_cfg)
 internal void
 rad_view_ui(CFG_Node *tab, Rng2F32 rect)
 {
+  // NOTE(rad): port of raddbg's rd_view_ui: query bar, then the view
+  RAD_ViewState *vs = rad_view_state_from_cfg(tab);
+
   //////////////////////////////
-  //- rad: special-case view: "getting started"
+  //- rad: query extension
   //
-  // NOTE(rad): same layout as the RAD Debugger's "getting_started" view
-  // (raddbg_core.c, rd_view_ui), with the target helper replaced by a file one.
-  //
-  if(str8_match(tab->string, str8_lit("getting_started"), 0))
+  CFG_Node *query_root = cfg_node_child_from_string(tab, str8_lit("query"));
+  CFG_Node *input_root = cfg_node_child_from_string(query_root, str8_lit("input"));
+  CFG_Node *cmd_root = cfg_node_child_from_string(query_root, str8_lit("cmd"));
+  String8 current_input = input_root->first->string;
+  B32 search_row_is_open = (vs->query_is_open);
+  B32 query_has_focus = (vs->query_is_open && !vs->contents_are_focused);
+  F32 search_row_open_t = ui_anim(ui_key_from_stringf(ui_key_zero(), "search_row_open_%p", tab),
+                                  (F32)!!search_row_is_open,
+                                  .initial = (F32)!!search_row_is_open,
+                                  .epsilon = 0.01f,
+                                  .rate    = rad_state->menu_animation_rate);
+  if(search_row_open_t > 0.001f)
   {
-    ui_set_next_flags(UI_BoxFlag_DefaultFocusNav);
-    UI_Focus(UI_FocusKind_On) UI_WidthFill UI_HeightFill UI_NamedColumn(str8_lit("empty_view"))
-      UI_Padding(ui_pct(1, 0)) UI_Focus(UI_FocusKind_Null)
+    String8 cmd_name = cmd_root->first->string;
+    RAD_CmdKindInfo *cmd_kind_info = &rad_cmd_kind_info_table[rad_cmd_kind_from_code_name(cmd_name)];
+    RAD_IconKind icon = cmd_kind_info->icon_kind;
+
+    //- rad: store cfg's string into view's
+    vs->query_string_size = Min(sizeof(vs->query_buffer), current_input.size);
+    MemoryCopy(vs->query_buffer, current_input.str, vs->query_string_size);
+
+    //- rad: determine dimensions
+    F32 search_row_height_target = ui_top_px_height();
+    F32 search_row_height = search_row_open_t*search_row_height_target;
+    search_row_height = Min(search_row_height, dim_2f32(rect).y);
+    rect.y0 += search_row_height;
+    rect.y0 = floor_f32(rect.y0);
+
+    //- rad: build container
+    UI_Box *search_row = &ui_nil_box;
+    UI_PrefHeight(ui_px(search_row_height, 1.f))
     {
-      Rng2F32 view_rect = ui_top_parent()->rect;
-
-      //- rad: icon & info
-      UI_Padding(ui_em(2.f, 1.f))
+      if(!vs->contents_are_focused)
       {
-        //- rad: icon
-        {
-          F32 icon_dim = ui_top_font_size()*10.f;
-          ui_set_next_flags(UI_BoxFlag_AnimatePosY);
-          UI_PrefHeight(ui_px(icon_dim, 1.f))
-            UI_Row
-            UI_Padding(ui_pct(1, 0))
-            UI_PrefWidth(ui_px(icon_dim, 1.f))
-          {
-            R_Handle texture = rad_state->icon_texture;
-            Vec2S32 texture_dim = r_size_from_tex2d(texture);
-            ui_image(texture, R_Tex2DSampleKind_Linear, r2f32p(0, 0, texture_dim.x, texture_dim.y), v4f32(1, 1, 1, 1), 0, str8_lit(""));
-          }
-        }
+        ui_set_next_border_color(ui_color_from_name(str8_lit("border")));
+      }
+      search_row = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawDropShadow, "###search");
+    }
 
-        //- rad: title
-        ui_spacer(ui_em(2.f, 1.f));
-        UI_WidthFill UI_PrefHeight(ui_em(2.f, 1.f))
-          UI_Row
-          UI_Padding(ui_pct(1, 0))
-          UI_TextAlignment(UI_TextAlign_Center)
-          UI_PrefWidth(ui_text_dim(1, 1))
-          UI_FontSize(ui_top_font_size()*2.f)
+    //- rad: build contents
+    UI_Parent(search_row) UI_WidthFill UI_HeightFill UI_Focus(query_has_focus ? UI_FocusKind_On : UI_FocusKind_Off)
+      RAD_Font(cmd_kind_info->query.flags & RAD_QueryFlag_CodeInput ? RAD_FontSlot_Code : RAD_FontSlot_Main)
+      UI_Flags(UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder)
+    {
+      UI_TagF("weak")
+      {
+        if(cmd_name.size != 0)
         {
-          ui_label(str8_lit(BUILD_TITLE));
+          ui_spacer(ui_em(0.5f, 1.f));
+          UI_TextAlignment(UI_TextAlign_Center)
+            UI_Transparency(1-search_row_open_t)
+            UI_PrefWidth(ui_em(3.f, 1.f))
+            RAD_Font(RAD_FontSlot_Icons)
+            ui_label(rad_icon_kind_text_table[icon == RAD_IconKind_Null ? RAD_IconKind_Find : icon]);
+          UI_Transparency(1-search_row_open_t)
+            RAD_Font(RAD_FontSlot_Main) UI_PrefWidth(ui_text_dim(1, 1))
+            UI_FontSize(ui_top_font_size()*0.85f)
+            ui_label(cmd_kind_info->display_name);
         }
-
-        //- rad: info
-        ui_spacer(ui_em(1.f, 1.f));
-        UI_WidthFill UI_PrefHeight(ui_em(2.f, 1.f))
-          UI_Row
-          UI_Padding(ui_pct(1, 0))
-          UI_TextAlignment(UI_TextAlign_Center)
-          UI_PrefWidth(ui_text_dim(1, 1))
-          UI_TagF("weak")
+        else
         {
-          ui_label(str8_lit(BUILD_VERSION_STRING_LITERAL " " BUILD_RELEASE_PHASE_STRING_LITERAL));
-#if defined(BUILD_GIT_HASH)
-          ui_label(str8_lit(BUILD_GIT_HASH));
-#endif
+          ui_spacer(ui_em(0.5f, 1.f));
+          UI_TextAlignment(UI_TextAlign_Center) RAD_Font(RAD_FontSlot_Icons) UI_PrefWidth(ui_em(2.f, 1.f))
+            ui_label(rad_icon_kind_text_table[RAD_IconKind_Find]);
+        }
+      }
+      RAD_CellParams params = {0};
+      {
+        params.flags |= !!(cmd_kind_info->query.flags & RAD_QueryFlag_CodeInput) * RAD_CellFlag_CodeContents;
+        params.flags |= RAD_CellFlag_NoBackground;
+        params.cursor               = &vs->query_cursor;
+        params.mark                 = &vs->query_mark;
+        params.edit_buffer          = vs->query_buffer;
+        params.edit_string_size_out = &vs->query_string_size;
+        params.edit_buffer_size     = sizeof(vs->query_buffer);
+        params.pre_edit_value       = current_input;
+      }
+      UI_Transparency(1-search_row_open_t)
+      {
+        UI_Signal sig = rad_cellf(&params, "###search");
+        if(ui_pressed(sig))
+        {
+          vs->query_is_open = 1;
+          vs->contents_are_focused = 0;
+          rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
         }
       }
 
-      //- rad: drop-file helper (same box as raddbg's "add target" helper)
-      ui_spacer(ui_em(2.f, 1.f));
-      UI_PrefHeight(ui_em(30.f, 1.f)) UI_Row UI_Padding(ui_pct(1, 0)) UI_PrefWidth(ui_em(40.f, 1.f))
-        UI_TextAlignment(UI_TextAlign_Center)
-        UI_CornerRadius(ui_top_font_size()/2.f)
+      // NOTE(rad): not in raddbg (its code view is read-only): Enter also
+      // produces "\n" text; while the query has the keyboard, it must not
+      // reach the view contents (an editor)
+      if(query_has_focus && ui_is_focus_active())
       {
-        ui_set_next_child_layout_axis(Axis2_Y);
-        UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder, "###open_file_drop_site");
-        UI_Parent(box) UI_Padding(ui_pct(1, 0)) UI_PrefHeight(ui_em(2.5f, 1.f))
-        {
-          UI_PrefHeight(ui_em(3.75f, 1.f))
-            UI_Row
-            UI_Padding(ui_pct(1, 0))
-            UI_TextAlignment(UI_TextAlign_Center)
-            UI_PrefWidth(ui_em(12.f, 1.f))
-            UI_CornerRadius(ui_top_font_size()/2.f)
-            UI_TagF("pop")
-            if(ui_clicked(rad_icon_buttonf(RAD_IconKind_FileOutline, 0, "Open File")))
-          {
-            rad_cmd(RAD_CmdKind_OpenFile);
-          }
-          ui_spacer(ui_em(1.f, 1.f));
-          UI_TagF("weak")
-          {
-            ui_label(str8_lit("or drop a file"));
-          }
-        }
         for(UI_Event *evt = 0; ui_next_event(&evt);)
         {
-          if(evt->kind == UI_EventKind_FileDrop &&
-             contains_2f32(view_rect, evt->pos) &&
-             evt->paths.node_count != 0)
+          if(evt->kind == UI_EventKind_Text && !(evt->flags & UI_EventFlag_Paste) &&
+             str8_find_needle(evt->string, 0, str8_lit("\n"), 0) < evt->string.size)
           {
-            for(String8Node *n = evt->paths.first; n != 0; n = n->next)
-            {
-              rad_cmd(RAD_CmdKind_OpenFile, .file_path = n->string);
-            }
             ui_eat_event(evt);
           }
         }
       }
-      ui_spacer(ui_em(4.f, 1.f));
+    }
+
+    //- rad: commit string to view
+    if(input_root == &cfg_nil_node)
+    {
+      query_root = cfg_node_child_from_string_or_alloc(rad_state->cfg, tab, str8_lit("query"));
+      input_root = cfg_node_child_from_string_or_alloc(rad_state->cfg, query_root, str8_lit("input"));
+    }
+    cfg_node_new_replace(rad_state->cfg, input_root, str8(vs->query_buffer, vs->query_string_size));
+  }
+
+  //////////////////////////////
+  //- rad: query open, click into the view's contents -> they get the
+  // keyboard (raddbg does this for watch views; rad's code view is an editor)
+  //
+  if(vs->query_is_open)
+  {
+    for(UI_Event *evt = 0; ui_next_event(&evt);)
+    {
+      if(evt->kind == UI_EventKind_Press && evt->key == WM_Key_LeftMouseButton && contains_2f32(rect, evt->pos))
+      {
+        vs->contents_are_focused = 1;
+      }
     }
   }
 
   //////////////////////////////
-  //- rad: text view
+  //- rad: build main view container
   //
-  else if(str8_match(tab->string, str8_lit("text"), 0))
+  UI_Box *view_container = &ui_nil_box;
+  UI_WidthFill UI_HeightFill
   {
-    rad_text_view_ui(tab, rect);
+    view_container = ui_build_box_from_key(0, ui_key_zero());
   }
 
   //////////////////////////////
-  //- rad: explorer view
+  //- rad: fill view container
   //
-  else if(str8_match(tab->string, str8_lit("explorer"), 0))
+  UI_Parent(view_container)
+    UI_PrefHeight(ui_px(floor_f32(ui_top_font_size()*rad_state->settings.row_height), 1.f))
   {
-    rad_explorer_view_ui(tab, rect);
+    //////////////////////////////
+    //- rad: special-case view: "getting started"
+    //
+    // NOTE(rad): same layout as the RAD Debugger's "getting_started" view
+    // (raddbg_core.c, rd_view_ui), with the target helper replaced by a file one.
+    //
+    if(str8_match(tab->string, str8_lit("getting_started"), 0))
+    {
+      ui_set_next_flags(UI_BoxFlag_DefaultFocusNav);
+      UI_Focus(UI_FocusKind_On) UI_WidthFill UI_HeightFill UI_NamedColumn(str8_lit("empty_view"))
+        UI_Padding(ui_pct(1, 0)) UI_Focus(UI_FocusKind_Null)
+      {
+        Rng2F32 view_rect = ui_top_parent()->rect;
+
+        //- rad: icon & info
+        UI_Padding(ui_em(2.f, 1.f))
+        {
+          //- rad: icon
+          {
+            F32 icon_dim = ui_top_font_size()*10.f;
+            ui_set_next_flags(UI_BoxFlag_AnimatePosY);
+            UI_PrefHeight(ui_px(icon_dim, 1.f))
+              UI_Row
+              UI_Padding(ui_pct(1, 0))
+              UI_PrefWidth(ui_px(icon_dim, 1.f))
+            {
+              R_Handle texture = rad_state->icon_texture;
+              Vec2S32 texture_dim = r_size_from_tex2d(texture);
+              ui_image(texture, R_Tex2DSampleKind_Linear, r2f32p(0, 0, texture_dim.x, texture_dim.y), v4f32(1, 1, 1, 1), 0, str8_lit(""));
+            }
+          }
+
+          //- rad: title
+          ui_spacer(ui_em(2.f, 1.f));
+          UI_WidthFill UI_PrefHeight(ui_em(2.f, 1.f))
+            UI_Row
+            UI_Padding(ui_pct(1, 0))
+            UI_TextAlignment(UI_TextAlign_Center)
+            UI_PrefWidth(ui_text_dim(1, 1))
+            UI_FontSize(ui_top_font_size()*2.f)
+          {
+            ui_label(str8_lit(BUILD_TITLE));
+          }
+
+          //- rad: info
+          ui_spacer(ui_em(1.f, 1.f));
+          UI_WidthFill UI_PrefHeight(ui_em(2.f, 1.f))
+            UI_Row
+            UI_Padding(ui_pct(1, 0))
+            UI_TextAlignment(UI_TextAlign_Center)
+            UI_PrefWidth(ui_text_dim(1, 1))
+            UI_TagF("weak")
+          {
+            ui_label(str8_lit(BUILD_VERSION_STRING_LITERAL " " BUILD_RELEASE_PHASE_STRING_LITERAL));
+  #if defined(BUILD_GIT_HASH)
+            ui_label(str8_lit(BUILD_GIT_HASH));
+  #endif
+          }
+        }
+
+        //- rad: drop-file helper (same box as raddbg's "add target" helper)
+        ui_spacer(ui_em(2.f, 1.f));
+        UI_PrefHeight(ui_em(30.f, 1.f)) UI_Row UI_Padding(ui_pct(1, 0)) UI_PrefWidth(ui_em(40.f, 1.f))
+          UI_TextAlignment(UI_TextAlign_Center)
+          UI_CornerRadius(ui_top_font_size()/2.f)
+        {
+          ui_set_next_child_layout_axis(Axis2_Y);
+          UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder, "###open_file_drop_site");
+          UI_Parent(box) UI_Padding(ui_pct(1, 0)) UI_PrefHeight(ui_em(2.5f, 1.f))
+          {
+            UI_PrefHeight(ui_em(3.75f, 1.f))
+              UI_Row
+              UI_Padding(ui_pct(1, 0))
+              UI_TextAlignment(UI_TextAlign_Center)
+              UI_PrefWidth(ui_em(12.f, 1.f))
+              UI_CornerRadius(ui_top_font_size()/2.f)
+              UI_TagF("pop")
+              if(ui_clicked(rad_icon_buttonf(RAD_IconKind_FileOutline, 0, "Open File")))
+            {
+              rad_cmd(RAD_CmdKind_OpenFile);
+            }
+            ui_spacer(ui_em(1.f, 1.f));
+            UI_TagF("weak")
+            {
+              ui_label(str8_lit("or drop a file"));
+            }
+          }
+          for(UI_Event *evt = 0; ui_next_event(&evt);)
+          {
+            if(evt->kind == UI_EventKind_FileDrop &&
+               contains_2f32(view_rect, evt->pos) &&
+               evt->paths.node_count != 0)
+            {
+              for(String8Node *n = evt->paths.first; n != 0; n = n->next)
+              {
+                rad_cmd(RAD_CmdKind_OpenFile, .file_path = n->string);
+              }
+              ui_eat_event(evt);
+            }
+          }
+        }
+        ui_spacer(ui_em(4.f, 1.f));
+      }
+    }
+
+    //////////////////////////////
+    //- rad: text view
+    //
+    else if(str8_match(tab->string, str8_lit("text"), 0))
+    {
+      rad_text_view_ui(tab, rect);
+    }
+
+    //////////////////////////////
+    //- rad: explorer view
+    //
+    else if(str8_match(tab->string, str8_lit("explorer"), 0))
+    {
+      rad_explorer_view_ui(tab, rect);
+    }
+  }
+
+  //////////////////////////////
+  //- rad: catchall completion controls (Esc closes the query; Enter runs
+  // its command, unless the view's contents have the keyboard)
+  //
+  if(vs->query_is_open) UI_Focus(UI_FocusKind_On)
+  {
+    if(ui_is_focus_active() && ui_slot_press(UI_EventActionSlot_Cancel))
+    {
+      vs->query_is_open = 0;
+      vs->query_string_size = 0;
+    }
+    if(!vs->contents_are_focused && ui_is_focus_active() && ui_slot_press(UI_EventActionSlot_Accept))
+    {
+      rad_tab_query_complete(tab);
+    }
   }
 }
 
@@ -819,11 +1102,23 @@ rad_window_frame(RAD_Window *ws)
                   {
                     RAD_CmdKind_Undo,
                     RAD_CmdKind_Redo,
+                    RAD_CmdKind_Null,//-
+                    RAD_CmdKind_Search,
+                    RAD_CmdKind_SearchBackwards,
+                    RAD_CmdKind_FindNext,
+                    RAD_CmdKind_FindPrev,
+                    RAD_CmdKind_GoToLine,
                   };
                   U32 codepoints[] =
                   {
                     'u',
                     'r',
+                    0,//-
+                    's',
+                    'b',
+                    'n',
+                    'p',
+                    'g',
                   };
                   StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
                   rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
@@ -1423,16 +1718,7 @@ rad_window_frame(RAD_Window *ws)
             //- rad: build tab view
             UI_Parent(view_container_box) if(selected_tab != &cfg_nil_node) ProfScope("build tab view")
             {
-              UI_Box *view_box = &ui_nil_box;
-              UI_WidthFill UI_HeightFill
-              {
-                view_box = ui_build_box_from_key(0, ui_key_zero());
-              }
-              UI_Parent(view_box)
-                UI_PrefHeight(ui_px(floor_f32(ui_top_font_size()*settings->row_height), 1.f))
-              {
-                rad_view_ui(selected_tab, content_rect);
-              }
+              rad_view_ui(selected_tab, content_rect);
             }
           }
 
@@ -2218,9 +2504,46 @@ rad_exec_cmd(RAD_Cmd *cmd)
   Dir2 split_dir = Dir2_Invalid;
   U64 panel_sib_off = 0;
   U64 panel_child_off = 0;
-  switch(cmd->kind)
+
+  //- rad: a command that needs an input, run without one -> open its query
+  // bar in the target tab (text views only, for now)
+  RAD_CmdKindInfo *cmd_kind_info = &rad_cmd_kind_info_table[cmd->kind];
+  B32 query_needed = ((cmd_kind_info->query.flags & RAD_QueryFlag_Required) &&
+                      ((cmd_kind_info->query.slot == RAD_QuerySlot_LineNum && cmd->params.line_num == 0) ||
+                       (cmd_kind_info->query.slot == RAD_QuerySlot_String && cmd->params.string.size == 0)));
+  if(query_needed)
+  {
+    if(str8_match(tab_cfg->string, str8_lit("text"), 0))
+    {
+      rad_tab_query_open(tab_cfg, cmd->kind);
+    }
+  }
+  else switch(cmd->kind)
   {
     default:{}break;
+
+    //- rad: code navigation (port of raddbg's code view commands)
+    case RAD_CmdKind_GoToLine:
+    if(str8_match(tab_cfg->string, str8_lit("text"), 0))
+    {
+      rad_view_state_from_cfg(tab_cfg)->cv.goto_line_num = cmd->params.line_num;
+    }break;
+    case RAD_CmdKind_Search:
+    case RAD_CmdKind_SearchBackwards:
+    case RAD_CmdKind_FindNext:
+    case RAD_CmdKind_FindPrev:
+    if(str8_match(tab_cfg->string, str8_lit("text"), 0))
+    {
+      String8 needle = cmd->params.string;
+      if(cmd->kind == RAD_CmdKind_FindNext || cmd->kind == RAD_CmdKind_FindPrev)
+      {
+        needle = rad_tab_query_input(tab_cfg);
+      }
+      RAD_CodeViewState *cv = &rad_view_state_from_cfg(tab_cfg)->cv;
+      cv->find_text_size = Min(sizeof(cv->find_text_buffer), needle.size);
+      MemoryCopy(cv->find_text_buffer, needle.str, cv->find_text_size);
+      cv->find_text_backward = (cmd->kind == RAD_CmdKind_SearchBackwards || cmd->kind == RAD_CmdKind_FindPrev);
+    }break;
 
     //- rad: files
     case RAD_CmdKind_OpenFile:
@@ -3317,6 +3640,14 @@ rad_frame(void)
         ui_event.kind         = kind;
         ui_event.key          = event->key;
         ui_event.modifiers    = event->modifiers;
+        if(event->kind == WM_EventKind_Press && event->modifiers == 0)
+        {
+          // rad: raddbg binds Return/Esc to its `accept`/`cancel` commands,
+          // which push press events with these action slots; here the key
+          // press itself carries the slot (Return must still reach editors)
+          if(event->key == WM_Key_Return) { ui_event.slot = UI_EventActionSlot_Accept; }
+          if(event->key == WM_Key_Esc)    { ui_event.slot = UI_EventActionSlot_Cancel; }
+        }
         ui_event.string       = event->character ? str8_from_32(scratch.arena, str32(&event->character, 1)) : str8_zero();
         ui_event.paths        = str8_list_copy(scratch.arena, &event->strings);
         ui_event.pos          = event->pos;

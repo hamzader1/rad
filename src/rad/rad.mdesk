@@ -1018,42 +1018,49 @@ RAD_CodeColorTable:
 // Default bindings follow the RAD Debugger's defaults (raddbg.mdesk,
 // RD_DefaultBindingTable) wherever the command exists in both programs.
 
-@table(name               code_name            display_name           icon          key        ctrl   shift  alt)
+@table(name               code_name            display_name           icon              key        ctrl   shift  alt    q_slot   q_keep_oi q_select_oi q_is_code q_required)
 RAD_CmdTable:
 {
-  {Null                   ""                   ""                     Null          Null       0      0      0  }
+  {Null                   ""                   ""                     Null              Null       0      0      0      Null     0         0           0         0 }
   
   //- rad: files
-  {OpenFile               open_file            "Open File"            FileOutline   O          ctrl   0      0  }
-  {OpenFolder             open_folder          "Open Folder"          FolderOpenOutline O      ctrl   shift  0  }
-  {Save                   save                 "Save"                 Save          S          ctrl   0      0  }
-  {SaveAll                save_all             "Save All"             Save          S          ctrl   shift  0  }
-  {Exit                   exit                 "Exit"                 X             F4         0      0      alt}
+  {OpenFile               open_file            "Open File"            FileOutline       O          ctrl   0      0      Null     0         0           0         0 }
+  {OpenFolder             open_folder          "Open Folder"          FolderOpenOutline O          ctrl   shift  0      Null     0         0           0         0 }
+  {Save                   save                 "Save"                 Save              S          ctrl   0      0      Null     0         0           0         0 }
+  {SaveAll                save_all             "Save All"             Save              S          ctrl   shift  0      Null     0         0           0         0 }
+  {Exit                   exit                 "Exit"                 X                 F4         0      0      alt    Null     0         0           0         0 }
 
   //- rad: editing
-  {Undo                   undo                 "Undo"                 Undo          Z          ctrl   0      0  }
-  {Redo                   redo                 "Redo"                 Redo          Y          ctrl   0      0  }
+  {Undo                   undo                 "Undo"                 Undo              Z          ctrl   0      0      Null     0         0           0         0 }
+  {Redo                   redo                 "Redo"                 Redo              Y          ctrl   0      0      Null     0         0           0         0 }
+  
+  //- rad: code navigation (port of raddbg's goto_line / search / find_next)
+  {GoToLine               goto_line            "Go To Line"           Null              G          ctrl   0      0      LineNum  0         0           1         1 }
+  {Search                 search               "Search"               Find              F          ctrl   0      0      String   1         1           1         1 }
+  {SearchBackwards        search_backwards     "Search Backwards"     Find              R          ctrl   0      0      String   1         1           1         1 }
+  {FindNext               find_next            "Find Next"            Find              F3         0      0      0      Null     1         0           0         0 }
+  {FindPrev               find_prev            "Find Previous"        Find              F3         0      shift  0      Null     1         0           0         0 }
   
   //- rad: windows
-  {ToggleFullscreen       toggle_fullscreen    "Toggle Fullscreen"    Window        Return     ctrl   0      0  }
-  {IncWindowFontSize      inc_window_font_size "Increase Font Size"   Add           Equal      0      0      alt}
-  {DecWindowFontSize      dec_window_font_size "Decrease Font Size"   Minus         Minus      0      0      alt}
+  {ToggleFullscreen       toggle_fullscreen    "Toggle Fullscreen"    Window            Return     ctrl   0      0      Null     0         0           0         0 }
+  {IncWindowFontSize      inc_window_font_size "Increase Font Size"   Add               Equal      0      0      alt    Null     0         0           0         0 }
+  {DecWindowFontSize      dec_window_font_size "Decrease Font Size"   Minus             Minus      0      0      alt    Null     0         0           0         0 }
   
   //- rad: panels
-  {NewPanelRight          new_panel_right      "Split Panel Right"    XSplit        P          ctrl   0      0  }
-  {NewPanelDown           new_panel_down       "Split Panel Down"     YSplit        Minus      ctrl   0      0  }
-  {ClosePanel             close_panel          "Close Panel"          ClosePanel    P          ctrl   shift  alt}
-  {NextPanel              next_panel           "Next Panel"           RightArrow    Comma      ctrl   0      0  }
-  {PrevPanel              prev_panel           "Previous Panel"       LeftArrow     Comma      ctrl   shift  0  }
+  {NewPanelRight          new_panel_right      "Split Panel Right"    XSplit            P          ctrl   0      0      Null     0         0           0         0 }
+  {NewPanelDown           new_panel_down       "Split Panel Down"     YSplit            Minus      ctrl   0      0      Null     0         0           0         0 }
+  {ClosePanel             close_panel          "Close Panel"          ClosePanel        P          ctrl   shift  alt    Null     0         0           0         0 }
+  {NextPanel              next_panel           "Next Panel"           RightArrow        Comma      ctrl   0      0      Null     0         0           0         0 }
+  {PrevPanel              prev_panel           "Previous Panel"       LeftArrow         Comma      ctrl   shift  0      Null     0         0           0         0 }
   
   //- rad: focus (internal; no default bindings)
-  {FocusPanel             focus_panel          "Focus Panel"          Null          Null       0      0      0  }
-  {FocusTab               focus_tab            "Focus Tab"            Null          Null       0      0      0  }
+  {FocusPanel             focus_panel          "Focus Panel"          Null              Null       0      0      0      Null     0         0           0         0 }
+  {FocusTab               focus_tab            "Focus Tab"            Null              Null       0      0      0      Null     0         0           0         0 }
 
   //- rad: tabs
-  {NextTab               next_tab             "Next Tab"             RightArrow    PageDown   ctrl   0      0  }
-  {PrevTab                prev_tab             "Previous Tab"         LeftArrow     PageUp     ctrl   0      0  }
-  {CloseTab               close_tab            "Close Tab"            X             W          ctrl   0      0  }
+  {NextTab                next_tab             "Next Tab"             RightArrow        PageDown   ctrl   0      0      Null     0         0           0         0 }
+  {PrevTab                prev_tab             "Previous Tab"         LeftArrow         PageUp     ctrl   0      0      Null     0         0           0         0 }
+  {CloseTab               close_tab            "Close Tab"            X                 W          ctrl   0      0      Null     0         0           0         0 }
 }
 
 @struct RAD_CmdKindInfo:
@@ -1062,6 +1069,7 @@ RAD_CmdTable:
   `String8 display_name`;
   `RAD_IconKind icon_kind`;
   `CFG_Binding default_binding`;
+  `RAD_Query query`;
 };
 
 @enum RAD_CmdKind:
@@ -1072,5 +1080,5 @@ RAD_CmdTable:
 
 @data(RAD_CmdKindInfo) @c_file rad_cmd_kind_info_table:
 {
-  @expand(RAD_CmdTable a) ```{str8_lit_comp("$(a.code_name)"), str8_lit_comp("$(a.display_name)"), RAD_IconKind_$(a.icon), {WM_Key_$(a.key), 0 $(a.ctrl != 0 -> `|WM_Modifier_Ctrl`) $(a.shift != 0 -> `|WM_Modifier_Shift`) $(a.alt != 0 -> `|WM_Modifier_Alt`)}}```;
+  @expand(RAD_CmdTable a) ```{str8_lit_comp("$(a.code_name)"), str8_lit_comp("$(a.display_name)"), RAD_IconKind_$(a.icon), {WM_Key_$(a.key), 0 $(a.ctrl != 0 -> `|WM_Modifier_Ctrl`) $(a.shift != 0 -> `|WM_Modifier_Shift`) $(a.alt != 0 -> `|WM_Modifier_Alt`)}, {RAD_QuerySlot_$(a.q_slot), 0 $(a.q_keep_oi != 0 -> `|RAD_QueryFlag_KeepOldInput`) $(a.q_select_oi != 0 -> `|RAD_QueryFlag_SelectOldInput`) $(a.q_is_code != 0 -> `|RAD_QueryFlag_CodeInput`) $(a.q_required != 0 -> `|RAD_QueryFlag_Required`)}}```;
 }

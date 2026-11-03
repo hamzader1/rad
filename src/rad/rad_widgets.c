@@ -181,10 +181,12 @@ rad_cmd_list_menu_buttons(U64 count, RAD_CmdKind *kinds, U32 *fastpath_codepoint
 internal UI_Signal
 rad_cell(RAD_CellParams *params, String8 string)
 {
-  // NOTE(rad): port of raddbg's rd_cell (raddbg/raddbg_widgets.c), the
-  // non-editing path: same boxes, flags, sizes and tags.
+  // NOTE(rad): port of raddbg's rd_cell (raddbg/raddbg_widgets.c): same
+  // boxes, flags, sizes and tags. Only cells given an `edit_buffer` edit
+  // (raddbg's cells always can); everything edit-related is gated on that.
   ProfBeginFunction();
   Temp scratch = scratch_begin(0, 0);
+  B32 do_cursor_trail = rad_state->settings.animations && rad_state->settings.cursor_trail;
 
   //////////////////////////////
   //- rad: unpack visual metrics
@@ -203,10 +205,19 @@ rad_cell(RAD_CellParams *params, String8 string)
   B32 is_auto_focus_active = ui_is_key_auto_focus_active(key);
   if(is_auto_focus_hot) { ui_push_focus_hot(UI_FocusKind_On); }
   if(is_auto_focus_active) { ui_push_focus_active(UI_FocusKind_On); }
+  B32 is_editable     = (params->edit_buffer != 0);
+  B32 is_focus_hot    = ui_is_focus_hot();
+  B32 is_focus_active = is_editable && ui_is_focus_active();
+  B32 is_focus_active_disabled = is_editable && (!ui_is_focus_active() && ui_top_focus_active() == UI_FocusKind_On);
+  B32 is_editing      = (is_focus_active || is_focus_active_disabled);
 
   //////////////////////////////
   //- rad: build top-level box
   //
+  if(is_editing)
+  {
+    ui_set_next_hover_cursor(WM_Cursor_IBar);
+  }
   UI_Box *box = ui_build_box_from_key(UI_BoxFlag_MouseClickable|
                                       (!!(params->flags & RAD_CellFlag_KeyboardClickable)*UI_BoxFlag_KeyboardClickable)|
                                       UI_BoxFlag_ClickToFocus|
@@ -214,7 +225,8 @@ rad_cell(RAD_CellParams *params, String8 string)
                                       (!!(params->flags & RAD_CellFlag_SingleClickActivate)*UI_BoxFlag_DrawActiveEffects)|
                                       (!(params->flags & RAD_CellFlag_NoBackground)*UI_BoxFlag_DrawBackground)|
                                       (!!(params->flags & RAD_CellFlag_Border)*UI_BoxFlag_DrawBorder)|
-                                      ((is_auto_focus_hot || is_auto_focus_active)*UI_BoxFlag_KeyboardClickable),
+                                      ((is_auto_focus_hot || is_auto_focus_active)*UI_BoxFlag_KeyboardClickable)|
+                                      is_editing*(UI_BoxFlag_Clip),
                                       key);
 
   //////////////////////////////
@@ -263,6 +275,7 @@ rad_cell(RAD_CellParams *params, String8 string)
   //- rad: build line edit container box
   //
   UI_Box *edit_box = &ui_nil_box;
+  F32 editable_edit_box_dim = dim_2f32(box->rect).x;
   UI_Parent(box) UI_PrefWidth(ui_pct(1, 0))
   {
     if(ui_top_px_height() > ui_top_font_size()*3.f)
@@ -271,7 +284,8 @@ rad_cell(RAD_CellParams *params, String8 string)
       UI_Column UI_Padding(ui_em(1, 0)) UI_Focus(UI_FocusKind_On)
       {
         UI_PrefHeight(ui_em(3.f, 1.f)) UI_CornerRadius(ui_top_font_size()*0.5f)
-          edit_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+          edit_box = ui_build_box_from_stringf((!!is_editing*UI_BoxFlag_DrawBorder)|
+                                               UI_BoxFlag_Clickable|
                                                UI_BoxFlag_DisableFocusOverlay,
                                                "edit_box");
       }
@@ -284,6 +298,10 @@ rad_cell(RAD_CellParams *params, String8 string)
     {
       edit_box = ui_build_box_from_stringf(0, "edit_box");
     }
+    if(params->line_edit_key_out)
+    {
+      params->line_edit_key_out[0] = edit_box->key;
+    }
   }
 
   //////////////////////////////
@@ -292,42 +310,255 @@ rad_cell(RAD_CellParams *params, String8 string)
   UI_Box *scrollable_box = &ui_nil_box;
   UI_Parent(edit_box) UI_PrefWidth(ui_children_sum(0))
   {
-    scrollable_box = ui_build_box_from_stringf(0, "scroll_box");
+    scrollable_box = ui_build_box_from_stringf(is_focus_active*(UI_BoxFlag_AllowOverflowX|UI_BoxFlag_Clip), "scroll_box_%p", params->edit_buffer);
+  }
+
+  //////////////////////////////
+  //- rad: do non-textual edits (delete, copy)
+  //
+  B32 commit = 0;
+  if(is_editable && !is_focus_active && is_focus_hot)
+  {
+    for(UI_Event *evt = 0; ui_next_event(&evt);)
+    {
+      if(evt->flags & UI_EventFlag_Copy)
+      {
+        wm_set_clipboard_text(params->pre_edit_value);
+      }
+      if(evt->flags & UI_EventFlag_Delete)
+      {
+        commit = 1;
+        params->edit_string_size_out[0] = 0;
+      }
+    }
   }
 
   //////////////////////////////
   //- rad: get signal
   //
   UI_Signal sig = ui_signal_from_box(box);
+  if(commit)
+  {
+    sig.f |= UI_SignalFlag_Commit;
+  }
+
+  //////////////////////////////
+  //- rad: do start/end editing interaction
+  //
+  B32 focus_started = 0;
+  if(is_editable && !is_focus_active)
+  {
+    B32 start_editing_via_sig = (ui_double_clicked(sig) || sig.f&UI_SignalFlag_KeyboardPressed);
+    B32 start_editing_via_typing = 0;
+    if(is_focus_hot)
+    {
+      for(UI_Event *evt = 0; ui_next_event(&evt);)
+      {
+        if(evt->string.size != 0 || evt->flags & UI_EventFlag_Paste)
+        {
+          start_editing_via_typing = 1;
+          break;
+        }
+      }
+    }
+    if(is_focus_hot && ui_slot_press(UI_EventActionSlot_Edit))
+    {
+      start_editing_via_typing = 1;
+    }
+    if(start_editing_via_sig || start_editing_via_typing)
+    {
+      String8 edit_string = params->pre_edit_value;
+      edit_string.size = Min(params->edit_buffer_size, params->pre_edit_value.size);
+      MemoryCopy(params->edit_buffer, edit_string.str, edit_string.size);
+      params->edit_string_size_out[0] = edit_string.size;
+      ui_set_auto_focus_active_key(key);
+      if(!(params->flags & RAD_CellFlag_Button))
+      {
+        ui_kill_action();
+      }
+      params->cursor[0] = edit_string.size;
+      params->mark[0] = 0;
+      focus_started = 1;
+    }
+  }
+  else if(is_focus_active && sig.f&UI_SignalFlag_KeyboardPressed)
+  {
+    ui_set_auto_focus_active_key(ui_key_zero());
+    sig.f |= UI_SignalFlag_Commit;
+  }
+
+  //////////////////////////////
+  //- rad: take navigation actions for editing
+  //
+  if(is_editable && !(params->flags & RAD_CellFlag_DisableEdit) && (is_focus_active || focus_started))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    for(UI_Event *evt = 0; ui_next_event(&evt);)
+    {
+      String8 edit_string = str8(params->edit_buffer, params->edit_string_size_out[0]);
+
+      // rad: do not consume anything that doesn't fit a single-line's
+      // operations (rad: incl. the "\n" text that Enter also produces)
+      if((evt->kind != UI_EventKind_Edit &&
+          evt->kind != UI_EventKind_Navigate &&
+          evt->kind != UI_EventKind_Text) ||
+         evt->delta_2s32.y != 0 ||
+         (evt->kind == UI_EventKind_Text && !(evt->flags & UI_EventFlag_Paste) &&
+          str8_find_needle(evt->string, 0, str8_lit("\n"), 0) < evt->string.size))
+      {
+        continue;
+      }
+
+      // rad: map this action to an op
+      UI_TxtOp op = ui_single_line_txt_op_from_event(scratch.arena, evt, edit_string, r1u64(0, edit_string.size), params->cursor[0], params->mark[0]);
+
+      // rad: perform replace range
+      if(op.range.min != op.range.max || op.replace.size != 0)
+      {
+        String8 new_string = ui_push_string_replace_range(scratch.arena, edit_string, op.range, op.replace);
+        new_string.size = Min(params->edit_buffer_size, new_string.size);
+        MemoryCopy(params->edit_buffer, new_string.str, new_string.size);
+        params->edit_string_size_out[0] = new_string.size;
+      }
+
+      // rad: perform copy
+      if(evt->flags & UI_EventFlag_Copy)
+      {
+        wm_set_clipboard_text(op.copy);
+      }
+
+      // rad: commit op's changed cursor & mark to caller-provided state
+      params->cursor[0] = op.cursor;
+      params->mark[0] = op.mark;
+
+      // rad: consume event
+      ui_eat_event(evt);
+    }
+    scratch_end(scratch);
+  }
 
   //////////////////////////////
   //- rad: compute fancy strings
   //
-  DR_FStrList fstrs = params->value_fstrs;
-  if(fstrs.total_size == 0)
+  DR_FStrList fstrs = {0};
   {
-    String8 display_string = ui_display_part_from_key_string(string);
-    UI_TagF("weak")
+    //- rad: (not editing)
+    if(!is_editing && params->value_fstrs.total_size != 0)
     {
-      DR_FStrParams fstr_params = {ui_top_font(), ui_top_text_raster_flags(), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
-      dr_fstrs_push_new(scratch.arena, &fstrs, &fstr_params, display_string);
+      fstrs = params->value_fstrs;
+    }
+    else if(!is_editing && params->flags & RAD_CellFlag_CodeContents && params->pre_edit_value.size != 0)
+    {
+      fstrs = rad_fstrs_from_code_string(scratch.arena, 1, ui_color_from_name(str8_lit("text")), params->pre_edit_value);
+    }
+    else if(!is_editing)
+    {
+      String8 display_string = params->pre_edit_value;
+      if(params->pre_edit_value.size == 0)
+      {
+        display_string = ui_display_part_from_key_string(string);
+      }
+      UI_TagF("weak")
+      {
+        DR_FStrParams fstr_params = {ui_top_font(), ui_top_text_raster_flags(), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+        dr_fstrs_push_new(scratch.arena, &fstrs, &fstr_params, display_string);
+      }
+    }
+
+    //- rad: (editing)
+    else
+    {
+      String8 edit_string = str8(params->edit_buffer, params->edit_string_size_out[0]);
+      if(params->flags & RAD_CellFlag_CodeContents)
+      {
+        fstrs = rad_fstrs_from_code_string(scratch.arena, 1.f, ui_color_from_name(str8_lit("text")), edit_string);
+      }
+      else
+      {
+        DR_FStrParams fstr_params = {ui_top_font(), ui_top_text_raster_flags(), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+        dr_fstrs_push_new(scratch.arena, &fstrs, &fstr_params, edit_string);
+      }
     }
   }
 
   //////////////////////////////
   //- rad: build scrolled contents
   //
+  U64 mouse_off = 0;
+  F32 cursor_off = 0;
   UI_Parent(scrollable_box)
   {
     if(ui_top_text_alignment() == UI_TextAlign_Left && (params->flags & (RAD_CellFlag_Expander|RAD_CellFlag_ExpanderSpace|RAD_CellFlag_ExpanderPlaceholder)) == 0)
     {
       ui_spacer(ui_em(0.5f, 1.f));
     }
+    if(is_focus_active)
+    {
+      ui_set_next_flags(UI_BoxFlag_DisableTextTrunc);
+    }
     ui_set_next_pref_width(ui_text_dim(ui_top_font_size()*0.5f, 0));
     UI_Box *text_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText, "###text_box");
     ui_box_equip_display_fstrs(text_box, &fstrs);
+    if(is_editing)
+    {
+      String8 edit_string = str8(params->edit_buffer, params->edit_string_size_out[0]);
+      UI_LineEditDrawData *draw_data = push_array(ui_build_arena(), UI_LineEditDrawData, 1);
+      draw_data->edited_string = push_str8_copy(ui_build_arena(), edit_string);
+      draw_data->cursor = params->cursor[0];
+      draw_data->mark = params->mark[0];
+      draw_data->trail = do_cursor_trail && !ui_dragging(sig);
+      ui_box_equip_custom_draw(text_box, ui_line_edit_draw, draw_data);
+      Vec2F32 text2mouse = sub_2f32(ui_mouse(), ui_box_text_position(text_box));
+      FNT_Tag font = ui_top_font();
+      F32 font_size = ui_top_font_size();
+      if(params->flags & RAD_CellFlag_CodeContents)
+      {
+        font = rad_font_from_slot(RAD_FontSlot_Code);
+      }
+      mouse_off = fnt_char_pos_from_tag_size_string_p(font, font_size, 0, ui_top_tab_size(), edit_string, text2mouse.x);
+      cursor_off = fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, ui_top_tab_size(), str8_prefix(edit_string, params->cursor[0])).x;
+    }
   }
-  scrollable_box->view_off_target.x = scrollable_box->view_off.x = 0;
+
+  //////////////////////////////
+  //- rad: click+drag
+  //
+  if(is_focus_active && ui_dragging(sig))
+  {
+    if(ui_pressed(sig))
+    {
+      params->mark[0] = mouse_off;
+    }
+    params->cursor[0] = mouse_off;
+  }
+  if(!is_focus_active && is_focus_active_disabled && ui_pressed(sig))
+  {
+    params->cursor[0] = params->mark[0] = mouse_off;
+  }
+
+  //////////////////////////////
+  //- rad: focus cursor
+  //
+  {
+    F32 visible_dim_px = editable_edit_box_dim - expander_size_px - ui_top_font_size()*params->depth;
+    if(visible_dim_px > 0)
+    {
+      Rng1F32 cursor_range_px  = r1f32(cursor_off-ui_top_font_size()*2.f, cursor_off+ui_top_font_size()*1.f);
+      Rng1F32 visible_range_px = r1f32(scrollable_box->view_off_target.x, scrollable_box->view_off_target.x + visible_dim_px);
+      cursor_range_px.min = ClampBot(0, cursor_range_px.min);
+      cursor_range_px.max = ClampBot(0, cursor_range_px.max);
+      F32 min_delta = cursor_range_px.min-visible_range_px.min;
+      F32 max_delta = cursor_range_px.max-visible_range_px.max;
+      min_delta = Min(min_delta, 0);
+      max_delta = Max(max_delta, 0);
+      scrollable_box->view_off_target.x += min_delta;
+      scrollable_box->view_off_target.x += max_delta;
+    }
+    if(!is_editing)
+    {
+      scrollable_box->view_off_target.x = scrollable_box->view_off.x = 0;
+    }
+  }
 
   //////////////////////////////
   //- rad: pop focus
@@ -392,6 +623,119 @@ rad_rgba_from_code_color_slot(RAD_CodeColorSlot slot)
     result = rad_state->current_window->theme_code_colors[slot];
   }
   return result;
+}
+
+internal DR_FStrList
+rad_fstrs_from_code_string(Arena *arena, F32 alpha, Vec4F32 base_color, String8 string)
+{
+  // NOTE(rad): port of raddbg's rd_fstrs_from_code_string, minus the
+  // debug-info identifier lookup (identifiers keep their token color, as in
+  // raddbg with no debug info loaded) and the indirection size change (off
+  // in raddbg too)
+  ProfBeginFunction();
+  Temp scratch = scratch_begin(&arena, 1);
+  DR_FStrList fstrs = {0};
+  TXT_TokenArray tokens = txt_token_array_from_string__c_cpp(scratch.arena, 0, string);
+  TXT_Token *tokens_opl = tokens.v+tokens.count;
+  for(TXT_Token *token = tokens.v; token < tokens_opl; token += 1)
+  {
+    RAD_CodeColorSlot token_color_slot = rad_code_color_slot_from_txt_token_kind(token->kind);
+    Vec4F32 token_color_rgba = rad_rgba_from_code_color_slot(token_color_slot);
+    String8 token_string = str8_substr(string, token->range);
+    switch(token->kind)
+    {
+      default:
+      {
+        token_color_rgba.w *= alpha;
+        DR_FStr fstr = {token_string, {ui_top_font(), ui_top_text_raster_flags(), token_color_rgba, ui_top_font_size()}};
+        dr_fstrs_push(arena, &fstrs, &fstr);
+      }break;
+      case TXT_TokenKind_Numeric:
+      {
+        token_color_rgba.w *= alpha;
+        Vec4F32 token_color_rgba_alt = rad_rgba_from_code_color_slot(RAD_CodeColorSlot_CodeNumericAltDigitGroup);
+        token_color_rgba_alt.w *= alpha;
+        F32 font_size = ui_top_font_size();
+
+        // rad: unpack string
+        U32 base = 10;
+        U64 prefix_skip = 0;
+        U64 digit_group_size = 3;
+        if(str8_match(str8_prefix(token_string, 2), str8_lit("0x"), StringMatchFlag_CaseInsensitive))
+        {
+          base = 16;
+          prefix_skip = 2;
+          digit_group_size = 4;
+        }
+        else if(str8_match(str8_prefix(token_string, 2), str8_lit("0b"), StringMatchFlag_CaseInsensitive))
+        {
+          base = 2;
+          prefix_skip = 2;
+          digit_group_size = 8;
+        }
+        else if(str8_match(str8_prefix(token_string, 2), str8_lit("0o"), StringMatchFlag_CaseInsensitive))
+        {
+          base = 8;
+          prefix_skip = 2;
+          digit_group_size = 2;
+        }
+
+        // rad: grab string parts
+        U64 dot_pos = str8_find_needle(token_string, 0, str8_lit("."), 0);
+        String8 prefix = str8_prefix(token_string, prefix_skip);
+        String8 whole = str8_substr(token_string, r1u64(prefix_skip, dot_pos));
+        String8 decimal = str8_skip(token_string, dot_pos);
+
+        // rad: determine # of digits
+        U64 num_digits = 0;
+        for(U64 idx = 0; idx < whole.size; idx += 1)
+        {
+          num_digits += char_is_digit(whole.str[idx], base);
+        }
+
+        // rad: push prefix
+        {
+          DR_FStr fstr = {prefix, {ui_top_font(), ui_top_text_raster_flags(), token_color_rgba, font_size}};
+          dr_fstrs_push(arena, &fstrs, &fstr);
+        }
+
+        // rad: push digit groups
+        {
+          B32 odd = 0;
+          U64 start_idx = 0;
+          U64 num_digits_passed = digit_group_size - num_digits%digit_group_size;
+          for(U64 idx = 0; idx <= whole.size; idx += 1)
+          {
+            U8 byte = idx < whole.size ? whole.str[idx] : 0;
+            if(num_digits_passed >= digit_group_size || idx == whole.size)
+            {
+              num_digits_passed = 0;
+              if(start_idx < idx)
+              {
+                DR_FStr fstr = {str8_substr(whole, r1u64(start_idx, idx)), {ui_top_font(), ui_top_text_raster_flags(), odd ? token_color_rgba_alt : token_color_rgba, font_size}};
+                dr_fstrs_push(arena, &fstrs, &fstr);
+                start_idx = idx;
+                odd ^= 1;
+              }
+            }
+            if(char_is_digit(byte, base))
+            {
+              num_digits_passed += 1;
+            }
+          }
+        }
+
+        // rad: push decimal
+        {
+          DR_FStr fstr = {decimal, {ui_top_font(), ui_top_text_raster_flags(), token_color_rgba, font_size}};
+          dr_fstrs_push(arena, &fstrs, &fstr);
+        }
+      }break;
+    }
+  }
+  scratch_end(scratch);
+  ProfEnd();
+  return fstrs;
 }
 
 internal RAD_CodeSliceSignal

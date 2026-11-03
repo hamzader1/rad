@@ -103,8 +103,21 @@ Milestone 6 details (each item with its script):
   tab on that file; Exit counts dirty files, not tabs.
 - [x] Save All (Ctrl+Shift+S, File menu; script `save_all`): every dirty
   document, hidden tabs too. raddbg has no such command (new table row).
-- [ ] Go to Line (port of raddbg's `GoToLine`)
-- [ ] Find, Find Next/Previous (port of raddbg's `Search`/`FindNext`)
+- [x] Go to Line (Ctrl+G) and Find (Ctrl+F; Ctrl+R backwards; F3 / Shift+F3
+  next/previous; Edit menu), script `find` (32 checks). Ports of raddbg's
+  query bar (`rd_view_ui`), `CompleteQuery`, the code view's search and
+  goto, and `rd_cell`'s line editing (`rad_cell` now edits when given an
+  `edit_buffer`). Query columns added to rad's command table.
+  Differences from raddbg, all because rad's code view is an editor: Return/
+  Esc presses carry the Accept/Cancel slots directly (raddbg binds them to
+  `accept`/`cancel` commands; Space is not bound, it types); Enter's "
+"
+  text is eaten while the bar has the keyboard; clicking into the code gives
+  it the keyboard back (Enter then edits instead of searching). Also fixed
+  in the port: raddbg's backward search wraps its start offset around when
+  a range ends at 0 (would walk ~2^52 chunks). NOT compared side by side
+  with raddbg's bar yet (needs raddbg focused; the code is a line-by-line
+  port with the same tags and sizes).
 - [ ] Session memory (folder, tabs, layout, window; raddbg user-file format)
 - [ ] File watching instead of polling
 - [ ] Audit of the port against raddbg's per-frame steps
@@ -209,6 +222,12 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (Go to Line, Find)
+- Ported raddbg's query bar, search/goto commands and line editing; see
+  milestone 6 details. Before this, no rad UI event carried an action slot,
+  so `ui_slot_press(Accept/Cancel)` never fired (Esc did not close context
+  menus); Return/Esc now set them. All 8 scripts pass (160 checks).
 
 ### 2026-11-03 (one document per file)
 - `text_buffer`: change log (last 1,024 changes, one per version) and
