@@ -8,7 +8,8 @@
 // - the text layer's patched representation (base data + TXT_PatchList ->
 //   TXT_Patched);
 // - the text_buffer layer (TB_Buffer) on top of it: undo/redo, undo groups,
-//   compaction, save, reload / "changed on disk", empty and large texts.
+//   compaction, save, reload / "changed on disk", empty and large texts;
+// - the json layer: parsing, escapes, errors, random round trips.
 // Each test applies edits and compares the patched memory map and line map
 // against a plain string that is edited the same way.
 //
@@ -30,6 +31,7 @@
 #include "content/content.h"
 #include "text/text.h"
 #include "text_buffer/text_buffer.h"
+#include "json/json.h"
 
 #include "base/base_inc.c"
 #include "win32/win32_inc.c"
@@ -38,6 +40,7 @@
 #include "content/content.c"
 #include "text/text.c"
 #include "text_buffer/text_buffer.c"
+#include "json/json.c"
 
 ////////////////////////////////
 //~ rad: Helpers
@@ -1064,6 +1067,212 @@ test_rust_resume(char *test_name, TestAnchorEdit *edits, U64 edits_count)
 }
 
 ////////////////////////////////
+//~ rad: JSON Tests
+
+internal void
+test_json_expect_text(char *test_name, char *input, char *expected_text)
+{
+  // NOTE(rad): parse, then compare the compact re-serialization
+  Temp scratch = scratch_begin(0, 0);
+  JSON_ParseResult parsed = json_parse(scratch.arena, str8_cstring(input));
+  String8 text = json_text_from_value(scratch.arena, parsed.root);
+  test_checks += 1;
+  if(!parsed.ok || !str8_match(text, str8_cstring(expected_text), 0))
+  {
+    printf("FAIL %s: ok %i, got `%.*s`, expected `%s`\n", test_name, parsed.ok, str8_varg(text), expected_text);
+    test_failures += 1;
+  }
+  scratch_end(scratch);
+}
+
+internal void
+test_json_expect_error(char *test_name, String8 input, U64 expected_error_off)
+{
+  Temp scratch = scratch_begin(0, 0);
+  JSON_ParseResult parsed = json_parse(scratch.arena, input);
+  test_checks += 1;
+  if(parsed.ok || !json_value_is_nil(parsed.root) || parsed.error_off != expected_error_off)
+  {
+    printf("FAIL %s: `%.*s` ok %i, error at %I64u, expected an error at %I64u\n", test_name, str8_varg(input), parsed.ok, parsed.error_off, expected_error_off);
+    test_failures += 1;
+  }
+  scratch_end(scratch);
+}
+
+internal String8
+test_json_random_text(Arena *arena, U64 *rng, U64 depth)
+{
+  // NOTE(rad): a random JSON value in compact form (the parser's writer
+  // output for it must be the same text)
+  String8 result = {0};
+  U64 kind = test_rand(rng) % (depth < 4 ? 7 : 5);
+  switch(kind)
+  {
+    case 0: {result = str8_lit("null");}break;
+    case 1: {result = (test_rand(rng) & 1) ? str8_lit("true") : str8_lit("false");}break;
+    case 2:
+    {
+      char *numbers[] = {"0", "-0", "7", "-12", "3.25", "1e9", "-2.5E-3", "123456789012", "0.5e+2"};
+      result = str8_cstring(numbers[test_rand(rng) % ArrayCount(numbers)]);
+    }break;
+    case 3:
+    case 4:
+    {
+      // rad: random code points, written the way the writer escapes them
+      U8 raw[64];
+      U64 raw_size = 0;
+      U64 count = test_rand(rng) % 8;
+      for EachIndex(idx, count)
+      {
+        U32 choices[] = {'a', 'Z', ' ', '"', '\\', '\n', '\t', 0x01, 0x1f, 0xe9, 0x4e2d, 0x1f600, '/'};
+        raw_size += utf8_encode(raw + raw_size, choices[test_rand(rng) % ArrayCount(choices)]);
+      }
+      result = json_escaped_from_str8(arena, str8(raw, raw_size));
+    }break;
+    case 5:
+    case 6:
+    {
+      B32 is_object = (kind == 6);
+      String8List parts = {0};
+      str8_list_push(arena, &parts, is_object ? str8_lit("{") : str8_lit("["));
+      U64 count = test_rand(rng) % 5;
+      for EachIndex(idx, count)
+      {
+        if(idx != 0) { str8_list_push(arena, &parts, str8_lit(",")); }
+        if(is_object) { str8_list_pushf(arena, &parts, "\"k%I64u\":", idx); }
+        str8_list_push(arena, &parts, test_json_random_text(arena, rng, depth+1));
+      }
+      str8_list_push(arena, &parts, is_object ? str8_lit("}") : str8_lit("]"));
+      result = str8_list_join(arena, &parts, 0);
+    }break;
+  }
+  return result;
+}
+
+internal void
+test_json(void)
+{
+  //- rad: values, nesting, re-serialization
+  test_json_expect_text("json_basic", " { \"a\" : [1, -2.5, true, false, null, \"x\"], \"b\": {} , \"c\":[ ] } ",
+                        "{\"a\":[1,-2.5,true,false,null,\"x\"],\"b\":{},\"c\":[]}");
+  test_json_expect_text("json_scalar_number", "\t42\r\n", "42");
+  test_json_expect_text("json_scalar_string", "\"hi\"", "\"hi\"");
+  test_json_expect_text("json_numbers", "[0,-0,10,1.5e3,2E-2,-0.25]", "[0,-0,10,1.5e3,2E-2,-0.25]");
+
+  //- rad: escapes, unicode
+  {
+    Temp scratch = scratch_begin(0, 0);
+    JSON_ParseResult parsed = json_parse(scratch.arena, str8_lit("[\"a\\\"b\\\\c\\/d\\n\\t\\r\\b\\f\", \"\\u00e9\\u4E2D\", \"\\ud83d\\ude00\", \"\\ud800x\", \"\\udc00\"]"));
+    test_expect("json_escapes", "parses", parsed.ok);
+    test_expect("json_escapes", "simple escapes", str8_match(json_string_from_value(json_value_from_index(parsed.root, 0)), str8_lit("a\"b\\c/d\n\t\r\b\f"), 0));
+    test_expect("json_escapes", "\\u -> utf-8", str8_match(json_string_from_value(json_value_from_index(parsed.root, 1)), str8_lit("\xc3\xa9\xe4\xb8\xad"), 0));
+    test_expect("json_escapes", "surrogate pair", str8_match(json_string_from_value(json_value_from_index(parsed.root, 2)), str8_lit("\xf0\x9f\x98\x80"), 0));
+    test_expect("json_escapes", "lone high surrogate", str8_match(json_string_from_value(json_value_from_index(parsed.root, 3)), str8_lit("\xef\xbf\xbdx"), 0));
+    test_expect("json_escapes", "lone low surrogate", str8_match(json_string_from_value(json_value_from_index(parsed.root, 4)), str8_lit("\xef\xbf\xbd"), 0));
+    String8 escaped = json_escaped_from_str8(scratch.arena, str8_lit("q\"b\\s\n\x01\x7f\xc3\xa9"));
+    test_expect("json_escapes", "writer escapes", str8_match(escaped, str8_lit("\"q\\\"b\\\\s\\n\\u0001\x7f\xc3\xa9\""), 0));
+    scratch_end(scratch);
+  }
+
+  //- rad: lookups (a cargo compiler message, shortened); nil chains
+  {
+    Temp scratch = scratch_begin(0, 0);
+    String8 text = str8_lit("{\"reason\":\"compiler-message\",\"message\":{\"rendered\":\"error[E0425]: cannot find value `x`\\n --> src\\\\main.rs:2:20\\n\",\"level\":\"error\",\"code\":{\"code\":\"E0425\"},\"spans\":[{\"file_name\":\"src\\\\main.rs\",\"line_start\":2,\"column_start\":20,\"is_primary\":true,\"expansion\":null}]}}");
+    JSON_ParseResult parsed = json_parse(scratch.arena, text);
+    JSON_Value *message = json_value_from_key(parsed.root, str8_lit("message"));
+    JSON_Value *span = json_value_from_index(json_value_from_key(message, str8_lit("spans")), 0);
+    test_expect("json_lookup", "parses", parsed.ok);
+    test_expect("json_lookup", "reason", str8_match(json_string_from_value(json_value_from_key(parsed.root, str8_lit("reason"))), str8_lit("compiler-message"), 0));
+    test_expect("json_lookup", "nested code", str8_match(json_string_from_value(json_value_from_key(json_value_from_key(message, str8_lit("code")), str8_lit("code"))), str8_lit("E0425"), 0));
+    test_expect("json_lookup", "file name", str8_match(json_string_from_value(json_value_from_key(span, str8_lit("file_name"))), str8_lit("src\\main.rs"), 0));
+    test_expect("json_lookup", "line", json_s64_from_value(json_value_from_key(span, str8_lit("line_start"))) == 2);
+    test_expect("json_lookup", "column", json_s64_from_value(json_value_from_key(span, str8_lit("column_start"))) == 20);
+    test_expect("json_lookup", "bool", json_b32_from_value(json_value_from_key(span, str8_lit("is_primary"))) == 1);
+    test_expect("json_lookup", "null is not nil", !json_value_is_nil(json_value_from_key(span, str8_lit("expansion"))) && json_value_from_key(span, str8_lit("expansion"))->kind == JSON_ValueKind_Null);
+    test_expect("json_lookup", "missing key -> nil", json_value_is_nil(json_value_from_key(span, str8_lit("nope"))));
+    test_expect("json_lookup", "nil chain", json_value_is_nil(json_value_from_index(json_value_from_key(json_value_from_key(parsed.root, str8_lit("x")), str8_lit("y")), 3)));
+    test_expect("json_lookup", "index past end -> nil", json_value_is_nil(json_value_from_index(json_value_from_key(message, str8_lit("spans")), 1)));
+    test_expect("json_lookup", "wrong kind -> zero", json_s64_from_value(json_value_from_key(parsed.root, str8_lit("reason"))) == 0 && json_string_from_value(json_value_from_key(span, str8_lit("line_start"))).size == 0);
+    scratch_end(scratch);
+  }
+
+  //- rad: malformed input -> ok = 0, nil root, error offset
+  test_json_expect_error("json_error_empty", str8_lit(""), 0);
+  test_json_expect_error("json_error_ws_only", str8_lit("  "), 2);
+  test_json_expect_error("json_error_open_object", str8_lit("{"), 1);
+  test_json_expect_error("json_error_trailing_comma", str8_lit("[1,]"), 3);
+  test_json_expect_error("json_error_missing_colon", str8_lit("{\"a\" 1}"), 5);
+  test_json_expect_error("json_error_unquoted_key", str8_lit("{a:1}"), 1);
+  test_json_expect_error("json_error_leading_zero", str8_lit("01"), 0);
+  test_json_expect_error("json_error_bare_dot", str8_lit("1."), 0);
+  test_json_expect_error("json_error_bare_minus", str8_lit("-"), 0);
+  test_json_expect_error("json_error_bad_exponent", str8_lit("1e"), 0);
+  test_json_expect_error("json_error_open_string", str8_lit("\"abc"), 4);
+  test_json_expect_error("json_error_bad_escape", str8_lit("\"a\\x\""), 3);
+  test_json_expect_error("json_error_short_unicode", str8_lit("\"\\u12\""), 2);
+  test_json_expect_error("json_error_control_char", str8_lit("\"a\nb\""), 2);
+  test_json_expect_error("json_error_bad_literal", str8_lit("tru"), 0);
+  test_json_expect_error("json_error_two_values", str8_lit("[1] 2"), 4);
+  test_json_expect_error("json_error_missing_value", str8_lit("{\"a\":}"), 5);
+  test_json_expect_error("json_error_backslash_at_end", str8_lit("\"\\"), 2);
+  {
+    Temp scratch = scratch_begin(0, 0);
+    U64 depth = JSON_MAX_DEPTH+2;
+    U8 *deep = push_array(scratch.arena, U8, depth*2);
+    for EachIndex(idx, depth) { deep[idx] = '['; deep[depth*2-1-idx] = ']'; }
+    JSON_ParseResult parsed = json_parse(scratch.arena, str8(deep, depth*2));
+    test_expect("json_error_too_deep", "rejected", !parsed.ok && json_value_is_nil(parsed.root));
+    String8 ok_deep = str8(deep + 3, depth*2 - 6);
+    test_expect("json_max_depth", "accepted", json_parse(scratch.arena, ok_deep).ok);
+    scratch_end(scratch);
+  }
+
+  //- rad: random documents: writer(parser(text)) == text; every prefix and
+  // every one-byte corruption parses without reading past the input
+  for(U64 seed = 1; seed <= 400; seed += 1)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    U64 rng = seed*0x9E3779B97F4A7C15ull;
+    String8 text = push_str8_copy(scratch.arena, test_json_random_text(scratch.arena, &rng, 0));
+    JSON_ParseResult parsed = json_parse(scratch.arena, text);
+    String8 rewritten = json_text_from_value(scratch.arena, parsed.root);
+    test_checks += 1;
+    if(!parsed.ok || !str8_match(rewritten, text, 0))
+    {
+      printf("FAIL json_random seed %I64u: ok %i\n  in:  %.*s\n  out: %.*s\n", seed, parsed.ok, str8_varg(text), str8_varg(rewritten));
+      test_failures += 1;
+    }
+    for(U64 prefix_size = 0; prefix_size < text.size; prefix_size += 1)
+    {
+      // NOTE(rad): a heap copy of exactly the prefix, so a read past the
+      // end would hit unrelated memory (and the page heap, if enabled)
+      U8 *copy = push_array_no_zero(scratch.arena, U8, prefix_size);
+      MemoryCopy(copy, text.str, prefix_size);
+      JSON_ParseResult p = json_parse(scratch.arena, str8(copy, prefix_size));
+      if(p.ok)
+      {
+        // rad: only numbers have valid proper prefixes ("12" of "123")
+        test_checks += 1;
+        if(p.root->kind != JSON_ValueKind_Number)
+        {
+          printf("FAIL json_prefix seed %I64u: prefix %I64u of `%.*s` parsed\n", seed, prefix_size, str8_varg(text));
+          test_failures += 1;
+        }
+      }
+    }
+    for(U64 idx = 0; idx < text.size; idx += 1)
+    {
+      U8 saved = text.str[idx];
+      text.str[idx] = (U8)test_rand(&rng);
+      JSON_ParseResult p = json_parse(scratch.arena, text);
+      (void)p;
+      text.str[idx] = saved;
+    }
+    scratch_end(scratch);
+  }
+}
+
+////////////////////////////////
 //~ rad: Entry Point
 
 internal void
@@ -1079,6 +1288,10 @@ internal void
 entry_point(CmdLine *cmd_line)
 {
   U64 section_start_us = now_time_us();
+
+  //- rad: json parsing and writing
+  test_json();
+  test_section_end("json: values, escapes, errors, random", &section_start_us);
 
   //- rad: hand-written cases
   {
