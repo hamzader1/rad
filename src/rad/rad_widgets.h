@@ -125,6 +125,7 @@ internal void rad_cmd_list_menu_buttons(U64 count, RAD_CmdKind *kinds, U32 *fast
 ////////////////////////////////
 //~ rad: Cells
 
+internal void rad_loading_overlay(Rng2F32 rect, F32 loading_t, U64 progress_v, U64 progress_v_target);
 internal UI_Signal rad_cell(RAD_CellParams *params, String8 string);
 internal UI_Signal rad_cellf(RAD_CellParams *params, char *fmt, ...);
 

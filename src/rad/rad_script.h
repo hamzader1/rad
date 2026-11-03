@@ -81,6 +81,7 @@
 //   line_count                  editor's line count
 //   line <n>                    text of editor line n (without the line end)
 //   dirty                       1 if the editor's buffer has unsaved changes
+//   loading                     editor tab's loading overlay strength, 0..1
 //   file <path>                 contents of a file on disk
 //   file_size <path>            its size in bytes
 //   explorer_root explorer_rows explorer_selected

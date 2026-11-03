@@ -35,6 +35,11 @@ expect dirty == 1
 key ctrl+z
 wait_idle
 expect dirty == 0
+# undo made it clean again -> it follows the disk ("again"). That reload can
+# come after wait_idle (file_stream re-checks timestamps about once a
+# second) and would wake rad early, so let it settle first.
+wait 2500
+expect line 1 == "again"
 write_file_later 1000 ../fixtures/edit.txt "woken\n"
 sleep_until_woken
 expect last_sleep_ms >= 800

@@ -40,3 +40,8 @@ wait_idle
 wheel 200 code_center
 wait_idle
 expect visible_first == 601
+
+# the loading overlay (shown while a file streams in) is gone once the
+# text is shown
+wait 1500
+expect loading == "0.00"

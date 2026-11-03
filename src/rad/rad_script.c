@@ -284,6 +284,12 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     str8_list_push(arena, &parts, rad_script_tab_name(tab));
     value = str8_list_join(arena, &parts, 0);
   }
+  else if(str8_match(name, str8_lit("loading"), 0))
+  {
+    // rad: the editor tab's loading overlay strength (0 = not shown)
+    CFG_Node *tab = rad_script_editor_tab();
+    value = push_str8f(arena, "%.2f", (tab == &cfg_nil_node) ? 0.f : rad_view_state_from_cfg(tab)->loading_t);
+  }
   else if(str8_match(name, str8_lit("zoomed"), 0))
   {
     // rad: 1 if a panel is zoomed (fills the window)

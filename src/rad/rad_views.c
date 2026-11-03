@@ -43,6 +43,21 @@ rad_view_state_from_cfg(CFG_Node *cfg)
 }
 
 internal void
+rad_store_view_loading_info(CFG_Node *tab, B32 is_loading, U64 progress_u64, U64 progress_u64_target)
+{
+  // NOTE(rad): port of raddbg's rd_store_view_loading_info
+  RAD_ViewState *view_state = rad_view_state_from_cfg(tab);
+  B32 loading_state_is_new = (is_loading && view_state->loading_t_target != (F32)!!is_loading);
+  view_state->loading_t_target = (F32)!!is_loading;
+  view_state->loading_progress_v = progress_u64;
+  view_state->loading_progress_v_target = progress_u64_target;
+  if(loading_state_is_new || view_state->last_frame_index_built+1 < rad_state->frame_index)
+  {
+    view_state->loading_t = view_state->loading_t_target;
+  }
+}
+
+internal void
 rad_view_state_animate(void)
 {
   // NOTE(rad): port of raddbg's per-frame view state animation (rd_frame,
@@ -51,10 +66,38 @@ rad_view_state_animate(void)
   // ui_scroll_pt_target_idx), so the content is drawn at idx+off and only
   // slides to the target while `off` eases to 0 here. without this, views
   // never move when scrolled with the wheel or the scroll bar.
+  B32 any_window_is_focused = 0;
+  for(RAD_Window *ws = rad_state->first_window; ws != 0; ws = ws->next)
+  {
+    if(wm_window_is_focused(ws->os))
+    {
+      any_window_is_focused = 1;
+      break;
+    }
+  }
+  F32 slow_rate = 1 - pow_f32(2, (-10.f * rad_state->frame_dt));
   for EachIndex(slot_idx, rad_state->view_state_slots_count)
   {
     for(RAD_ViewState *vs = rad_state->view_state_slots[slot_idx].first; vs != 0; vs = vs->hash_next)
     {
+      //- rad: loading overlay fades in/out; a selected tab's view sets the
+      // target again each frame it is still loading (same as raddbg)
+      F32 loading_t_diff = (vs->loading_t_target - vs->loading_t);
+      vs->loading_t += loading_t_diff * slow_rate;
+      if(any_window_is_focused && abs_f32(loading_t_diff) > 0.01f)
+      {
+        rad_request_frame();
+      }
+      CFG_Node *vcfg = cfg_node_from_id(vs->cfg_id);
+      if(cfg_node_child_from_string(vcfg, str8_lit("selected")) != &cfg_nil_node)
+      {
+        if(vs->loading_t_target > 0.5f && any_window_is_focused)
+        {
+          rad_request_frame();
+        }
+        vs->loading_t_target = 0;
+      }
+
       UI_ScrollPt2 *scroll_pts[] = {&vs->cv.scroll_pos, &vs->ex.scroll_pos};
       for EachElement(idx, scroll_pts)
       {
@@ -1180,6 +1223,7 @@ rad_text_view_ui(CFG_Node *tab, Rng2F32 rect)
   //
   if(!file_is_missing && !key_has_data)
   {
+    rad_store_view_loading_info(tab, 1, info.bytes_processed, info.bytes_to_process);
     rad_request_frame();
   }
 

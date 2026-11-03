@@ -178,6 +178,72 @@ rad_cmd_list_menu_buttons(U64 count, RAD_CmdKind *kinds, U32 *fastpath_codepoint
 ////////////////////////////////
 //~ rad: Cells
 
+internal void
+rad_loading_overlay(Rng2F32 rect, F32 loading_t, U64 progress_v, U64 progress_v_target)
+{
+  // NOTE(rad): port of raddbg's rd_loading_overlay
+  if(loading_t >= 0.001f) UI_Focus(UI_FocusKind_Off)
+  {
+    // rad: set up dimensions
+    F32 width = ui_top_font_size() * 10;
+    F32 height = ui_top_font_size() * 1.f;
+    F32 min_thickness = ui_top_font_size()/2;
+    F32 trail = ui_top_font_size() * 4;
+    F32 t = pow_f32(sin_f32((F32)rad_state->time_in_seconds / 1.8f), 2.f);
+    F64 v = 1.f - abs_f32(0.5f - t);
+
+    // rad: build indicator
+    UI_CornerRadius(height/3.f) UI_Transparency(1-loading_t)
+    {
+      // rad: rects
+      Rng2F32 indicator_region_rect =
+        r2f32p((rect.x0 + rect.x1)/2 - width/2  - rect.x0,
+               (rect.y0 + rect.y1)/2 - height/2 - rect.y0,
+               (rect.x0 + rect.x1)/2 + width/2  - rect.x0,
+               (rect.y0 + rect.y1)/2 + height/2 - rect.y0);
+      Rng2F32 indicator_rect =
+        r2f32p(indicator_region_rect.x0 + width*t - min_thickness/2 - trail*v,
+               indicator_region_rect.y0,
+               indicator_region_rect.x0 + width*t + min_thickness/2 + trail*v,
+               indicator_region_rect.y1);
+      indicator_rect.x0 = Clamp(indicator_region_rect.x0, indicator_rect.x0, indicator_region_rect.x1);
+      indicator_rect.x1 = Clamp(indicator_region_rect.x0, indicator_rect.x1, indicator_region_rect.x1);
+      indicator_rect = pad_2f32(indicator_rect, -1.f);
+
+      // rad: the view has loading *progress* info? -> draw extra progress layer
+      if(progress_v != progress_v_target) UI_TagF("drop_site")
+      {
+        F64 pct_done_f64 = ((F64)progress_v/(F64)progress_v_target);
+        F32 pct_done = (F32)pct_done_f64;
+        Rng2F32 pct_rect = r2f32p(indicator_region_rect.x0,
+                                  indicator_region_rect.y0,
+                                  indicator_region_rect.x0 + (indicator_region_rect.x1 - indicator_region_rect.x0)*pct_done,
+                                  indicator_region_rect.y1);
+        UI_Rect(pct_rect)
+          ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_zero());
+      }
+
+      // rad: fill
+      UI_TagF("pop") UI_Rect(indicator_rect)
+        ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_Floating, ui_key_zero());
+
+      // rad: animated bar
+      UI_Rect(indicator_region_rect)
+      {
+        UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_Floating|UI_BoxFlag_Clickable, "bg_system_status");
+        ui_signal_from_box(box);
+      }
+    }
+
+    // rad: build background
+    UI_WidthFill UI_HeightFill UI_Transparency(1-loading_t) UI_BlurSize(10.f*loading_t)
+    {
+      ui_set_next_blur_size(10.f*loading_t);
+      ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBackgroundBlur|UI_BoxFlag_Floating, ui_key_zero());
+    }
+  }
+}
+
 internal UI_Signal
 rad_cell(RAD_CellParams *params, String8 string)
 {

@@ -154,6 +154,13 @@ struct RAD_ViewState
   U64 query_mark;
   U8 query_buffer[1024];
   U64 query_string_size;
+
+  // rad: loading overlay (port of raddbg's RD_ViewState loading info)
+  U64 last_frame_index_built;
+  F32 loading_t;
+  F32 loading_t_target;
+  U64 loading_progress_v;
+  U64 loading_progress_v_target;
 };
 
 typedef struct RAD_ViewStateSlot RAD_ViewStateSlot;
@@ -166,6 +173,7 @@ struct RAD_ViewStateSlot
 //~ rad: View State Functions
 
 internal RAD_ViewState *rad_view_state_from_cfg(CFG_Node *cfg);
+internal void rad_store_view_loading_info(CFG_Node *tab, B32 is_loading, U64 progress_u64, U64 progress_u64_target);
 internal void rad_view_state_animate(void);
 internal void rad_view_state_gc(void);
 

@@ -962,6 +962,8 @@ rad_view_ui(CFG_Node *tab, Rng2F32 rect)
       rad_tab_query_complete(tab);
     }
   }
+
+  vs->last_frame_index_built = rad_state->frame_index;
 }
 
 ////////////////////////////////
@@ -1850,6 +1852,15 @@ rad_window_frame(RAD_Window *ws)
           }
 
           //////////////////////////
+          //- rad: loading animation for stable view
+          //
+          UI_Box *loading_overlay_container = &ui_nil_box;
+          if(build_panel) UI_Parent(panel_box) UI_WidthFill UI_HeightFill
+          {
+            loading_overlay_container = ui_build_box_from_key(UI_BoxFlag_Floating, ui_key_zero());
+          }
+
+          //////////////////////////
           //- rad: build selected tab view
           //
           if(build_panel)
@@ -1893,6 +1904,19 @@ rad_window_frame(RAD_Window *ws)
             UI_Parent(view_container_box) if(selected_tab != &cfg_nil_node) ProfScope("build tab view")
             {
               rad_view_ui(selected_tab, content_rect);
+            }
+          }
+
+          //////////////////////////
+          //- rad: loading? -> fill loading overlay container
+          //
+          if(build_panel && selected_tab != &cfg_nil_node)
+          {
+            RAD_ViewState *selected_tab_view_state = rad_view_state_from_cfg(selected_tab);
+            F32 selected_tab_loading_t = selected_tab_view_state->loading_t;
+            if(selected_tab_loading_t > 0.01f) UI_Parent(loading_overlay_container)
+            {
+              rad_loading_overlay(panel_rect, selected_tab_loading_t, selected_tab_view_state->loading_progress_v, selected_tab_view_state->loading_progress_v_target);
             }
           }
 

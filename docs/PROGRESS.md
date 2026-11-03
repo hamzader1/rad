@@ -137,7 +137,7 @@ Milestone 6 details (each item with its script):
   explorer re-lists only when its folder changed (was: every second, on
   the UI thread). Checked: an idle rad (blocked on input) wakes and shows
   a file written 1 s later (`sleep_until_woken`).
-- [ ] Audit of the port against raddbg's per-frame steps. Compared section
+- [x] Audit of the port against raddbg's per-frame steps. Compared section
   by section: `rd_frame`, `rd_window_frame` (incl. panel leaf UI),
   `rd_code_view_build`. Fixed so far (scripts `tab_titles`, `find`):
   - error border: raddbg flashes a red rounded border around the window on
@@ -152,7 +152,11 @@ Milestone 6 details (each item with its script):
     menu), the hoist animation, splits and panel cycling inside a zoom.
     Deviation: the second panel pass skips the zoomed panel's whole
     subtree (raddbg would build a zoomed split's children twice).
-  Still missing: the loading overlay for slow views, tab drag/drop.
+  - loading overlay (raddbg's animated bar + progress layer over a blurred
+    panel while a file streams in; fades out after). Script field
+    `loading`; `scroll` checks it clears. Seen by screenshot on a 429 MB
+    file (a 56 MB one loads in ~0.3 s, too fast to catch).
+  Left as a feature gap (see Known limits): tab drag/drop.
   Not needed: debugger steps (debug info, ctrl, eval, hover eval, run to
   line, find thread), key rebinding, bitmap cache, developer menu/lag
   simulation, window titles (rad's never changes), raddbg's dead code
@@ -261,6 +265,12 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (audit done: loading overlay)
+- Ported raddbg's loading overlay. file_watch: an early wake (557 ms
+  instead of ~1000) came once in 6 runs from a late reload of the earlier
+  write; the script now lets it settle and checks the reload. 13 scripts
+  pass (on a test copy: `buildad.exe` was open).
 
 ### 2026-11-03 (audit, panel zoom)
 - Ported raddbg's panel zoom; checked by screenshot (zoomed panel fills
