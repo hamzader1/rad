@@ -4,6 +4,18 @@ Read this first when starting a session. Update it in the same commit as the
 work: change "Status" and "Next steps", and add a dated journal entry (newest
 on top). CLAUDE.md holds the goals and decisions; this file holds where we are.
 
+For a new session (any machine): read CLAUDE.md, then "Status", "Next steps"
+and "TODO (later)" here, then "Build, run, test". `docs/notes/` explains how a
+frame is built and how the code view draws text; the script language for UI
+tests is at the top of `src/rad/rad_script.h`. Working rules agreed with the
+user, beyond CLAUDE.md:
+- Commit and push to `origin/main` after each finished change (standing OK).
+  Stage paths explicitly (metagen leaves ~50 unchanged generated files
+  marked modified).
+- Text with backslashes (Windows paths, C escapes) must not go through a
+  Bash heredoc: `\r` and `\n` turn into real control characters. Write such
+  edit scripts with the file-writing tool and run `python -I <file>`.
+
 ## Status (2026-11-03)
 
 Windows only for now; macOS is milestones 11-12, at the very end (decided 2026-11-03).
@@ -175,6 +187,12 @@ Milestone 6 details (each item with its script):
 4. For milestone 11 (Mac, at the end), already known: `base_core.h:276-277`
    and `base_core.c:667` need ARM64 guards; drop `-mcx16` on ARM64.
 
+## TODO (later)
+
+- Tab drag/drop between panels (port raddbg's: drop sites on tab bars and
+  panel edges, the drag visualization, `MoveTab`). Asked for by the user
+  2026-11-03, after milestone 6.
+
 ## Known limits
 
 - Scope lines and end-of-scope annotations are off while patches exist,
@@ -219,16 +237,17 @@ Milestone 6 details (each item with its script):
 - Every build reruns metagen, which writes `generated/*.meta.*` (and
   `src/lib_rdi/rdi.c/.h`) with CRLF. `git status` then shows ~50 modified
   files with no real change. Never stage those; stage paths explicitly.
-- Building from Claude Code's shell: it sets `NoDefaultCurrentDirectoryInExePath=1`,
-  which breaks build.bat's bare `metagen.exe` call. Unset it, put
-  `C:\Program Files (x86)\Microsoft Visual Studio\Installer` on PATH, call
-  `vcvars64.bat`, then `build.bat`.
+- Building from Claude Code's shell (no developer prompt):
+  `cmd /c tests\shell_build.bat rad [release]` (any build.bat target). It
+  unsets `NoDefaultCurrentDirectoryInExePath` (which breaks build.bat's bare
+  `metagen.exe` call), loads `vcvars64.bat`, then calls `build.bat`.
 - UI tests: `powershell -ExecutionPolicy Bypass -File tests\run_scripts.ps1
   [-Exe build\rad.exe] [-Filter scroll]`. They take no focus, so they can
   run while you work. A new check = a line in a `tests\scripts\*.radtest`
   (language at the top of `src/rad/rad_script.h`).
-- If `build\rad.exe` is open, linking it fails (LNK1104); build the same cl
-  line to another exe name and pass it with `-Exe`.
+- If `build\rad.exe` is open, linking it fails (LNK1104): build a copy with
+  `cmd /c tests\shell_build_copy.bat [debug|release] [name]` (default
+  `build\rad_probe.exe`) and pass it to the runner with `-Exe`.
 - Screenshots: `tests\screenshot.ps1 -Script <file> -Out <png>` runs a
   script (ending in `wait <ms>` + `quit`) and captures the window with
   `PrintWindow` after `-AfterMs`, without focus. Works because rad renders
@@ -267,6 +286,11 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (handoff)
+- Build helpers moved from the session scratchpad into `tests/`
+  (`shell_build.bat`, `shell_build_copy.bat`); working rules and a TODO
+  list added at the top so a new session can pick up without this one.
 
 ### 2026-11-03 (milestone 6 done)
 - Release build in `build\release\rad.exe`; all 13 scripts pass on it

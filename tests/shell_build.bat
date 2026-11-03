@@ -1,0 +1,17 @@
+@echo off
+:: Runs build.bat from a shell that is not a VS developer prompt (e.g. Claude
+:: Code's shell): clears NoDefaultCurrentDirectoryInExePath (with it set,
+:: build.bat's bare `metagen.exe` call fails), loads the VS 2022 Build Tools
+:: x64 environment, then calls build.bat with the same arguments.
+::
+::   tests\shell_build.bat rad              -> build\rad.exe (debug)
+::   tests\shell_build.bat rad release      -> build\rad.exe (optimized)
+::   tests\shell_build.bat rad_tests
+::
+:: If build\rad.exe is running, linking fails (LNK1104): use
+:: tests\shell_build_copy.bat instead.
+set NoDefaultCurrentDirectoryInExePath=
+set "PATH=C:\Program Files (x86)\Microsoft Visual Studio\Installer;%PATH%"
+call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
+cd /d "%~dp0.."
+call build.bat %* 2>&1
