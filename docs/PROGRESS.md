@@ -13,7 +13,7 @@ Windows only for now; macOS is milestones 9-10, at the very end (decided 2026-11
 | 1. Build and read                    | Done. `build rad` works; notes in `docs/notes/`; option B chosen. |
 | 2. Editor view without a debugger    | Done. |
 | 3. Editable text core                | Mostly done, see below. |
-| 4. File explorer                     | Done (keyboard + Open Folder checked; mouse to be checked by the user). |
+| 4. File explorer                     | Done (keyboard, mouse, Open Folder checked). "+" in its panel = Open Folder. |
 | 5 to 11                              | Not started. |
 
 Milestone 3 details:
@@ -51,16 +51,25 @@ Milestone 4 details:
   NOT compiled or run yet). Checked in the app: the dialog opens, starts
   in the explorer's current folder, "Select Folder" re-roots the explorer
   (tab title follows), Cancel changes nothing. Open text tabs stay open.
-- NOT checked in the app yet: mouse (click selects, double-click opens,
-  expander click), a folder argument, refresh after files change on disk.
+- User confirmed the mouse works (2026-11-03).
+- The "+" button of a panel holding an explorer runs Open Folder (tooltip
+  says so); other panels keep Open File. NOT clicked in the app yet.
+- NOT checked in the app yet: a folder argument, refresh after files
+  change on disk.
 
 ## Next steps
 
-1. User check of the explorer with the mouse: click selects, double-click
-   opens a file / toggles a folder, the expander arrow toggles.
-2. Milestone 5, Rust syntax highlighting: a Rust lexer in `text`, in the
+1. User check: wheel/scroll-bar scrolling in a long file and a long
+   explorer list (fixed 2026-11-03, verified by log, not by eye); the
+   explorer "+" button; use a release build (`build rad release`).
+2. Explorer as a "special panel" beyond "+": user to decide (tab not
+   closable? fixed-width sidebar? other tabs kept out of it?).
+3. Editor speed: user to say what feels slow (typing delay, scrolling,
+   opening files, startup). Measured so far: see the 2026-11-03 (scroll fix)
+   journal entry.
+4. Milestone 5, Rust syntax highlighting: a Rust lexer in `text`, in the
    style of the existing C lexer (`txt_lang_kind_from_extension` -> `.rs`).
-3. For milestone 9 (Mac, at the end), already known: `base_core.h:276-277`
+5. For milestone 9 (Mac, at the end), already known: `base_core.h:276-277`
    and `base_core.c:667` need ARM64 guards; drop `-mcx16` on ARM64.
 
 ## Known limits
@@ -78,8 +87,10 @@ Milestone 4 details:
   Open Folder likewise (`sh_pick_folder`).
 - Closing the explorer panel and then using Open Folder puts a new explorer
   tab in the focused panel; it does not rebuild the 20/80 layout.
-- The explorer re-lists expanded folders from disk once a second (no file
-  watching); very large expanded trees are capped at 100,000 rows.
+- The explorer re-lists expanded folders from disk once a second, on the
+  UI thread (no file watching); very large expanded trees are capped at
+  100,000 rows. Fine for inkdb (whole `target/` = 2,171 entries); huge
+  expanded trees would stutter once a second. Fix later: file watching.
 - Settings are hardcoded raddbg defaults (`rad_default_settings`). Window
   position and panel layout are not saved between runs.
 - Tab inserts 4 spaces. No smart indent after `{`.
@@ -129,6 +140,29 @@ Milestone 4 details:
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (scroll fix)
+- Bug (user): wheel/scroll bar moved the bar but not the text. Cause: the
+  port dropped raddbg's per-frame view animation. Scrolling sets a scroll
+  point's `idx` to the target and moves the difference into `off`
+  (`ui_scroll_pt_target_idx`); content is drawn at idx+off, so `off` must
+  ease to 0 every frame (raddbg_core.c, "animate view states"). Nothing did
+  that in rad, so idx+off never changed. Fix: `rad_view_state_animate`
+  (code view and explorer scroll points), called in `rad_frame`. Verified
+  by a temporary log of the visible line range: 640 posted wheel notches
+  -> lines 1921-2015 of a 3,355-line file, offset easing to 0.
+- Explorer: "+" in its panel = Open Folder.
+- Speed measurements (3,355-line file, 4096x2217 window, wheel scrolling):
+  text ready 231 ms after startup; UI build per frame ~4.5 ms debug,
+  ~1.6 ms release; frames are vsync-bound (~55-60 fps, 17.7 ms incl. the
+  present wait) in both builds. `build rad` defaults to debug (/Od).
+- Testing gotchas: `PrintWindow` on a background rad window can block for
+  a minute or return blank/stale pixels (first measured "84 s load" was
+  this, not rad: rad was idle). Use rad's log (`--logs:<dir>`) for
+  measurements. Posted WM_MOUSEWHEEL works without focus (UI hit-tests
+  the event position). While the user has `build\rad.exe` open the link
+  fails (LNK1104); a test copy can be built with the same cl line to
+  another exe name.
 
 ### 2026-11-03 (open folder)
 - `sh_pick_folder` added to the shell layer (win32 + linux), `OpenFolder`

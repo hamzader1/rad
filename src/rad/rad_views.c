@@ -43,6 +43,44 @@ rad_view_state_from_cfg(CFG_Node *cfg)
 }
 
 internal void
+rad_view_state_animate(void)
+{
+  // NOTE(rad): port of raddbg's per-frame view state animation (rd_frame,
+  // "animate view states"). scrolling sets a scroll point's `idx` to the
+  // target at once and moves the difference into `off` (see
+  // ui_scroll_pt_target_idx), so the content is drawn at idx+off and only
+  // slides to the target while `off` eases to 0 here. without this, views
+  // never move when scrolled with the wheel or the scroll bar.
+  for EachIndex(slot_idx, rad_state->view_state_slots_count)
+  {
+    for(RAD_ViewState *vs = rad_state->view_state_slots[slot_idx].first; vs != 0; vs = vs->hash_next)
+    {
+      UI_ScrollPt2 *scroll_pts[] = {&vs->cv.scroll_pos, &vs->ex.scroll_pos};
+      for EachElement(idx, scroll_pts)
+      {
+        UI_ScrollPt2 *scroll_pos = scroll_pts[idx];
+        F32 scroll_x_diff = (-scroll_pos->x.off);
+        F32 scroll_y_diff = (-scroll_pos->y.off);
+        scroll_pos->x.off += scroll_x_diff*rad_state->scrolling_animation_rate;
+        scroll_pos->y.off += scroll_y_diff*rad_state->scrolling_animation_rate;
+        if(abs_f32(scroll_x_diff) > 0.01f || abs_f32(scroll_y_diff) > 0.01f)
+        {
+          rad_request_frame();
+        }
+        if(abs_f32(scroll_x_diff) <= 0.01f)
+        {
+          scroll_pos->x.off = 0;
+        }
+        if(abs_f32(scroll_y_diff) <= 0.01f)
+        {
+          scroll_pos->y.off = 0;
+        }
+      }
+    }
+  }
+}
+
+internal void
 rad_view_state_gc(void)
 {
   for EachIndex(slot_idx, rad_state->view_state_slots_count)

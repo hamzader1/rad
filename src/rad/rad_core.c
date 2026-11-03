@@ -1590,11 +1590,22 @@ rad_window_frame(RAD_Window *ws)
                                                             rad_icon_kind_text_table[RAD_IconKind_Add],
                                                             panel->cfg);
                   }
+                  // rad: explorer panels add folders, other panels add files
+                  CFG_Node *explorer_tab = &cfg_nil_node;
+                  for(CFG_NodePtrNode *n = panel->tabs.first; n != 0; n = n->next)
+                  {
+                    if(str8_match(n->v->string, str8_lit("explorer"), 0))
+                    {
+                      explorer_tab = n->v;
+                      break;
+                    }
+                  }
+                  RAD_CmdKind add_cmd_kind = (explorer_tab != &cfg_nil_node ? RAD_CmdKind_OpenFolder : RAD_CmdKind_OpenFile);
                   UI_Signal sig = ui_signal_from_box(add_new_box);
                   if(ui_pressed(sig))
                   {
                     rad_cmd(RAD_CmdKind_FocusPanel, .panel = panel->cfg->id);
-                    rad_cmd(RAD_CmdKind_OpenFile, .panel = panel->cfg->id);
+                    rad_cmd(add_cmd_kind, .panel = panel->cfg->id, .tab = explorer_tab->id);
                   }
                   if(ui_hovering(sig)) UI_Tooltip
                   {
@@ -1602,8 +1613,8 @@ rad_window_frame(RAD_Window *ws)
                     ui_set_next_pref_width(ui_children_sum(1));
                     UI_Row
                     {
-                      ui_labelf("Open File");
-                      rad_cmd_binding_labels(RAD_CmdKind_OpenFile);
+                      ui_label(rad_cmd_kind_info_table[add_cmd_kind].display_name);
+                      rad_cmd_binding_labels(add_cmd_kind);
                     }
                   }
                 }
@@ -3260,6 +3271,11 @@ rad_frame(void)
     rad_state->scrolling_animation_rate       = 1 - master_animations_f*scrolling_animations_f*pow_f32(2, (-60.f * rad_state->frame_dt));
     rad_state->tooltip_animation_rate         = 1 - master_animations_f*tooltip_animations_f*pow_f32(2, (-60.f * rad_state->frame_dt));
   }
+
+  //////////////////////////////
+  //- rad: animate view states (scroll offsets ease to their targets)
+  //
+  rad_view_state_animate();
 
   //////////////////////////////
   //- rad: update/render all windows

@@ -111,6 +111,7 @@ struct RAD_ViewStateSlot
 //~ rad: View State Functions
 
 internal RAD_ViewState *rad_view_state_from_cfg(CFG_Node *cfg);
+internal void rad_view_state_animate(void);
 internal void rad_view_state_gc(void);
 
 ////////////////////////////////
