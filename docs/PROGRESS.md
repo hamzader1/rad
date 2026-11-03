@@ -101,7 +101,8 @@ Milestone 6 details (each item with its script):
   also for LSP later) when another tab edits. Documents tick every frame,
   visible or not. Closing a dirty file's tab asks only if it is the last
   tab on that file; Exit counts dirty files, not tabs.
-- [ ] Save All
+- [x] Save All (Ctrl+Shift+S, File menu; script `save_all`): every dirty
+  document, hidden tabs too. raddbg has no such command (new table row).
 - [ ] Go to Line (port of raddbg's `GoToLine`)
 - [ ] Find, Find Next/Previous (port of raddbg's `Search`/`FindNext`)
 - [ ] Session memory (folder, tabs, layout, window; raddbg user-file format)

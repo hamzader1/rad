@@ -1,0 +1,28 @@
+# Save All (Ctrl+Shift+S) saves every file with unsaved changes, also the
+# ones whose tabs are hidden.
+
+open ../fixtures/edit.txt
+wait_idle
+click code 1 1
+text "A"
+expect dirty == 1
+
+# a second file in the same panel hides the first one's tab
+open ../fixtures/lines_3000.txt
+wait_idle
+expect tab == "lines_3000.txt"
+click code 1 1
+text "B"
+expect line 1 == "Bline 1"
+expect dirty == 1
+
+key ctrl+shift+s
+wait_idle
+expect dirty == 0
+expect file_size ../fixtures/lines_3000.txt == 28894
+expect file ../fixtures/edit.txt == "Aalpha\nbeta\ngamma\n"
+cmd prev_tab
+wait_idle
+expect tab == "edit.txt"
+expect dirty == 0
+expect line 1 == "Aalpha"

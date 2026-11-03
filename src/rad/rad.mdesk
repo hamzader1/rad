@@ -1027,6 +1027,7 @@ RAD_CmdTable:
   {OpenFile               open_file            "Open File"            FileOutline   O          ctrl   0      0  }
   {OpenFolder             open_folder          "Open Folder"          FolderOpenOutline O      ctrl   shift  0  }
   {Save                   save                 "Save"                 Save          S          ctrl   0      0  }
+  {SaveAll                save_all             "Save All"             Save          S          ctrl   shift  0  }
   {Exit                   exit                 "Exit"                 X             F4         0      0      alt}
 
   //- rad: editing

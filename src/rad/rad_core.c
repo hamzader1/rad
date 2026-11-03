@@ -794,6 +794,7 @@ rad_window_frame(RAD_Window *ws)
                     RAD_CmdKind_OpenFile,
                     RAD_CmdKind_OpenFolder,
                     RAD_CmdKind_Save,
+                    RAD_CmdKind_SaveAll,
                     RAD_CmdKind_Null,//-
                     RAD_CmdKind_Exit,
                   };
@@ -802,6 +803,7 @@ rad_window_frame(RAD_Window *ws)
                     'o',
                     'f',
                     's',
+                    'a',
                     0,//-
                     'x',
                   };
@@ -2317,6 +2319,17 @@ rad_exec_cmd(RAD_Cmd *cmd)
     if(tab_cfg != &cfg_nil_node && str8_match(tab_cfg->string, str8_lit("text"), 0))
     {
       rad_text_view_save(tab_cfg);
+    }break;
+    case RAD_CmdKind_SaveAll:
+    {
+      // rad: every open file with unsaved changes, shown or not
+      for(RAD_Document *doc = rad_state->first_document; doc != 0; doc = doc->next)
+      {
+        if(tb_buffer_is_dirty(doc->buffer))
+        {
+          rad_document_save(doc);
+        }
+      }
     }break;
     case RAD_CmdKind_Exit:
     {

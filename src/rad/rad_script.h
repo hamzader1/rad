@@ -74,6 +74,7 @@
 //   line <n>                    text of editor line n (without the line end)
 //   dirty                       1 if the editor's buffer has unsaved changes
 //   file <path>                 contents of a file on disk
+//   file_size <path>            its size in bytes
 //   explorer_root explorer_rows explorer_selected
 //   explorer_row <n>            name of explorer row n (1-based)
 //   doc_count                   open documents (one per file, shared by tabs)

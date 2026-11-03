@@ -351,16 +351,20 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   }
 
   //- rad: files on disk
-  else if(str8_match(name, str8_lit("file"), 0))
+  else if(str8_match(name, str8_lit("file"), 0) || str8_match(name, str8_lit("file_size"), 0))
   {
     if(args_count < 2)
     {
-      *error_out = str8_lit("file: needs a path");
+      *error_out = push_str8f(arena, "%S: needs a path", name);
       result = 0;
+    }
+    else if(str8_match(name, str8_lit("file"), 0))
+    {
+      value = data_from_file_path(arena, rad_script_path(scratch.arena, args[1]));
     }
     else
     {
-      value = data_from_file_path(arena, rad_script_path(scratch.arena, args[1]));
+      value = push_str8f(arena, "%I64u", properties_from_file_path(rad_script_path(scratch.arena, args[1])).size);
     }
   }
 
