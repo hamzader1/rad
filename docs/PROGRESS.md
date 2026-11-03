@@ -17,7 +17,7 @@ optimized build in `build\release\rad.exe` at the end of every milestone.
 | 3. Editable text core                | Mostly done, see below (rest folds into 6). |
 | 4. File explorer                     | Done (keyboard, mouse, Open Folder checked). Special panel: "+" = Open Folder, tab not closable, no other tabs in its panel; width adjustable. |
 | 5. Test and measure                  | Done. `tests\run_scripts.ps1`: 4 scripts, 60 checks, all pass (debug and release). |
-| 6. Editor essentials                 | In progress. |
+| 6. Editor essentials                 | Done. 13 scripts, 210 checks, all pass (debug and release, `buildeleasead.exe` 2026-11-03). |
 | 7. Rust syntax highlighting          | Not started. |
 | 8. Cargo integration                 | Not started. |
 | 9. LSP client                        | Not started. |
@@ -166,10 +166,12 @@ Milestone 6 details (each item with its script):
 
 ## Next steps
 
-1. Milestone 6, the unchecked items above, in that order.
+1. Milestone 7 (Rust lexer in `text`, C lexer style, `.rs`).
 2. Speed: the user will come back to what feels slow (2026-11-03: "ignore,
-   we will come back later"). Measured so far: 1 frame from input to screen.
-3. Milestone 7 (Rust lexer in `text`, C lexer style, `.rs`).
+   we will come back later"). Measured so far: 1 frame from input to
+   screen (release: UI build ~2 ms/frame, input shows in the next frame).
+3. Not yet compared side by side with raddbg.exe: the query bar, the zoom
+   button, the loading overlay (line-by-line ports; needs raddbg focused).
 4. For milestone 11 (Mac, at the end), already known: `base_core.h:276-277`
    and `base_core.c:667` need ARM64 guards; drop `-mcx16` on ARM64.
 
@@ -265,6 +267,10 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (milestone 6 done)
+- Release build in `buildeleasead.exe`; all 13 scripts pass on it
+  (typing/wheel: UI build ~2 ms, every input in the next frame).
 
 ### 2026-11-03 (audit done: loading overlay)
 - Ported raddbg's loading overlay. file_watch: an early wake (557 ms
