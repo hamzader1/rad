@@ -4,7 +4,7 @@
 //- GENERATED CODE
 
 C_LINKAGE_BEGIN
-String8 rad_icon_kind_text_table[75] =
+String8 rad_icon_kind_text_table[80] =
 {
 str8_lit_comp(""),
 str8_lit_comp("b"),
@@ -81,6 +81,11 @@ str8_lit_comp("*"),
 str8_lit_comp("("),
 str8_lit_comp(")"),
 str8_lit_comp("#"),
+str8_lit_comp("2"),
+str8_lit_comp("%"),
+str8_lit_comp("$"),
+str8_lit_comp("~"),
+str8_lit_comp("t"),
 };
 
 String8 rad_code_color_slot_name_table[14] =
@@ -177,11 +182,11 @@ RAD_CmdKindInfo rad_cmd_kind_info_table[42] =
 {str8_lit_comp("next_tab"), str8_lit_comp("Next Tab"), RAD_IconKind_RightArrow, {WM_Key_PageDown, 0 |WM_Modifier_Ctrl  }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("prev_tab"), str8_lit_comp("Previous Tab"), RAD_IconKind_LeftArrow, {WM_Key_PageUp, 0 |WM_Modifier_Ctrl  }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("close_tab"), str8_lit_comp("Close Tab"), RAD_IconKind_X, {WM_Key_W, 0 |WM_Modifier_Ctrl  }, {RAD_QuerySlot_Null, 0    }},
-{str8_lit_comp("cargo_build"), str8_lit_comp("Build"), RAD_IconKind_Gear, {WM_Key_B, 0 |WM_Modifier_Ctrl |WM_Modifier_Shift }, {RAD_QuerySlot_Null, 0    }},
-{str8_lit_comp("cargo_check"), str8_lit_comp("Check"), RAD_IconKind_Check, {WM_Key_F7, 0   }, {RAD_QuerySlot_Null, 0    }},
-{str8_lit_comp("cargo_run"), str8_lit_comp("Run"), RAD_IconKind_Play, {WM_Key_F5, 0   }, {RAD_QuerySlot_Null, 0    }},
-{str8_lit_comp("cargo_test"), str8_lit_comp("Test"), RAD_IconKind_CheckFilled, {WM_Key_T, 0 |WM_Modifier_Ctrl |WM_Modifier_Shift }, {RAD_QuerySlot_Null, 0    }},
-{str8_lit_comp("cargo_stop"), str8_lit_comp("Stop"), RAD_IconKind_Stop, {WM_Key_F5, 0  |WM_Modifier_Shift }, {RAD_QuerySlot_Null, 0    }},
+{str8_lit_comp("cargo_build"), str8_lit_comp("Build"), RAD_IconKind_CargoBuild, {WM_Key_B, 0 |WM_Modifier_Ctrl |WM_Modifier_Shift }, {RAD_QuerySlot_Null, 0    }},
+{str8_lit_comp("cargo_check"), str8_lit_comp("Check"), RAD_IconKind_CargoCheck, {WM_Key_F7, 0   }, {RAD_QuerySlot_Null, 0    }},
+{str8_lit_comp("cargo_run"), str8_lit_comp("Run"), RAD_IconKind_CargoRun, {WM_Key_F5, 0   }, {RAD_QuerySlot_Null, 0    }},
+{str8_lit_comp("cargo_test"), str8_lit_comp("Test"), RAD_IconKind_CargoTest, {WM_Key_T, 0 |WM_Modifier_Ctrl |WM_Modifier_Shift }, {RAD_QuerySlot_Null, 0    }},
+{str8_lit_comp("cargo_stop"), str8_lit_comp("Stop"), RAD_IconKind_CargoStop, {WM_Key_F5, 0  |WM_Modifier_Shift }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("cargo_debug"), str8_lit_comp("Debug Configuration"), RAD_IconKind_Null, {WM_Key_Null, 0   }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("cargo_release"), str8_lit_comp("Release Configuration"), RAD_IconKind_Null, {WM_Key_Null, 0   }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("next_error"), str8_lit_comp("Next Error"), RAD_IconKind_DownArrow, {WM_Key_F8, 0   }, {RAD_QuerySlot_Null, 0    }},

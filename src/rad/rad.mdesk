@@ -12,7 +12,7 @@
 ////////////////////////////////
 //~ rad: Embedded Files
 
-@embed_file rad_icon_font_bytes:         "../data/icons.ttf"
+@embed_file rad_icon_font_bytes:         "../data/rad_icons.ttf" // raddbg's icons.ttf + icons/*.svg (icons/make_rad_icons.py)
 @embed_file rad_default_main_font_bytes: "../data/segoeui.ttf"
 @embed_file rad_default_code_font_bytes: "../data/JetBrainsMono-Regular.ttf"
 @embed_file rad_icon_file_bytes:         "../data/logo.ico"
@@ -98,6 +98,12 @@ RAD_IconTable:
   (WindowRestore            "(")
   (WindowMinimize           ")")
   (Duplicate                "#")
+  //- rad: icons/*.svg (not in raddbg's font)
+  (CargoRun                 "2")
+  (CargoStop                "%")
+  (CargoBuild               "$")
+  (CargoCheck               "~")
+  (CargoTest                "t")
 }
 
 @enum RAD_IconKind:
@@ -1066,11 +1072,11 @@ RAD_CmdTable:
   {CloseTab               close_tab            "Close Tab"            X                 W          ctrl   0      0      Null     0         0           0         0 }
 
   //- rad: cargo (Run and Stop take raddbg's Run / Kill All keys)
-  {CargoBuild             cargo_build          "Build"                Gear              B          ctrl   shift  0      Null     0         0           0         0 }
-  {CargoCheck             cargo_check          "Check"                Check             F7         0      0      0      Null     0         0           0         0 }
-  {CargoRun               cargo_run            "Run"                  Play              F5         0      0      0      Null     0         0           0         0 }
-  {CargoTest              cargo_test           "Test"                 CheckFilled       T          ctrl   shift  0      Null     0         0           0         0 }
-  {CargoStop              cargo_stop           "Stop"                 Stop              F5         0      shift  0      Null     0         0           0         0 }
+  {CargoBuild             cargo_build          "Build"                CargoBuild        B          ctrl   shift  0      Null     0         0           0         0 }
+  {CargoCheck             cargo_check          "Check"                CargoCheck        F7         0      0      0      Null     0         0           0         0 }
+  {CargoRun               cargo_run            "Run"                  CargoRun          F5         0      0      0      Null     0         0           0         0 }
+  {CargoTest              cargo_test           "Test"                 CargoTest         T          ctrl   shift  0      Null     0         0           0         0 }
+  {CargoStop              cargo_stop           "Stop"                 CargoStop         F5         0      shift  0      Null     0         0           0         0 }
   {CargoDebug             cargo_debug          "Debug Configuration"  Null              Null       0      0      0      Null     0         0           0         0 }
   {CargoRelease           cargo_release        "Release Configuration" Null             Null       0      0      0      Null     0         0           0         0 }
   {NextError              next_error           "Next Error"           DownArrow         F8         0      0      0      Null     0         0           0         0 }

@@ -314,6 +314,16 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-03 (milestone 8, step 5: the user's icons)
+- The user's SVG icons (`icons/`: play, stop, build, check, test) are now
+  glyphs of rad's icon font: `icons/make_rad_icons.py` (fonttools) writes
+  `data/rad_icons.ttf` = raddbg's `data/icons.ttf` (unchanged; raddbg still
+  uses it) + the SVGs on free ASCII codepoints (2 % $ ~ t), scaled to the
+  same size and center as raddbg's icons; even-odd paths get their holes
+  turned around (TrueType fills nonzero). New icon kinds CargoRun/Stop/
+  Build/Check/Test, used by the cargo commands (toolbar and Build menu).
+  Theme colors apply as for every icon. Screenshot checked; 18 scripts pass.
+
 ### 2026-11-03 (milestone 8, step 4: Run in a terminal window, run toolbar)
 - User report: a program that reads input (a shell, a database) looped on
   "input error: Incorrect function" under Run. Cause: it ran on a hidden
