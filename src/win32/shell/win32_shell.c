@@ -38,6 +38,68 @@ sh_pick_file(Arena *arena, String8 title, String8 initial_path)
   return result;
 }
 
+internal String8
+sh_pick_folder(Arena *arena, String8 title, String8 initial_path)
+{
+  // NOTE(rad): GetOpenFileNameW cannot pick folders; the common item dialog
+  // (IFileOpenDialog + FOS_PICKFOLDERS) can. COM is initialized here too, so
+  // this also works from console builds (wWinMain is the only other place).
+  String8 result = {0};
+  Temp scratch = scratch_begin(&arena, 1);
+  HRESULT init_result = CoInitializeEx(0, COINIT_APARTMENTTHREADED);
+  IFileOpenDialog *dialog = 0;
+  if(SUCCEEDED(CoCreateInstance(&CLSID_FileOpenDialog, 0, CLSCTX_INPROC_SERVER, &IID_IFileOpenDialog, (void **)&dialog)))
+  {
+    //- rad: options & title
+    FILEOPENDIALOGOPTIONS options = 0;
+    dialog->lpVtbl->GetOptions(dialog, &options);
+    dialog->lpVtbl->SetOptions(dialog, options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST);
+    dialog->lpVtbl->SetTitle(dialog, (WCHAR *)str16_from_8(scratch.arena, title).str);
+
+    //- rad: initial folder
+    if(initial_path.size != 0)
+    {
+      String8 initial_path_copy = push_str8_copy(scratch.arena, initial_path);
+      for(U64 idx = 0; idx < initial_path_copy.size; idx += 1)
+      {
+        if(initial_path_copy.str[idx] == '/')
+        {
+          initial_path_copy.str[idx] = '\\';
+        }
+      }
+      IShellItem *initial_item = 0;
+      if(SUCCEEDED(SHCreateItemFromParsingName((WCHAR *)str16_from_8(scratch.arena, initial_path_copy).str, 0, &IID_IShellItem, (void **)&initial_item)))
+      {
+        dialog->lpVtbl->SetFolder(dialog, initial_item);
+        initial_item->lpVtbl->Release(initial_item);
+      }
+    }
+
+    //- rad: show (modal), read the picked folder's file system path
+    if(SUCCEEDED(dialog->lpVtbl->Show(dialog, 0)))
+    {
+      IShellItem *item = 0;
+      if(SUCCEEDED(dialog->lpVtbl->GetResult(dialog, &item)))
+      {
+        WCHAR *path16 = 0;
+        if(SUCCEEDED(item->lpVtbl->GetDisplayName(item, SIGDN_FILESYSPATH, &path16)))
+        {
+          result = str8_from_16(arena, str16_cstring((U16 *)path16));
+          CoTaskMemFree(path16);
+        }
+        item->lpVtbl->Release(item);
+      }
+    }
+    dialog->lpVtbl->Release(dialog);
+  }
+  if(SUCCEEDED(init_result))
+  {
+    CoUninitialize();
+  }
+  scratch_end(scratch);
+  return result;
+}
+
 internal void
 sh_show_in_file_browser(String8 path)
 {

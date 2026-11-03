@@ -13,7 +13,7 @@ Windows only for now; macOS is milestones 9-10, at the very end (decided 2026-11
 | 1. Build and read                    | Done. `build rad` works; notes in `docs/notes/`; option B chosen. |
 | 2. Editor view without a debugger    | Done. |
 | 3. Editable text core                | Mostly done, see below. |
-| 4. File explorer                     | In progress: explorer panel works; "Open Folder" left. |
+| 4. File explorer                     | Done (keyboard + Open Folder checked; mouse to be checked by the user). |
 | 5 to 11                              | Not started. |
 
 Milestone 3 details:
@@ -44,16 +44,23 @@ Milestone 4 details:
   expands, Left collapses; Enter on a file opens it in the editor panel
   (not next to the explorer) and focuses that panel. File > Open File
   while the explorer is focused also opens into the editor panel.
+- Open Folder (File menu, Ctrl+Shift+O = raddbg's "Open Project" key, and
+  a button in the "No folder open." state, styled like Getting Started's
+  "Open File"): `sh_pick_folder` (new in the shell layer; win32 uses
+  IFileOpenDialog + FOS_PICKFOLDERS; linux uses `zenity --directory`,
+  NOT compiled or run yet). Checked in the app: the dialog opens, starts
+  in the explorer's current folder, "Select Folder" re-roots the explorer
+  (tab title follows), Cancel changes nothing. Open text tabs stay open.
 - NOT checked in the app yet: mouse (click selects, double-click opens,
   expander click), a folder argument, refresh after files change on disk.
 
 ## Next steps
 
-1. Milestone 4: "Open Folder" command (File menu + a button in the
-   explorer's "No folder open." state). Needs `sh_pick_folder` in the shell
-   layer, win32 via IFileOpenDialog + FOS_PICKFOLDERS. Sets the explorer
-   tab's `folder` child.
-4. For milestone 9 (Mac, at the end), already known: `base_core.h:276-277`
+1. User check of the explorer with the mouse: click selects, double-click
+   opens a file / toggles a folder, the expander arrow toggles.
+2. Milestone 5, Rust syntax highlighting: a Rust lexer in `text`, in the
+   style of the existing C lexer (`txt_lang_kind_from_extension` -> `.rs`).
+3. For milestone 9 (Mac, at the end), already known: `base_core.h:276-277`
    and `base_core.c:667` need ARM64 guards; drop `-mcx16` on ARM64.
 
 ## Known limits
@@ -68,6 +75,11 @@ Milestone 4 details:
   notice disk changes until shown).
 - Undo history grows without limit while a file is open.
 - Open File uses the native dialog (`sh_pick_file`), not raddbg's lister.
+  Open Folder likewise (`sh_pick_folder`).
+- Closing the explorer panel and then using Open Folder puts a new explorer
+  tab in the focused panel; it does not rebuild the 20/80 layout.
+- The explorer re-lists expanded folders from disk once a second (no file
+  watching); very large expanded trees are capped at 100,000 rows.
 - Settings are hardcoded raddbg defaults (`rad_default_settings`). Window
   position and panel layout are not saved between runs.
 - Tab inserts 4 spaces. No smart indent after `{`.
@@ -117,6 +129,15 @@ Milestone 4 details:
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (open folder)
+- `sh_pick_folder` added to the shell layer (win32 + linux), `OpenFolder`
+  command, File menu entry, empty-state button. raddbg and rad_tests still
+  build (they share the shell layer).
+- Driving the native dialog from a script: find the process's visible
+  `#32770` window, press its buttons with `BM_CLICK` (id 1 = Select
+  Folder, id 2 = Cancel). The folder edit box was not at the classic
+  ComboBoxEx32 id 1148, so the scripted pick used the dialog's start folder.
 
 ### 2026-11-03 (explorer)
 - Explorer view hooked up: view dispatch, tab title (folder icon + folder

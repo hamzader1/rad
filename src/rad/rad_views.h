@@ -132,6 +132,7 @@ internal B32 rad_tab_is_dirty(CFG_Node *tab);
 //~ rad: Explorer
 
 internal String8 rad_explorer_folder_from_tab(CFG_Node *tab);
+internal void rad_explorer_set_folder(CFG_Node *tab, String8 folder);
 internal B32 rad_explorer_is_expanded(RAD_ExplorerState *ex, String8 path);
 internal void rad_explorer_set_expanded(RAD_ExplorerState *ex, String8 path, B32 expanded);
 internal void rad_explorer_rows_build(RAD_ExplorerState *ex, String8 root);

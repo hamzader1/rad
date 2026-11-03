@@ -9,6 +9,7 @@
 
 internal void sh_message(B32 error, String8 title, String8 message);
 internal String8 sh_pick_file(Arena *arena, String8 title, String8 initial_path);
+internal String8 sh_pick_folder(Arena *arena, String8 title, String8 initial_path);
 internal void sh_show_in_file_browser(String8 path);
 internal void sh_open_in_browser(String8 url);
 internal B32 sh_install_or_uninstall_self(B32 write, B32 install);

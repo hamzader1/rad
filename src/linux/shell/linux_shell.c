@@ -74,7 +74,39 @@ sh_pick_file(Arena *arena, String8 title, String8 initial_path)
     pclose(f);
     scratch_end(scratch);
   }
-  
+
+  return result;
+}
+
+internal String8
+sh_pick_folder(Arena *arena, String8 title, String8 initial_path)
+{
+  // NOTE(rad): same as sh_pick_file, with zenity's --directory. a trailing
+  // slash on --filename makes zenity start inside that folder.
+  String8 result = {0};
+  B32 done = 0;
+
+  //- rad: try zenity
+  if(!done)
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    String8 cmd = str8f(scratch.arena, "zenity --file-selection --directory --filename=\"%S/\" --title=\"%S\"", initial_path, title);
+    FILE *f = popen((char *)cmd.str, "r");
+    done = (f != 0);
+    if(done)
+    {
+      U64 output_buffer_size = 4096;
+      char *output_buffer = push_array(scratch.arena, char, output_buffer_size);
+      char *path = fgets(output_buffer, output_buffer_size, f);
+      if(path != 0)
+      {
+        result = str8_copy(arena, str8_chop(str8_cstring_capped(path, output_buffer+output_buffer_size), 1));
+      }
+    }
+    pclose(f);
+    scratch_end(scratch);
+  }
+
   return result;
 }
 

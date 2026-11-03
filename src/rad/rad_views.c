@@ -944,6 +944,34 @@ rad_explorer_folder_from_tab(CFG_Node *tab)
   return result;
 }
 
+internal void
+rad_explorer_set_folder(CFG_Node *tab, String8 folder)
+{
+  //- rad: write the tab's `folder` child
+  CFG_Node *folder_cfg = cfg_node_child_from_string_or_alloc(rad_state->cfg, tab, str8_lit("folder"));
+  if(folder_cfg->first != &cfg_nil_node)
+  {
+    cfg_node_equip_string(rad_state->cfg, folder_cfg->first, folder);
+  }
+  else
+  {
+    cfg_node_new(rad_state->cfg, folder_cfg, folder);
+  }
+
+  //- rad: new root -> forget expansions, selection, scroll
+  RAD_ViewState *vs = rad_view_state_from_cfg(tab);
+  RAD_ExplorerState *ex = &vs->ex;
+  if(ex->initialized)
+  {
+    arena_clear(ex->expansions_arena);
+    ex->first_expansion = ex->last_expansion = ex->free_expansion = 0;
+    MemoryZeroStruct(&ex->scroll_pos);
+    ex->cursor = ex->mark = v2s64(0, 0);
+    ex->selected_path_size = 0;
+    ex->rows_dirty = 1;
+  }
+}
+
 internal B32
 rad_explorer_is_expanded(RAD_ExplorerState *ex, String8 path)
 {
@@ -1179,11 +1207,14 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
   String8 root = rad_explorer_folder_from_tab(tab);
 
   //////////////////////////////
-  //- rad: no folder -> empty state (same layout as the text view's missing file)
+  //- rad: no folder -> empty state (same layout as the text view's missing
+  // file, plus the getting-started view's "Open File" button style)
   //
   if(root.size == 0)
   {
-    UI_WidthFill UI_HeightFill UI_Column UI_Padding(ui_pct(1, 0))
+    ui_set_next_flags(UI_BoxFlag_DefaultFocusNav);
+    UI_Focus(UI_FocusKind_On) UI_WidthFill UI_HeightFill UI_NamedColumn(str8_lit("empty_explorer"))
+      UI_Padding(ui_pct(1, 0)) UI_Focus(UI_FocusKind_Null)
     {
       UI_PrefWidth(ui_children_sum(1)) UI_PrefHeight(ui_em(3, 1))
         UI_Row UI_Padding(ui_pct(1, 0))
@@ -1191,6 +1222,18 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
         UI_TagF("weak")
       {
         ui_labelf("No folder open.");
+      }
+      ui_spacer(ui_em(1.f, 1.f));
+      UI_PrefHeight(ui_em(3.75f, 1.f))
+        UI_Row
+        UI_Padding(ui_pct(1, 0))
+        UI_TextAlignment(UI_TextAlign_Center)
+        UI_PrefWidth(ui_em(12.f, 1.f))
+        UI_CornerRadius(ui_top_font_size()/2.f)
+        UI_TagF("pop")
+        if(ui_clicked(rad_icon_buttonf(RAD_IconKind_FolderOpenOutline, 0, "Open Folder")))
+      {
+        rad_cmd(RAD_CmdKind_OpenFolder, .tab = tab->id);
       }
     }
   }

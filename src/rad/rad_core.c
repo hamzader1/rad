@@ -722,6 +722,7 @@ rad_window_frame(RAD_Window *ws)
                   RAD_CmdKind cmds[] =
                   {
                     RAD_CmdKind_OpenFile,
+                    RAD_CmdKind_OpenFolder,
                     RAD_CmdKind_Save,
                     RAD_CmdKind_Null,//-
                     RAD_CmdKind_Exit,
@@ -729,6 +730,7 @@ rad_window_frame(RAD_Window *ws)
                   U32 codepoints[] =
                   {
                     'o',
+                    'f',
                     's',
                     0,//-
                     'x',
@@ -2175,6 +2177,50 @@ rad_exec_cmd(RAD_Cmd *cmd)
         }
         rad_focus_tab(existing_tab);
         rad_focus_panel(panel_cfg);
+      }
+    }break;
+    case RAD_CmdKind_OpenFolder:
+    {
+      // rad: find the explorer: the passed/selected tab if it is one, else
+      // the window's first one
+      CFG_Node *explorer_tab = &cfg_nil_node;
+      if(str8_match(tab_cfg->string, str8_lit("explorer"), 0))
+      {
+        explorer_tab = tab_cfg;
+      }
+      for(CFG_PanelNode *p = panel_tree.root;
+          p != &cfg_nil_panel_node && explorer_tab == &cfg_nil_node;
+          p = cfg_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
+      {
+        for(CFG_NodePtrNode *n = p->tabs.first; n != 0; n = n->next)
+        {
+          if(str8_match(n->v->string, str8_lit("explorer"), 0))
+          {
+            explorer_tab = n->v;
+            break;
+          }
+        }
+      }
+
+      // rad: pick the folder (starting in the current one)
+      String8 folder = cmd->params.file_path;
+      if(folder.size == 0)
+      {
+        folder = sh_pick_folder(scratch.arena, str8_lit("Open Folder"), rad_explorer_folder_from_tab(explorer_tab));
+      }
+
+      // rad: point the explorer at it (no explorer left -> new explorer tab
+      // in the focused panel), focus it
+      if(folder.size != 0 && panel_cfg != &cfg_nil_node)
+      {
+        folder = path_normalized_from_string(scratch.arena, folder);
+        if(explorer_tab == &cfg_nil_node)
+        {
+          explorer_tab = cfg_node_new(rad_state->cfg, panel_cfg, str8_lit("explorer"));
+        }
+        rad_explorer_set_folder(explorer_tab, folder);
+        rad_focus_tab(explorer_tab);
+        rad_focus_panel(explorer_tab->parent);
       }
     }break;
     case RAD_CmdKind_Save:
