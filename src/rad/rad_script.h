@@ -71,6 +71,7 @@
 // focused editor panel's selected tab; the explorer is the window's first):
 //   panel                       focused panel's selected tab kind ("text", "explorer", ...)
 //   tab                         its name (file name, folder name, or kind)
+//   tab_title                   its title as shown, minus icons ("<src> main.rs")
 //   tab_count                   number of tabs in the focused panel
 //   panel_count                 number of leaf panels in the window
 //   explorer_panel_tabs         number of tabs in the explorer's panel

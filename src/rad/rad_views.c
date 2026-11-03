@@ -305,7 +305,7 @@ rad_code_view_redo(RAD_CodeViewState *cv, TB_Buffer *buffer)
 }
 
 internal void
-rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data, String8 search_query)
+rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data)
 {
   // NOTE(rad): port of raddbg's `rd_code_view_build` (raddbg/raddbg_views.c),
   // minus breakpoints, thread IPs, watch pins, debug-info lines, disassembly,
@@ -652,6 +652,40 @@ rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2
   U64 ctx_token_pt_num = txt_token_pt_num_from_off(&text_patched.token_pt_map, visible_byte_range.min);
   TXT_TokenPt ctx_token_pt = txt_token_pt_from_num(&text_patched.token_pt_map, ctx_token_pt_num);
   TXT_TokenArray tokens = txt_token_array_from_data(scratch.arena, lang_kind, ctx_token_pt, visible_data, visible_byte_range.min, max_U64);
+
+  //////////////////////////////
+  //- rad: selection on single line, no query? -> set search text (same as
+  // raddbg: Ctrl+F / F3 then search for the selected text). only written
+  // when it differs (raddbg replaces it every frame).
+  //
+  if(tab != &cfg_nil_node)
+  {
+    U64 cursor_line_num = txt_line_num_from_off(&text_patched.line_map, cv->cursor);
+    Rng1U64 cursor_line_range = txt_range_from_line_num(&text_patched.line_map, cursor_line_num);
+    if(cursor_line_range.min <= cv->mark && cv->mark <= cursor_line_range.max)
+    {
+      RAD_ViewState *vs = rad_view_state_from_cfg(tab);
+      if(!vs->query_is_open)
+      {
+        CFG_Node *query = cfg_node_child_from_string_or_alloc(rad_state->cfg, tab, str8_lit("query"));
+        CFG_Node *input = cfg_node_child_from_string_or_alloc(rad_state->cfg, query, str8_lit("input"));
+        String8 text = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, r1u64(cv->cursor, cv->mark));
+        if(text.size >= 256)
+        {
+          text = str8_zero();
+        }
+        if(!str8_match(input->first->string, text, 0))
+        {
+          cfg_node_new_replace(rad_state->cfg, input, text);
+        }
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: get active search query
+  //
+  String8 search_query = cfg_node_child_from_string(cfg_node_child_from_string(tab, str8_lit("query")), str8_lit("input"))->first->string;
 
   //////////////////////////////
   //- rad: prepare code slice info bundle, for the viewable region of text
@@ -1154,8 +1188,7 @@ rad_text_view_ui(CFG_Node *tab, Rng2F32 rect)
   //
   if(!file_is_missing)
   {
-    String8 search_query = cfg_node_child_from_string(cfg_node_child_from_string(tab, str8_lit("query")), str8_lit("input"))->first->string;
-    rad_code_view_build(scratch.arena, cv, buffer, code_area_rect, lang_kind, &info, data, search_query);
+    rad_code_view_build(scratch.arena, tab, cv, buffer, code_area_rect, lang_kind, &info, data);
     cv->buffer_version = buffer->version;
   }
 

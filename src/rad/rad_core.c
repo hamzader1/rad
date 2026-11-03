@@ -390,6 +390,85 @@ rad_file_path_from_tab(CFG_Node *tab)
   return result;
 }
 
+internal String8List
+rad_qualifiers_from_file_path(Arena *arena, String8 file_path)
+{
+  // NOTE(rad): port of raddbg's disambiguated file name: the folder names,
+  // walking up from the file, at which the other open tabs' paths with the
+  // same file name drop out ("src" for src/main.rs next to tests/main.rs)
+  String8List qualifiers = {0};
+  if(rad_state->ambiguous_path_slots_count != 0)
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    String8 name = str8_skip_last_slash(file_path);
+    U64 hash = u64_hash_from_str8(lower_from_str8(scratch.arena, name));
+    U64 slot_idx = hash%rad_state->ambiguous_path_slots_count;
+    RAD_AmbiguousPathNode *node = 0;
+    for(RAD_AmbiguousPathNode *n = rad_state->ambiguous_path_slots[slot_idx]; n != 0; n = n->next)
+    {
+      if(str8_match(n->name, name, StringMatchFlag_CaseInsensitive))
+      {
+        node = n;
+        break;
+      }
+    }
+    if(node != 0 && node->paths.node_count > 1)
+    {
+      // rad: get all colliding paths, and their reversed path parts
+      String8Array collisions = str8_array_from_list(scratch.arena, &node->paths);
+      String8List *collision_parts_reversed = push_array(scratch.arena, String8List, collisions.count);
+      for EachIndex(idx, collisions.count)
+      {
+        String8List parts = str8_split_path(scratch.arena, collisions.v[idx]);
+        for(String8Node *n = parts.first; n != 0; n = n->next)
+        {
+          str8_list_push_front(scratch.arena, &collision_parts_reversed[idx], n->string);
+        }
+      }
+
+      // rad: the search path's reversed parts
+      String8List parts = str8_split_path(scratch.arena, file_path);
+      String8List parts_reversed = {0};
+      for(String8Node *n = parts.first; n != 0; n = n->next)
+      {
+        str8_list_push_front(scratch.arena, &parts_reversed, n->string);
+      }
+
+      // rad: walk all collisions in lock-step with the search path;
+      // disqualify until one path remains; gather qualifiers
+      U64 num_collisions_left = collisions.count;
+      String8Node **collision_nodes = push_array(scratch.arena, String8Node *, collisions.count);
+      for EachIndex(idx, collisions.count)
+      {
+        collision_nodes[idx] = collision_parts_reversed[idx].first;
+      }
+      for(String8Node *n = parts_reversed.first; num_collisions_left > 1 && n != 0; n = n->next)
+      {
+        B32 part_is_qualifier = 0;
+        for EachIndex(idx, collisions.count)
+        {
+          if(collision_nodes[idx] != 0 && !str8_match(collision_nodes[idx]->string, n->string, StringMatchFlag_CaseInsensitive))
+          {
+            collision_nodes[idx] = 0;
+            num_collisions_left -= 1;
+            part_is_qualifier = 1;
+          }
+          else if(collision_nodes[idx] != 0)
+          {
+            collision_nodes[idx] = collision_nodes[idx]->next;
+          }
+        }
+        if(part_is_qualifier)
+        {
+          str8_list_push_front(arena, &qualifiers, push_str8_copy(arena, n->string));
+        }
+      }
+    }
+    scratch_end(scratch);
+  }
+  return qualifiers;
+}
+
 internal DR_FStrList
 rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab)
 {
@@ -435,6 +514,23 @@ rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab)
     dr_fstrs_push_new(arena, &result, &params, rad_icon_kind_text_table[icon_kind], .font = rad_font_from_slot(RAD_FontSlot_Icons), .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons), .color = rgba_secondary);
     dr_fstrs_push_new(arena, &result, &params, str8_lit("  "));
   }
+
+  //- rad: same-named files open -> qualifiers ("<src> main.rs"), as raddbg
+  if(file_path.size != 0)
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    String8List qualifiers = rad_qualifiers_from_file_path(scratch.arena, file_path);
+    if(qualifiers.node_count != 0) UI_TagF("weak")
+    {
+      for(String8Node *n = qualifiers.first; n != 0; n = n->next)
+      {
+        String8 string = push_str8f(arena, "<%S> ", n->string);
+        dr_fstrs_push_new(arena, &result, &params, string, .color = ui_color_from_name(str8_lit("text")));
+      }
+    }
+    scratch_end(scratch);
+  }
+
   dr_fstrs_push_new(arena, &result, &params, name);
   if(rad_tab_is_dirty(tab))
   {
@@ -2491,6 +2587,16 @@ rad_window_frame(RAD_Window *ws)
       box = rec.next;
     }
 
+    //- rad: draw border/overlay color to signify error (same as raddbg)
+    if(rad_state->error_t > 0.01f) UI_TagF("bad")
+    {
+      Vec4F32 color = ui_color_from_name(str8_lit("text"));
+      color.w *= rad_state->error_t;
+      Rng2F32 rect = wm_client_rect_from_window(ws->os);
+      dr_rect(pad_2f32(rect, 24.f), color, 0, 16.f, 12.f);
+      dr_rect(rect, v4f32(color.x, color.y, color.z, color.w*0.025f), 0, 0, 0);
+    }
+
     scratch_end(scratch);
   }
 
@@ -4049,6 +4155,50 @@ rad_frame(void)
   //- rad: tick documents (load/reload from disk, compaction), visible or not
   //
   rad_documents_tick();
+
+  //////////////////////////////
+  //- rad: compute all ambiguous paths from view titles (port of raddbg's)
+  //
+  {
+    Temp scratch = scratch_begin(0, 0);
+    rad_state->ambiguous_path_slots_count = 512;
+    rad_state->ambiguous_path_slots = push_array(rad_frame_arena(), RAD_AmbiguousPathNode *, rad_state->ambiguous_path_slots_count);
+    for(RAD_Window *ws = rad_state->first_window; ws != 0; ws = ws->next)
+    {
+      CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+      CFG_PanelTree panel_tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+      for(CFG_PanelNode *p = panel_tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
+      {
+        for(CFG_NodePtrNode *tab_n = p->tabs.first; tab_n != 0; tab_n = tab_n->next)
+        {
+          String8 file_path = rad_file_path_from_tab(tab_n->v);
+          if(file_path.size != 0)
+          {
+            String8 name = str8_skip_last_slash(file_path);
+            U64 hash = u64_hash_from_str8(lower_from_str8(scratch.arena, name));
+            U64 slot_idx = hash%rad_state->ambiguous_path_slots_count;
+            RAD_AmbiguousPathNode *node = 0;
+            for(RAD_AmbiguousPathNode *n = rad_state->ambiguous_path_slots[slot_idx]; n != 0; n = n->next)
+            {
+              if(str8_match(n->name, name, StringMatchFlag_CaseInsensitive))
+              {
+                node = n;
+                break;
+              }
+            }
+            if(node == 0)
+            {
+              node = push_array(rad_frame_arena(), RAD_AmbiguousPathNode, 1);
+              SLLStackPush(rad_state->ambiguous_path_slots[slot_idx], node);
+              node->name = push_str8_copy(rad_frame_arena(), name);
+            }
+            str8_list_push(rad_frame_arena(), &node->paths, push_str8_copy(rad_frame_arena(), file_path));
+          }
+        }
+      }
+    }
+    scratch_end(scratch);
+  }
 
   //////////////////////////////
   //- rad: update/render all windows

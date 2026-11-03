@@ -186,7 +186,7 @@ internal void rad_documents_gc(void);
 internal void rad_code_view_init(RAD_CodeViewState *cv);
 internal B32 rad_code_view_undo(RAD_CodeViewState *cv, TB_Buffer *buffer);
 internal B32 rad_code_view_redo(RAD_CodeViewState *cv, TB_Buffer *buffer);
-internal void rad_code_view_build(Arena *arena, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data, String8 search_query);
+internal void rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data);
 
 ////////////////////////////////
 //~ rad: Text View

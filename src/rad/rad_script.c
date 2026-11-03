@@ -270,6 +270,20 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   {
     value = push_str8_copy(arena, rad_script_tab_name(tree.focused->selected_tab));
   }
+  else if(str8_match(name, str8_lit("tab_title"), 0))
+  {
+    // rad: title text as the tab shows it, without icons ("<src> main.rs")
+    CFG_Node *tab = tree.focused->selected_tab;
+    String8 file_path = rad_file_path_from_tab(tab);
+    String8List parts = {0};
+    String8List qualifiers = rad_qualifiers_from_file_path(arena, file_path);
+    for(String8Node *n = qualifiers.first; n != 0; n = n->next)
+    {
+      str8_list_pushf(arena, &parts, "<%S> ", n->string);
+    }
+    str8_list_push(arena, &parts, rad_script_tab_name(tab));
+    value = str8_list_join(arena, &parts, 0);
+  }
   else if(str8_match(name, str8_lit("tab_count"), 0))
   {
     value = push_str8f(arena, "%I64u", tree.focused->tabs.count);

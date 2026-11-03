@@ -1,0 +1,31 @@
+# Tab titles of same-named files get the folder that tells them apart
+# (raddbg's "ambiguous paths": "<src> main.rs", "<tests> main.rs"); the same
+# file in two tabs needs none.
+
+write_file ../fixtures/project/tests/main.rs "fn main() {}\n"
+open ../fixtures/project/src/main.rs
+wait_idle
+expect tab_title == "main.rs"
+open ../fixtures/project/tests/main.rs
+wait_idle
+expect tab_title == "<tests> main.rs"
+cmd prev_tab
+wait_frames 2
+expect tab_title == "<src> main.rs"
+
+# same file again in another panel: still only one qualifier each
+cmd new_panel_down
+wait_idle
+open ../fixtures/project/src/main.rs
+wait_idle
+expect tab_title == "<src> main.rs"
+
+# closing the other main.rs drops the qualifiers
+cmd prev_panel
+wait_frames 2
+cmd next_tab
+wait_frames 2
+expect tab_title == "<tests> main.rs"
+cmd close_tab
+wait_frames 3
+expect tab_title == "main.rs"

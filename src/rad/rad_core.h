@@ -87,6 +87,21 @@ struct RAD_FolderWatch
 };
 
 ////////////////////////////////
+//~ rad: Ambiguous Path Types
+//
+// Port of raddbg's RD_AmbiguousPathNode: per frame, every tab's file path,
+// grouped by file name, so tab titles of same-named files get qualifiers
+// ("<src> main.rs", "<tests> main.rs").
+
+typedef struct RAD_AmbiguousPathNode RAD_AmbiguousPathNode;
+struct RAD_AmbiguousPathNode
+{
+  RAD_AmbiguousPathNode *next;
+  String8 name;
+  String8List paths;
+};
+
+////////////////////////////////
 //~ rad: Generated Code
 
 #include "rad/generated/rad.meta.h"
@@ -265,6 +280,10 @@ struct RAD_State
   // explorer opens files)
   CFG_ID last_editor_panel;
 
+  //- rad: tab file paths by file name (this frame; for tab titles)
+  U64 ambiguous_path_slots_count;
+  RAD_AmbiguousPathNode **ambiguous_path_slots;
+
   //- rad: per-tab view states
   U64 view_state_slots_count;
   struct RAD_ViewStateSlot *view_state_slots;
@@ -356,6 +375,7 @@ internal String8 rad_tab_query_input(CFG_Node *tab);
 internal void rad_tab_query_open(CFG_Node *tab, RAD_CmdKind kind);
 internal void rad_tab_query_complete(CFG_Node *tab);
 internal String8 rad_file_path_from_tab(CFG_Node *tab);
+internal String8List rad_qualifiers_from_file_path(Arena *arena, String8 file_path);
 internal DR_FStrList rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab);
 
 ////////////////////////////////

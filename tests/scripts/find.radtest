@@ -94,3 +94,24 @@ expect dirty == 0
 key esc
 wait_idle
 expect query_open == 0
+
+# with the bar closed, a selection on one line becomes the search text (as
+# in raddbg): F3 finds its next occurrence; Ctrl+F opens with it selected
+cmd goto_line
+text "12"
+key return
+wait_idle
+key home
+key shift+end
+wait_frames 2
+expect selection == "line 12"
+key f3
+wait_idle
+expect cursor_line == 120
+expect selection == "line 12"
+key ctrl+f
+wait_frames 3
+expect query_input == "line 12"
+key esc
+wait_frames 3
+expect query_open == 0
