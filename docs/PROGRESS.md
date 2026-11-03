@@ -31,7 +31,7 @@ optimized build in `build\release\rad.exe` at the end of every milestone.
 | 5. Test and measure                  | Done. `tests\run_scripts.ps1`: 4 scripts, 60 checks, all pass (debug and release). |
 | 6. Editor essentials                 | Done. 13 scripts, 210 checks, all pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 7. Rust syntax highlighting          | Done. Rust lexing in the `text` layer (see below, `docs/notes/04-syntax-highlighting.md`); 14 scripts, 242 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
-| 8. Cargo integration                 | In progress: `json` layer; cargo runner, Output + Problems tabs, Build menu, Next/Previous Error (see journal). Next: diagnostics in the editor, more scripts. |
+| 8. Cargo integration                 | Done. `json` layer; cargo runner (Build, Check, Run, Test, Stop; Debug/Release), Output + Problems tabs, diagnostics in the editor, clickable locations, Run in a terminal window, top-bar run toolbar with the user's icons (see journal). 18 scripts, 368 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 9. LSP client                        | Not started. |
 | 10. Remove debugger, rebrand         | Not started. |
 | 11-13. Mac foundation, Mac UI, debugging | Not started. |
@@ -203,9 +203,11 @@ Milestone 6 details (each item with its script):
 
 ## Next steps
 
-1. Milestone 8 (Cargo integration: build/run/test, output panel,
-   `cargo check --message-format=json` diagnostics in the editor, clickable
-   locations; builds the process-with-pipes + JSON plumbing for LSP).
+1. Milestone 9 (LSP client: rust-analyzer over stdin/stdout pipes, JSON-RPC
+   with Content-Length framing; diagnostics first, then hover, go to
+   definition, completion). Reuses milestone 8's `json` layer, process
+   pipes (`rad_cargo.c`) and the diagnostics UI (`RAD_Diagnostic`, line
+   colors, underlines, annotations, Problems tab).
 2. Speed: the user will come back to what feels slow (2026-11-03: "ignore,
    we will come back later"). Measured so far: 1 frame from input to
    screen (release: UI build ~2 ms/frame, input shows in the next frame).
@@ -248,6 +250,25 @@ Milestone 6 details (each item with its script):
   typed text comes from `wm_codepoint_from_modifiers_and_key` (US layout).
   The linux simulated-input hooks are written but NOT compiled or run.
 - Script timings are reported, not checked (no pass/fail thresholds yet).
+- Cargo: the program started by Run gets no arguments yet. Arguments
+  passed through the terminal wrapper must not contain `"`, `%` or `!`
+  (cmd.exe). A run's job object keeps the program's terminal window alive
+  until a key is pressed in it; quitting rad closes such windows.
+- Cargo: diagnostics are anchored when they arrive; edits made while a
+  build runs, before its diagnostics arrive, can shift them by those edits.
+- Cargo: processes inherit rad's inheritable handles (`process_launch`
+  passes inherit_handles=TRUE whenever it redirects output; a fix is
+  PROC_THREAD_ATTRIBUTE_HANDLE_LIST in the win32 base layer).
+- Cargo: Output locations with spaces in the path are not detected; the
+  Output text is capped at 32 MB.
+- Run in a terminal window: Linux is a stub; macOS (milestone 12) needs
+  Terminal.app with the same wrapper, plus a bridge for exit code and Stop.
+- `cargo_run.radtest` failed 2 times in ~90 runs (none in the last 50,
+  30 of them as two parallel loops): right
+  after `cargo test`, both code views showed no layout for a frame
+  ("visible 0-0", "editor text not loaded"). Not reproduced on purpose yet;
+  suspect: view states freed by `rad_view_state_gc` after 3 frames that
+  did not build the views.
 - The first launch of a freshly built exe took 15-25 s longer (seen 3
   times, debug and release); the same exe then starts in ~2 s. Cause not
   verified (suspect: antivirus scanning a new exe).
@@ -301,6 +322,15 @@ Milestone 6 details (each item with its script):
   `path`). The explorer view (tab `explorer`, child `folder`) at the end.
 - `rad_widgets.h/.c` also hold `rad_cell` (port of raddbg's `rd_cell`,
   read-only), the row widget of the explorer.
+- `rad_cargo.h/.c`: cargo commands: the runner thread (process with a
+  pipe, job object for Stop, `--message-format=json` messages ->
+  `RAD_Diagnostic`s), Run's terminal phase (`sh_launch_in_terminal`), the
+  Output text (one block, submitted to a content key every 100 ms), the
+  Debug/Release choice (user file: `cargo_profile`).
+- `src/json/` (`JSON_`, base only): JSON parser and writer.
+- `icons/`: the user's SVG icons; `make_rad_icons.py` puts them in
+  `data/rad_icons.ttf` (raddbg's `icons.ttf` + these glyphs), which rad
+  embeds.
 - `rad_script.h/.c`: script mode (`--script:<file>`): parser, input
   queue (one step per frame), state fields, targets from the last frame's
   layout (`layout_*` fields in the code view and explorer states), timing.
@@ -313,6 +343,15 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (milestone 8 done)
+- Release build in `build\release\rad.exe`. 18 scripts, 368 checks pass on
+  debug and release; `rad_tests` 37,594,203 checks pass.
+- Done-when check: Build/Run/Test (and Check, Stop), the Output tab,
+  `cargo check --message-format=json` errors in Problems and in the editor
+  (line color, underline, message), clickable locations (Problems rows,
+  Output lines, F8). Plumbing for LSP: process with pipes, `json`, the
+  diagnostics UI.
 
 ### 2026-11-03 (milestone 8, step 5: the user's icons)
 - The user's SVG icons (`icons/`: play, stop, build, check, test) are now
