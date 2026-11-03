@@ -314,6 +314,30 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-03 (milestone 8, step 4: Run in a terminal window, run toolbar)
+- User report: a program that reads input (a shell, a database) looped on
+  "input error: Incorrect function" under Run. Cause: it ran on a hidden
+  console (CREATE_NO_WINDOW) with nothing to type into. User's choice: the
+  Visual Studio 2022 way. Run (F5) now builds in the Output tab (errors in
+  Problems and the editor, as before), then runs `cargo run -q` in a
+  terminal window (the default terminal: Windows Terminal on Windows 11):
+  real console (line editors, colors, Ctrl+C), "[process exited with code
+  N]" + "Press any key to close this window . . .". Stop kills it.
+- New `shell` API `sh_launch_in_terminal` (win32: cmd.exe wrapper on a
+  new console, in the run's job object; `done_path` reports the program's
+  exit code while the window waits for the key; `hidden` for scripts).
+  Linux: stub. macOS (at the end): Terminal.app with the same wrapper as
+  a script; exit code / Stop need a small bridge there.
+- Top bar center column, port of raddbg's run controls: configuration box
+  `[Debug v]` (menu: Debug, Release; `--release` on every cargo command;
+  saved in the user file as `cargo_profile`), then Run, Test, Check,
+  Build, Stop (Stop disabled while nothing runs). Build menu has the two
+  configurations too.
+- Scripts: `toolbar` (20), `cargo_run` updated; script command `terminal
+  visible|hidden`, target `toolbar <name>`, field `cargo_profile`. Checked
+  by hand once with a real window: Windows Terminal tab "stdin_probe
+  (debug)" waiting at `db>`; Stop closed it. 18 scripts pass.
+
 ### 2026-11-03 (milestone 8, step 3: diagnostics in the editor, scripts)
 - Code slice takes per-line background colors, per-line annotations and
   underlined ranges (ports of raddbg's per-line backgrounds and per-line

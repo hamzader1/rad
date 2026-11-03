@@ -244,3 +244,15 @@ sh_install_or_uninstall_self(B32 write, B32 install)
   scratch_end(scratch);
   return install_state;
 }
+
+////////////////////////////////
+//~ rad: @per_os_impl Terminal Launching
+
+internal Process
+sh_launch_in_terminal(SH_TerminalLaunchParams *params)
+{
+  // TODO(rad): not done yet (no Linux build for now): a terminal emulator
+  // (x-terminal-emulator -e sh -c ...) running the same wrapper as win32's
+  Process result = {0};
+  return result;
+}

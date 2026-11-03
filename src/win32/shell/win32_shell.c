@@ -139,3 +139,125 @@ sh_install_or_uninstall_self(B32 write, B32 install)
   // TODO(rjf)
   return 0;
 }
+
+////////////////////////////////
+//~ rad: @per_os_impl Terminal Launching
+
+internal Process
+sh_launch_in_terminal(SH_TerminalLaunchParams *params)
+{
+  // NOTE(rad): a new console (CREATE_NEW_CONSOLE) is shown by the user's
+  // default terminal (Windows Terminal takes it over on Windows 11). The
+  // console runs cmd.exe with a one-line wrapper:
+  //
+  //   title <title>& <command> & set "RAD_EXIT=!ERRORLEVEL!"
+  //   & (echo !RAD_EXIT!)>"<done_path>" & echo.& echo [process exited with
+  //   code N]& <nul set /p "=Press any key ..." & pause >nul & exit !RAD_EXIT!
+  //
+  // (/v:on: !x! expands when it runs, after the command; /s: cmd strips
+  // only the outer quotes; `echo x &` would print the space before the `&`).
+  // No CREATE_NEW_PROCESS_GROUP: it would turn Ctrl+C off for the command.
+  Process result = {0};
+  Temp scratch = scratch_begin(0, 0);
+
+  //- rad: command: arguments quoted where cmd would split them
+  String8List parts = {0};
+  for(String8Node *n = params->cmd_line.first; n != 0; n = n->next)
+  {
+    B32 needs_quotes = (n->string.size == 0);
+    for(U64 idx = 0; idx < n->string.size; idx += 1)
+    {
+      U8 c = n->string.str[idx];
+      if(c == ' ' || c == '\t' || c == '&' || c == '|' || c == '<' || c == '>' || c == '^' || c == '(' || c == ')' || c == ',' || c == ';' || c == '=')
+      {
+        needs_quotes = 1;
+      }
+    }
+    str8_list_push(scratch.arena, &parts, needs_quotes ? push_str8f(scratch.arena, "\"%S\"", n->string) : n->string);
+  }
+  String8 cmd = str8_list_join(scratch.arena, &parts, &(StringJoin){.sep = str8_lit(" ")});
+
+  //- rad: title, minus what cmd would read as syntax
+  String8 title = push_str8_copy(scratch.arena, params->title);
+  for(U64 idx = 0; idx < title.size; idx += 1)
+  {
+    U8 c = title.str[idx];
+    if(c == '&' || c == '|' || c == '<' || c == '>' || c == '^' || c == '"' || c == '%' || c == '!' || c < 32)
+    {
+      title.str[idx] = '_';
+    }
+  }
+
+  //- rad: cmd.exe from the system folder (not a cmd.exe in the current folder)
+  WCHAR system_folder16[MAX_PATH] = {0};
+  UINT system_folder16_size = GetSystemDirectoryW(system_folder16, MAX_PATH);
+  String8 system_folder = str8_from_16(scratch.arena, str16((U16 *)system_folder16, system_folder16_size));
+  String8 done_write = {0};
+  if(params->done_path.size != 0)
+  {
+    String8 done_path = path_convert_slashes(scratch.arena, params->done_path, PathStyle_WindowsAbsolute);
+    done_write = push_str8f(scratch.arena, "(echo !RAD_EXIT!)>\"%S\" & ", done_path);
+  }
+  String8 full_cmd = push_str8f(scratch.arena,
+                                "\"%S\\cmd.exe\" /d /s /v:on /c \""
+                                "title %S& "
+                                "%S & "
+                                "set \"RAD_EXIT=!ERRORLEVEL!\" & "
+                                "%S"
+                                "echo.& "
+                                "echo [process exited with code !RAD_EXIT!]& "
+                                "<nul set /p \"=Press any key to close this window . . .\" & "
+                                "pause >nul & "
+                                "exit !RAD_EXIT!\"",
+                                system_folder, title.size != 0 ? title : str8_lit("rad"), cmd, done_write);
+  String16 full_cmd16 = str16_from_8(scratch.arena, full_cmd);
+  String16 dir16 = str16_from_8(scratch.arena, params->path);
+
+  //- rad: standard handles: a new console's own, or (hidden) empty input +
+  // the output file
+  STARTUPINFOW startup_info = {sizeof(startup_info)};
+  BOOL inherit_handles = 0;
+  HANDLE nul_handle = INVALID_HANDLE_VALUE;
+  DWORD creation_flags = (params->hidden ? CREATE_NO_WINDOW : CREATE_NEW_CONSOLE);
+  if(params->hidden)
+  {
+    SECURITY_ATTRIBUTES security_attributes = {sizeof(security_attributes), 0, 1};
+    nul_handle = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, &security_attributes, OPEN_EXISTING, 0, 0);
+    startup_info.dwFlags |= STARTF_USESTDHANDLES;
+    startup_info.hStdInput = nul_handle;
+    startup_info.hStdOutput = (HANDLE)params->output_file.u64[0];
+    startup_info.hStdError = (HANDLE)params->output_file.u64[0];
+    inherit_handles = 1;
+  }
+  if(params->process_group.u64[0] != 0)
+  {
+    creation_flags |= CREATE_SUSPENDED;
+  }
+
+  //- rad: launch; into the group before it runs
+  PROCESS_INFORMATION process_info = {0};
+  if(CreateProcessW(0, (WCHAR *)full_cmd16.str, 0, 0, inherit_handles, creation_flags, 0, params->path.size != 0 ? (WCHAR *)dir16.str : 0, &startup_info, &process_info))
+  {
+    B32 group_is_ok = (params->process_group.u64[0] == 0 ||
+                       AssignProcessToJobObject((HANDLE)params->process_group.u64[0], process_info.hProcess));
+    B32 resume_is_ok = (params->process_group.u64[0] == 0 || ResumeThread(process_info.hThread) != (DWORD)-1);
+    if(group_is_ok && resume_is_ok)
+    {
+      result.u64[0] = (U64)process_info.hProcess;
+    }
+    else
+    {
+      TerminateProcess(process_info.hProcess, 999);
+      WaitForSingleObject(process_info.hProcess, INFINITE);
+      CloseHandle(process_info.hProcess);
+    }
+    CloseHandle(process_info.hThread);
+  }
+  if(nul_handle != INVALID_HANDLE_VALUE)
+  {
+    CloseHandle(nul_handle);
+  }
+
+  scratch_end(scratch);
+  return result;
+}

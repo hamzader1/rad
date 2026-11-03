@@ -7,7 +7,9 @@ wait_idle
 open ../fixtures/cargo_run/src/main.rs
 wait_idle
 
-# run: exit code 3 is a failed run; no diagnostics
+# run: a build here, then `cargo run -q` in a terminal window (scripts use
+# a hidden one whose output comes here: same wrapper, exit code and closing
+# message); exit code 3 is a failed run; no diagnostics
 key f5
 wait_cargo
 wait_idle
@@ -15,9 +17,8 @@ expect cargo_cmd == "cargo run"
 expect cargo_status == "failed"
 expect cargo_exit_code == 3
 expect diag_count == 0
-expect output_has "hello from cargo_run\na line on stderr\n2 + 3 = 5\n" == 1
-expect output_has "process didn't exit successfully" == 1
-expect output_has "[exit code 3," == 1
+expect output_has "> cargo build --message-format=json    (" == 1
+expect output_has "\n> cargo run -q    (hidden terminal: script mode)\nhello from cargo_run\na line on stderr\n2 + 3 = 5\n\n[process exited with code 3]\nPress any key to close this window . . .\n[exit code 3," == 1
 expect panel == "text"
 
 # test: one passes, one fails

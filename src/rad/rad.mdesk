@@ -1071,6 +1071,8 @@ RAD_CmdTable:
   {CargoRun               cargo_run            "Run"                  Play              F5         0      0      0      Null     0         0           0         0 }
   {CargoTest              cargo_test           "Test"                 CheckFilled       T          ctrl   shift  0      Null     0         0           0         0 }
   {CargoStop              cargo_stop           "Stop"                 Stop              F5         0      shift  0      Null     0         0           0         0 }
+  {CargoDebug             cargo_debug          "Debug Configuration"  Null              Null       0      0      0      Null     0         0           0         0 }
+  {CargoRelease           cargo_release        "Release Configuration" Null             Null       0      0      0      Null     0         0           0         0 }
   {NextError              next_error           "Next Error"           DownArrow         F8         0      0      0      Null     0         0           0         0 }
   {PrevError              prev_error           "Previous Error"       UpArrow           F8         0      shift  0      Null     0         0           0         0 }
   {ShowOutput             show_output          "Output"               List              Null       0      0      0      Null     0         0           0         0 }

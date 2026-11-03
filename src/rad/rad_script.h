@@ -50,6 +50,9 @@
 //                               animations and compaction done); default 10 s
 //   wait_cargo [timeout_ms]     until no cargo command runs or waits to; 120 s
 //   wait_output "<text>" [timeout_ms]  until the cargo output contains it; 120 s
+//   terminal visible|hidden     where Run puts the program: by default a hidden
+//                               terminal whose output goes to the Output tab;
+//                               `visible` opens a real window (manual checks)
 //   expect <field> <op> <value> ops: == != < <= > >= ; numbers compare as numbers
 //   print <field>
 //   measure_begin <name>
@@ -70,6 +73,10 @@
 //   output <line> <col>         a visible text position in the Output tab
 //   output_text "<text>"        the first Output line containing it, at its start
 //   problem <n>                 middle of visible Problems row n (1-based)
+//   toolbar <name>              a top bar button: cargo_run cargo_test cargo_check
+//                               cargo_build cargo_stop, configuration (the
+//                               Debug/Release box), or its open menu's rows
+//                               cargo_debug cargo_release
 //   <x> <y>                     window client pixels
 //
 // Fields (the editor view is the focused panel's text tab, else the last
@@ -101,6 +108,7 @@
 //   cargo_status                none, running, stopped, launch_failed, failed
 //                               (exit code != 0), finished
 //   cargo_cmd cargo_exit_code   last cargo command ("cargo build") and its exit code
+//   cargo_profile               "debug" or "release" (the configuration box)
 //   diag_count diag_errors diag_warnings   diagnostics of the last command
 //   diag <n>                    "<kind> <path>:<line>:<col> <message>" (path
 //                               relative to the workspace root)
@@ -204,6 +212,7 @@ struct RAD_ScriptState
   U64 last_sleep_us;
   U8 wait_text_buffer[256];
   U64 wait_text_size;
+  B32 terminal_visible;
 
   //- rad: queued input steps (one per frame)
   Arena *input_arena;

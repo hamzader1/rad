@@ -100,6 +100,10 @@ struct RAD_CargoRun
   RAD_CargoCmdKind kind;
   String8 folder;
   String8List cmd_line;
+  String8List terminal_cmd_line;  // Run: after cmd_line (a build) succeeds,
+                                  // this runs in a terminal window
+  String8 terminal_title;
+  B32 terminal_hidden;            // scripts: no window, output to the Output tab
   ProcessGroup group;
   Thread thread;
   U64 start_us;
@@ -123,6 +127,7 @@ struct RAD_CargoState
   String8 workspace_root;         // (run arena) diagnostic paths' base
   B32 launched;
   B32 launch_failed;
+  B32 in_terminal;                // Run: the program runs in its terminal window
   B32 stop_requested;
   B32 group_closed;
   B32 done;
@@ -156,6 +161,12 @@ struct RAD_CargoState
   U64 warning_count;
   U64 diags_gen;
   U64 diag_cursor;                // 1-based; Next/Previous Error position
+
+  //- rad: terminal windows of programs that have ended, waiting for a key
+  // (their groups stay open; closing one closes its window). runner thread,
+  // under `mutex`
+  ProcessGroup window_groups[16];
+  U64 window_groups_count;
 };
 
 ////////////////////////////////
@@ -182,6 +193,8 @@ internal String8 rad_cargo_cmd_display_name(RAD_CargoCmdKind kind);
 internal RAD_CargoCmdKind rad_cargo_cmd_kind_from_rad_cmd_kind(RAD_CmdKind kind);
 internal String8 rad_cargo_folder_from_window(Arena *arena, CFG_Node *window);
 internal String8 rad_cargo_workspace_root(Arena *arena);
+internal B32 rad_cargo_release(void);
+internal void rad_cargo_set_release(B32 release);
 internal B32 rad_cargo_is_running(void);
 internal void rad_cargo_start(RAD_CargoCmdKind kind, CFG_Node *window);
 internal void rad_cargo_stop(void);

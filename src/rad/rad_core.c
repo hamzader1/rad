@@ -1551,6 +1551,9 @@ rad_window_frame(RAD_Window *ws)
                     RAD_CmdKind_CargoTest,
                     RAD_CmdKind_CargoStop,
                     RAD_CmdKind_Null,//-
+                    RAD_CmdKind_CargoDebug,
+                    RAD_CmdKind_CargoRelease,
+                    RAD_CmdKind_Null,//-
                     RAD_CmdKind_NextError,
                     RAD_CmdKind_PrevError,
                     RAD_CmdKind_Null,//-
@@ -1565,6 +1568,9 @@ rad_window_frame(RAD_Window *ws)
                     'r',
                     't',
                     's',
+                    0,//-
+                    'd',
+                    'e',
                     0,//-
                     'n',
                     'p',
@@ -1706,6 +1712,147 @@ rad_window_frame(RAD_Window *ws)
           }
         }
 
+        //- rad: cargo configuration menu (center column's [Debug v] box)
+        MemoryZeroArray(ws->top_bar_cmd_rects);
+        UI_Key profile_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_cargo_profile_menu_key_"));
+        UI_CtxMenu(profile_menu_key) UI_PrefWidth(ui_em(18.f, 1.f)) UI_TagF("implicit")
+        {
+          RAD_CmdKind kinds[] = {RAD_CmdKind_CargoDebug, RAD_CmdKind_CargoRelease};
+          String8 names[] = {str8_lit("Debug"), str8_lit("Release")};
+          for EachElement(idx, kinds)
+          {
+            B32 selected = ((idx == 1) == !!rad_cargo_release());
+            ui_set_next_child_layout_axis(Axis2_X);
+            UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|
+                                                    UI_BoxFlag_DrawBackground|
+                                                    UI_BoxFlag_DrawHotEffects|
+                                                    UI_BoxFlag_DrawActiveEffects|
+                                                    UI_BoxFlag_Clickable,
+                                                    "###cargo_profile_%I64u", (U64)idx);
+            UI_Parent(box) UI_HeightFill UI_Padding(ui_em(1.f, 1.f))
+            {
+              RAD_Font(RAD_FontSlot_Icons)
+                UI_PrefWidth(ui_em(2.f, 1.f))
+                UI_TextAlignment(UI_TextAlign_Center)
+                UI_TagF("weak")
+                ui_label(selected ? rad_icon_kind_text_table[RAD_IconKind_Check] : str8_lit(""));
+              UI_PrefWidth(ui_text_dim(10, 1.f)) ui_label(names[idx]);
+            }
+            ws->top_bar_cmd_rects[kinds[idx]] = box->rect;
+            if(ui_clicked(ui_signal_from_box(box)))
+            {
+              rad_cmd(kinds[idx]);
+              ui_ctx_menu_close();
+            }
+          }
+        }
+
+        //- rad: center column (port of raddbg's run controls, for cargo:
+        // Run, Test, Check, Build, Stop; before them the configuration box,
+        // Debug or Release, like Visual Studio's)
+        if(dim_2f32(top_bar_rect).x > ui_top_font_size()*60)
+          UI_PrefWidth(ui_children_sum(1.f)) UI_Row
+          UI_TagF("implicit")
+          UI_CornerRadius(ui_top_font_size()*1.f)
+          UI_VisualMargin(ui_top_font_size()*0.5f)
+        {
+          F32 main_font_size = ui_top_font_size();
+          B32 cargo_running = rad_cargo_is_running();
+          B32 release = rad_cargo_release();
+
+          // rad: configuration box: [Debug v]
+          UI_Signal profile_sig = {0};
+          {
+            ui_set_next_child_layout_axis(Axis2_X);
+            ui_set_next_pref_width(ui_children_sum(1.f));
+            UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|
+                                                    UI_BoxFlag_DrawBackground|
+                                                    UI_BoxFlag_DrawHotEffects|
+                                                    UI_BoxFlag_DrawActiveEffects|
+                                                    UI_BoxFlag_Clickable,
+                                                    "###cargo_profile_box");
+            UI_Parent(box) UI_HeightFill
+            {
+              ui_spacer(ui_em(0.9f, 1.f));
+              UI_PrefWidth(ui_text_dim(1, 1.f)) ui_label(release ? str8_lit("Release") : str8_lit("Debug"));
+              ui_spacer(ui_em(0.6f, 1.f));
+              RAD_Font(RAD_FontSlot_Icons)
+                UI_FontSize(main_font_size*0.75f)
+                UI_PrefWidth(ui_text_dim(1, 1.f))
+                UI_TextAlignment(UI_TextAlign_Center)
+                UI_TagF("weak")
+                ui_label(rad_icon_kind_text_table[RAD_IconKind_DownCaret]);
+              ui_spacer(ui_em(0.9f, 1.f));
+            }
+            profile_sig = ui_signal_from_box(box);
+          }
+          wm_window_push_custom_title_bar_client_area(ws->os, profile_sig.box->rect);
+          ws->top_bar_cmd_rects[RAD_CmdKind_Null] = profile_sig.box->rect;
+          if(ui_pressed(profile_sig))
+          {
+            if(ui_ctx_menu_is_open(profile_menu_key))
+            {
+              ui_ctx_menu_close();
+            }
+            else
+            {
+              ui_ctx_menu_open(profile_menu_key, profile_sig.box->key, v2f32(0, profile_sig.box->rect.y1-profile_sig.box->rect.y0));
+            }
+          }
+          if(ui_hovering(profile_sig) && !ui_ctx_menu_is_open(profile_menu_key)) UI_Tooltip
+          {
+            ui_state->tooltip_anchor_key = profile_sig.box->key;
+            ui_label(str8_lit("Configuration (Release builds with --release)"));
+          }
+          ui_spacer(ui_em(0.5f, 1.f));
+
+          // rad: command buttons
+          struct
+          {
+            RAD_CmdKind kind;
+            String8 tag;
+            B32 is_enabled;
+          }
+          buttons[] =
+          {
+            {RAD_CmdKind_CargoRun,   str8_lit("good"),    1},
+            {RAD_CmdKind_CargoTest,  str8_lit("neutral"), 1},
+            {RAD_CmdKind_CargoCheck, str8_lit(""),        1},
+            {RAD_CmdKind_CargoBuild, str8_lit(""),        1},
+            {RAD_CmdKind_CargoStop,  str8_lit("bad"),     cargo_running},
+          };
+          UI_PrefWidth(ui_px(dim_2f32(top_bar_rect).y, 1))
+            RAD_Font(RAD_FontSlot_Icons)
+            UI_FontSize(main_font_size*0.85f)
+            UI_TextAlignment(UI_TextAlign_Center)
+            for EachElement(idx, buttons)
+            UI_Flags(buttons[idx].is_enabled ? 0 : UI_BoxFlag_Disabled)
+            UI_Tag(buttons[idx].is_enabled ? buttons[idx].tag : str8_lit("weak"))
+          {
+            RAD_CmdKindInfo *info = &rad_cmd_kind_info_table[buttons[idx].kind];
+            UI_Signal sig = ui_buttonf("%S###cargo_btn_%S", rad_icon_kind_text_table[info->icon_kind], info->code_name);
+            wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
+            ws->top_bar_cmd_rects[buttons[idx].kind] = sig.box->rect;
+            if(ui_hovering(sig)) UI_Tooltip
+              RAD_Font(RAD_FontSlot_Main)
+              UI_FontSize(main_font_size)
+              UI_TextAlignment(UI_TextAlign_Left)
+            {
+              ui_state->tooltip_anchor_key = sig.box->key;
+              ui_set_next_pref_width(ui_children_sum(1));
+              UI_Row
+              {
+                ui_label(info->display_name);
+                rad_cmd_binding_labels(buttons[idx].kind);
+              }
+            }
+            if(ui_clicked(sig))
+            {
+              rad_cmd(buttons[idx].kind);
+            }
+          }
+        }
+
         //- rad: right column
         UI_WidthFill UI_Row
         {
@@ -1772,11 +1919,13 @@ rad_window_frame(RAD_Window *ws)
       B32 cargo_ran = (cargo->run != 0 && !cargo_running);
       B32 cargo_stopped = 0;
       B32 cargo_launch_failed = 0;
+      B32 cargo_in_terminal = 0;
       U64 cargo_exit_code = 0;
       MutexScope(cargo->mutex)
       {
         cargo_stopped = cargo->stop_requested;
         cargo_launch_failed = cargo->launch_failed;
+        cargo_in_terminal = cargo->in_terminal;
         cargo_exit_code = cargo->exit_code;
       }
       B32 cargo_failed = (cargo_ran && !cargo_stopped && (cargo_launch_failed || cargo_exit_code != 0));
@@ -1815,7 +1964,15 @@ rad_window_frame(RAD_Window *ws)
                               cargo->error_count, cargo->error_count == 1 ? "" : "s",
                               cargo->warning_count, cargo->warning_count == 1 ? "" : "s");
         }
-        if(cargo_running)
+        if(cargo_running && cargo_in_terminal)
+        {
+          text = push_str8f(scratch.arena, "Running %S in its terminal window...", cargo->run->terminal_title);
+        }
+        else if(cargo_running && cargo->run->kind == RAD_CargoCmdKind_Run)
+        {
+          text = str8_lit("Building for cargo run...");
+        }
+        else if(cargo_running)
         {
           text = push_str8f(scratch.arena, "Running %S...", cmd_name);
         }
@@ -3686,6 +3843,11 @@ rad_exec_cmd(RAD_Cmd *cmd)
     case RAD_CmdKind_CargoStop:
     {
       rad_cargo_stop();
+    }break;
+    case RAD_CmdKind_CargoDebug:
+    case RAD_CmdKind_CargoRelease:
+    {
+      rad_cargo_set_release(cmd->kind == RAD_CmdKind_CargoRelease);
     }break;
     case RAD_CmdKind_ClearOutput:
     {

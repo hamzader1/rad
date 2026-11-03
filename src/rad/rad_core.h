@@ -216,6 +216,10 @@ struct RAD_Window
   B32 menu_bar_focused_on_press;
   B32 menu_bar_key_held;
   B32 menu_bar_focus_press_started;
+
+  //- rad: last frame's top bar command buttons, by command (empty when not
+  // built: scripted tests click them)
+  Rng2F32 top_bar_cmd_rects[RAD_CmdKind_COUNT];
 };
 
 ////////////////////////////////

@@ -572,6 +572,12 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     }
   }
 
+  //- rad: cargo configuration
+  else if(str8_match(name, str8_lit("cargo_profile"), 0))
+  {
+    value = (rad_cargo_release() ? str8_lit("release") : str8_lit("debug"));
+  }
+
   //- rad: cargo command state
   else if(str8_match(name, str8_lit("cargo_status"), 0) || str8_match(name, str8_lit("cargo_exit_code"), 0) ||
           str8_match(name, str8_lit("cargo_cmd"), 0))
@@ -933,6 +939,37 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
         args_used = 2;
         result = 1;
       }
+    }
+  }
+
+  //- rad: top bar: a command button (by code name), or `configuration`
+  // (the Debug/Release box); its menu's rows are cargo_debug, cargo_release
+  else if(str8_match(kind, str8_lit("toolbar"), 0))
+  {
+    RAD_CmdKind cmd_kind = RAD_CmdKind_COUNT;
+    if(args_count >= 2 && str8_match(args[1], str8_lit("configuration"), 0))
+    {
+      cmd_kind = RAD_CmdKind_Null;
+    }
+    else if(args_count >= 2)
+    {
+      cmd_kind = rad_cmd_kind_from_code_name(args[1]);
+      cmd_kind = (cmd_kind == RAD_CmdKind_Null ? RAD_CmdKind_COUNT : cmd_kind);
+    }
+    Rng2F32 rect = {0};
+    if(cmd_kind != RAD_CmdKind_COUNT && rad_state->first_window != 0)
+    {
+      rect = rad_state->first_window->top_bar_cmd_rects[cmd_kind];
+    }
+    if(rect.x1 <= rect.x0)
+    {
+      *error_out = str8_lit("toolbar: needs a button shown in the top bar (cargo_run ... cargo_stop, configuration, or a configuration menu row)");
+    }
+    else
+    {
+      pos = center_2f32(rect);
+      args_used = 2;
+      result = 1;
     }
   }
 
@@ -1320,6 +1357,17 @@ rad_script_run_line(RAD_ScriptLine *line)
       rad_script->wait_kind = RAD_ScriptWaitKind_Cargo;
       rad_script->wait_line_num = line->line_num;
       rad_script->wait_until_us = now_time_us() + ms*1000;
+    }
+  }
+  else if(str8_match(cmd, str8_lit("terminal"), 0))
+  {
+    if(args_count == 1 && (str8_match(args[0], str8_lit("visible"), 0) || str8_match(args[0], str8_lit("hidden"), 0)))
+    {
+      rad_script->terminal_visible = str8_match(args[0], str8_lit("visible"), 0);
+    }
+    else
+    {
+      error = str8_lit("terminal: needs visible or hidden");
     }
   }
   else if(str8_match(cmd, str8_lit("wait_output"), 0))

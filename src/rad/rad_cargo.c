@@ -406,16 +406,17 @@ rad_cargo_capture_stdout__(Arena *arena, String8List *cmd_line, String8 folder)
 }
 
 internal void
-rad_cargo_process_line__(Arena *arena, RAD_CargoRun *run, String8 workspace_root, String8 line, String8List *out, RAD_Diagnostic **first_diag, RAD_Diagnostic **last_diag)
+rad_cargo_process_line__(Arena *arena, RAD_CargoRun *run, String8 workspace_root, String8 line, B32 parse_messages, String8List *out, RAD_Diagnostic **first_diag, RAD_Diagnostic **last_diag)
 {
   // NOTE(rad): output pieces go into `arena` (they outlive `line`);
-  // diagnostics into the run's arena
+  // diagnostics into the run's arena. `parse_messages` = 0: the program's
+  // own output (no cargo messages in it)
   if(line.size != 0 && line.str[line.size-1] == '\r')
   {
     line.size -= 1;
   }
   B32 handled = 0;
-  if(line.size != 0 && line.str[0] == '{')
+  if(parse_messages && line.size != 0 && line.str[0] == '{')
   {
     Temp scratch = scratch_begin(&arena, 1);
     JSON_ParseResult parsed = json_parse(scratch.arena, line);
@@ -479,6 +480,187 @@ rad_cargo_publish__(String8List *out, RAD_Diagnostic *first_diag, RAD_Diagnostic
     }
   }
   wm_send_wakeup_event();
+}
+
+internal void
+rad_cargo_read_output__(RAD_CargoRun *run, String8 workspace_root, File pipe_read, B32 parse_messages)
+{
+  // NOTE(rad): reads until every writer of the pipe has exited (or was
+  // killed); publishes what each read completes
+  Temp scratch = scratch_begin(0, 0);
+  U64 read_buffer_size = KB(64);
+  U8 *read_buffer = push_array_no_zero(scratch.arena, U8, read_buffer_size);
+  Arena *line_arena = arena_alloc();
+  String8List pending = {0};
+  for(;;)
+  {
+    U64 read_size = file_pipe_read(pipe_read, read_buffer, read_buffer_size);
+    B32 at_end = (read_size == 0);
+    Temp temp = temp_begin(scratch.arena);
+    String8List out = {0};
+    RAD_Diagnostic *first_diag = 0;
+    RAD_Diagnostic *last_diag = 0;
+    U64 line_start = 0;
+    for(U64 idx = 0; idx < read_size; idx += 1)
+    {
+      if(read_buffer[idx] == '\n')
+      {
+        String8 line = str8(read_buffer + line_start, idx - line_start);
+        if(pending.node_count != 0)
+        {
+          str8_list_push(line_arena, &pending, line);
+          line = str8_list_join(line_arena, &pending, 0);
+        }
+        rad_cargo_process_line__(temp.arena, run, workspace_root, line, parse_messages, &out, &first_diag, &last_diag);
+        MemoryZeroStruct(&pending);
+        arena_clear(line_arena);
+        line_start = idx+1;
+      }
+    }
+    if(line_start < read_size)
+    {
+      str8_list_push(line_arena, &pending, push_str8_copy(line_arena, str8(read_buffer + line_start, read_size - line_start)));
+    }
+    if(at_end && pending.node_count != 0)
+    {
+      String8 line = str8_list_join(line_arena, &pending, 0);
+      rad_cargo_process_line__(temp.arena, run, workspace_root, line, parse_messages, &out, &first_diag, &last_diag);
+      MemoryZeroStruct(&pending);
+      arena_clear(line_arena);
+    }
+    if(out.node_count != 0 || first_diag != 0)
+    {
+      rad_cargo_publish__(&out, first_diag, last_diag);
+    }
+    temp_end(temp);
+    if(at_end)
+    {
+      break;
+    }
+  }
+  arena_release(line_arena);
+  scratch_end(scratch);
+}
+
+internal U64
+rad_cargo_run_in_terminal__(RAD_CargoRun *run, String8 workspace_root, B32 *window_left_open_out, B32 *window_closed_early_out)
+{
+  // NOTE(rad): runs `run->terminal_cmd_line` in a terminal window (or, in
+  // script mode, a hidden one whose output goes to the Output tab); returns
+  // the program's exit code once the program has ended. The window then
+  // waits for a key: it is left open (*window_left_open_out), in the run's
+  // process group. *window_closed_early_out: the window went away before
+  // the program ended (closed, or Stop).
+  RAD_CargoState *c = rad_cargo;
+  Temp scratch = scratch_begin(0, 0);
+  U64 exit_code = 0;
+
+  //- rad: while the window starts, Stop only flags it (the group must not
+  // close under the launch)
+  B32 stop_before_launch = 0;
+  MutexScope(c->mutex)
+  {
+    stop_before_launch = c->stop_requested;
+    if(!stop_before_launch)
+    {
+      c->launched = 0;
+    }
+  }
+  if(!stop_before_launch)
+  {
+    //- rad: the file the window writes the program's exit code to
+    String8 done_folder = push_str8f(scratch.arena, "%S/rad", get_process_info()->user_program_cache_data_path);
+    make_directory(done_folder);
+    String8 done_path = push_str8f(scratch.arena, "%S/run_%u_%I64u.exit", done_folder, get_process_info()->pid, run->start_us);
+    delete_file_at_path(done_path);
+
+    //- rad: launch
+    String8 cmd_text = str8_list_join(scratch.arena, &run->terminal_cmd_line, &(StringJoin){.sep = str8_lit(" ")});
+    rad_cargo_output_append(push_str8f(scratch.arena, "> %S    (%s)\n", cmd_text, run->terminal_hidden ? "hidden terminal: script mode" : "in a terminal window"));
+    FilePair pipe = {0};
+    if(run->terminal_hidden)
+    {
+      pipe = file_pipe_make(0, 1);
+    }
+    SH_TerminalLaunchParams params = {0};
+    params.cmd_line = run->terminal_cmd_line;
+    params.path = run->folder;
+    params.title = run->terminal_title;
+    params.process_group = run->group;
+    params.done_path = done_path;
+    params.hidden = run->terminal_hidden;
+    params.output_file = pipe.write;
+    Process window = sh_launch_in_terminal(&params);
+    if(run->terminal_hidden)
+    {
+      file_close(pipe.write);
+    }
+    B32 window_launched = !process_match(window, process_zero());
+    MutexScope(c->mutex)
+    {
+      c->launched = 1;
+      c->in_terminal = window_launched;
+      if(c->stop_requested && !c->group_closed)
+      {
+        process_group_close(run->group);
+        c->group_closed = 1;
+      }
+    }
+    wm_send_wakeup_event();
+
+    //- rad: wait for the program to end (exit code in the done file), or
+    // for the window to go away
+    if(!window_launched)
+    {
+      rad_cargo_output_append(str8_lit("error: could not open a terminal window for the program\n"));
+      exit_code = 1;
+    }
+    else
+    {
+      if(run->terminal_hidden)
+      {
+        rad_cargo_read_output__(run, workspace_root, pipe.read, 0);
+      }
+      B32 window_ended = 0;
+      B32 program_ended = 0;
+      for(;!window_ended && !program_ended;)
+      {
+        U64 window_code = 0;
+        window_ended = process_join(window, now_time_us() + 50000, &window_code);
+        Temp temp = temp_begin(scratch.arena);
+        String8 done_data = data_from_file_path(temp.arena, done_path);
+        S64 program_code = 0;
+        if(str8_find_needle(done_data, 0, str8_lit("\n"), 0) < done_data.size &&
+           try_s64_from_str8_c_rules(str8_skip_chop_whitespace(done_data), &program_code))
+        {
+          program_ended = 1;
+          exit_code = (U64)(U32)(S32)program_code;
+        }
+        else if(window_ended)
+        {
+          exit_code = window_code;
+        }
+        temp_end(temp);
+      }
+      if(!window_ended)
+      {
+        process_detach(window);
+        *window_left_open_out = 1;
+      }
+      if(!program_ended)
+      {
+        *window_closed_early_out = 1;
+      }
+    }
+    if(run->terminal_hidden)
+    {
+      file_close(pipe.read);
+    }
+    delete_file_at_path(done_path);
+  }
+
+  scratch_end(scratch);
+  return exit_code;
 }
 
 internal void
@@ -555,72 +737,49 @@ rad_cargo_thread_entry_point(void *p)
   //
   if(launched)
   {
-    U64 read_buffer_size = KB(64);
-    U8 *read_buffer = push_array_no_zero(scratch.arena, U8, read_buffer_size);
-    Arena *line_arena = arena_alloc();
-    String8List pending = {0};
-    for(;;)
-    {
-      U64 read_size = file_pipe_read(pipe.read, read_buffer, read_buffer_size);
-      B32 at_end = (read_size == 0);
-      Temp temp = temp_begin(scratch.arena);
-      String8List out = {0};
-      RAD_Diagnostic *first_diag = 0;
-      RAD_Diagnostic *last_diag = 0;
-      U64 line_start = 0;
-      for(U64 idx = 0; idx < read_size; idx += 1)
-      {
-        if(read_buffer[idx] == '\n')
-        {
-          String8 line = str8(read_buffer + line_start, idx - line_start);
-          if(pending.node_count != 0)
-          {
-            str8_list_push(line_arena, &pending, line);
-            line = str8_list_join(line_arena, &pending, 0);
-          }
-          rad_cargo_process_line__(temp.arena, run, workspace_root, line, &out, &first_diag, &last_diag);
-          MemoryZeroStruct(&pending);
-          arena_clear(line_arena);
-          line_start = idx+1;
-        }
-      }
-      if(line_start < read_size)
-      {
-        str8_list_push(line_arena, &pending, push_str8_copy(line_arena, str8(read_buffer + line_start, read_size - line_start)));
-      }
-      if(at_end && pending.node_count != 0)
-      {
-        String8 line = str8_list_join(line_arena, &pending, 0);
-        rad_cargo_process_line__(temp.arena, run, workspace_root, line, &out, &first_diag, &last_diag);
-        MemoryZeroStruct(&pending);
-        arena_clear(line_arena);
-      }
-      if(out.node_count != 0 || first_diag != 0)
-      {
-        rad_cargo_publish__(&out, first_diag, last_diag);
-      }
-      temp_end(temp);
-      if(at_end)
-      {
-        break;
-      }
-    }
-    arena_release(line_arena);
+    rad_cargo_read_output__(run, workspace_root, pipe.read, 1);
   }
   file_close(pipe.read);
 
   //////////////////////////////
-  //- rad: exit code; close the group (kills anything the command left behind)
+  //- rad: exit code
   //
   U64 exit_code = 0;
   if(launched)
   {
     process_join(process, max_U64, &exit_code);
   }
+
+  //////////////////////////////
+  //- rad: Run: the build went through -> the program, in a terminal window
+  //
+  B32 window_left_open = 0;
+  B32 window_closed_early = 0;
+  if(launched && exit_code == 0 && run->terminal_cmd_line.node_count != 0)
+  {
+    exit_code = rad_cargo_run_in_terminal__(run, workspace_root, &window_left_open, &window_closed_early);
+  }
+
+  //////////////////////////////
+  //- rad: close the group (kills anything the command left behind), but
+  // not under a terminal window that still shows the program's output
+  //
   B32 stopped = 0;
   MutexScope(c->mutex)
   {
     stopped = c->stop_requested;
+    if(!c->group_closed && window_left_open)
+    {
+      if(c->window_groups_count == ArrayCount(c->window_groups))
+      {
+        process_group_close(c->window_groups[0]);
+        MemoryCopy(&c->window_groups[0], &c->window_groups[1], sizeof(c->window_groups[0])*(ArrayCount(c->window_groups)-1));
+        c->window_groups_count -= 1;
+      }
+      c->window_groups[c->window_groups_count] = run->group;
+      c->window_groups_count += 1;
+      c->group_closed = 1;
+    }
     if(!c->group_closed)
     {
       process_group_close(run->group);
@@ -632,6 +791,10 @@ rad_cargo_thread_entry_point(void *p)
   if(stopped)
   {
     rad_cargo_output_append(push_str8f(scratch.arena, "[stopped after %.2f s]\n", seconds));
+  }
+  else if(window_closed_early)
+  {
+    rad_cargo_output_append(push_str8f(scratch.arena, "[terminal window closed after %.2f s]\n", seconds));
   }
   else if(launched)
   {
@@ -694,6 +857,39 @@ rad_line_column_from_offset(TXT_Patched *patched, U64 off, S64 *line_out, S64 *c
   *line_out = (S64)line;
   *column_out = column;
   scratch_end(scratch);
+}
+
+internal B32
+rad_cargo_release(void)
+{
+  // NOTE(rad): the Debug/Release choice lives in the user file
+  // (`cargo_profile: release`), so it is part of the session
+  CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+  CFG_Node *profile = cfg_node_child_from_string(user, str8_lit("cargo_profile"));
+  return str8_match(profile->first->string, str8_lit("release"), 0);
+}
+
+internal void
+rad_cargo_set_release(B32 release)
+{
+  CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+  if(user != &cfg_nil_node)
+  {
+    CFG_Node *profile = cfg_node_child_from_string(user, str8_lit("cargo_profile"));
+    if(profile == &cfg_nil_node)
+    {
+      profile = cfg_node_new(rad_state->cfg, user, str8_lit("cargo_profile"));
+    }
+    String8 value = (release ? str8_lit("release") : str8_lit("debug"));
+    if(profile->first == &cfg_nil_node)
+    {
+      cfg_node_new(rad_state->cfg, profile, value);
+    }
+    else
+    {
+      cfg_node_equip_string(rad_state->cfg, profile->first, value);
+    }
+  }
 }
 
 internal B32
@@ -789,22 +985,43 @@ rad_cargo_start(RAD_CargoCmdKind kind, CFG_Node *window)
     run->kind = kind;
     run->folder = push_str8_copy(arena, folder);
     run->start_us = now_time_us();
+    // rad: Run = a build here (its errors in Problems), then, if it went
+    // through, `cargo run -q` in a terminal window (like Visual Studio: the
+    // build in the Output window, the program in a console window)
+    B32 release = rad_cargo_release();
     str8_list_push(arena, &run->cmd_line, str8_lit("cargo"));
     switch(kind)
     {
       default:{}break;
       case RAD_CargoCmdKind_Build: {str8_list_push(arena, &run->cmd_line, str8_lit("build"));}break;
       case RAD_CargoCmdKind_Check: {str8_list_push(arena, &run->cmd_line, str8_lit("check"));}break;
-      case RAD_CargoCmdKind_Run:   {str8_list_push(arena, &run->cmd_line, str8_lit("run"));}break;
+      case RAD_CargoCmdKind_Run:   {str8_list_push(arena, &run->cmd_line, str8_lit("build"));}break;
       case RAD_CargoCmdKind_Test:  {str8_list_push(arena, &run->cmd_line, str8_lit("test"));}break;
     }
+    if(release)
+    {
+      str8_list_push(arena, &run->cmd_line, str8_lit("--release"));
+    }
     str8_list_push(arena, &run->cmd_line, str8_lit("--message-format=json"));
+    if(kind == RAD_CargoCmdKind_Run)
+    {
+      str8_list_push(arena, &run->terminal_cmd_line, str8_lit("cargo"));
+      str8_list_push(arena, &run->terminal_cmd_line, str8_lit("run"));
+      str8_list_push(arena, &run->terminal_cmd_line, str8_lit("-q"));
+      if(release)
+      {
+        str8_list_push(arena, &run->terminal_cmd_line, str8_lit("--release"));
+      }
+      run->terminal_title = push_str8f(arena, "%S (%s)", str8_skip_last_slash(run->folder), release ? "release" : "debug");
+      run->terminal_hidden = (rad_script_is_active() && !rad_script->terminal_visible);
+    }
     run->group = process_group_make(1);
     MutexScope(c->mutex)
     {
       c->workspace_root = run->folder;
       c->launched = 0;
       c->launch_failed = 0;
+      c->in_terminal = 0;
       c->stop_requested = 0;
       c->group_closed = 0;
       c->done = 0;

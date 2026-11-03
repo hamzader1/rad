@@ -122,4 +122,14 @@ expect cargo_exit_code == 0
 expect diag_count == 1
 expect diag 1 == "warning src/main.rs:2:9 unused variable: `unused`"
 expect panel_count == 3
+
+# Check (F7): same diagnostics, through `cargo check`
+key f7
+wait_cargo
+wait_idle
+expect cargo_cmd == "cargo check"
+expect cargo_status == "finished"
+expect diag_count == 1
+expect diag 1 == "warning src/main.rs:2:9 unused variable: `unused`"
+expect line_diag 2 == "warning"
 quit

@@ -1,0 +1,72 @@
+# The top bar's center column (raddbg's run controls, for cargo): the
+# configuration box (Debug/Release, a menu) and the Run, Test, Check,
+# Build, Stop buttons. Release adds --release to every cargo command.
+# Stop is disabled while nothing runs.
+
+open_folder ../fixtures/cargo_run
+wait_idle
+open ../fixtures/cargo_run/src/main.rs
+wait_idle
+expect cargo_profile == "debug"
+
+# Stop does nothing while nothing runs
+click toolbar cargo_stop
+wait_frames 5
+expect cargo_status == "none"
+
+# configuration box -> menu -> Release
+click toolbar configuration
+wait_idle
+click toolbar cargo_release
+wait_idle
+expect cargo_profile == "release"
+
+# Check button
+click toolbar cargo_check
+wait_cargo
+wait_idle
+expect cargo_cmd == "cargo check"
+expect cargo_status == "finished"
+expect output_has "> cargo check --release --message-format=json" == 1
+
+# Build button
+click toolbar cargo_build
+wait_cargo
+wait_idle
+expect cargo_cmd == "cargo build"
+expect output_has "> cargo build --release --message-format=json" == 1
+expect output_has "Finished `release` profile" == 1
+
+# Run button: release build, then the program
+click toolbar cargo_run
+wait_cargo
+wait_idle
+expect cargo_cmd == "cargo run"
+expect cargo_exit_code == 3
+expect output_has "> cargo run -q --release" == 1
+expect output_has "2 + 3 = 5" == 1
+
+# Test button
+click toolbar cargo_test
+wait_cargo
+wait_idle
+expect cargo_cmd == "cargo test"
+expect output_has "> cargo test --release --message-format=json" == 1
+expect output_has "test tests::adds ... ok" == 1
+
+# back to Debug (Build menu command)
+cmd cargo_debug
+wait_idle
+expect cargo_profile == "debug"
+
+# Stop button while a program runs
+open_folder ../fixtures/cargo_sleep
+wait_idle
+click toolbar cargo_run
+wait_output "started"
+expect cargo_status == "running"
+click toolbar cargo_stop
+wait_cargo 10000
+expect cargo_status == "stopped"
+expect output_has "> cargo build --message-format=json" == 1
+quit
