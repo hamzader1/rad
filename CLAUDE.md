@@ -77,6 +77,10 @@ Required features, in priority order:
   - `content` (`C_`), `file_stream` (`FS_`), `artifact_cache` (`AC_`): content-addressed,
     immutable data caches with async fill and hot-reload on file change.
   - `mutable_text` (`MTX_`): mutable text cache (used for the Output log).
+  - `text_buffer` (`TB_`, `src/text_buffer/`, ours): the editable buffer. Base blob +
+    patch list, compacted in the background into new lexed blobs; undo/redo with
+    groups, version counter, save, disk-change tracking. Depends on `base`,
+    `content`, `text` only; tested by `rad_tests`.
   - `raddbg` (`RD_`): the debugger frontend that ties everything together.
 - Debugger-only layers (candidates for pruning at the end): `demon`, `ctrl`,
   `dbg_engine`, `dbg_info`, `eval`, `eval_visualization`, `disasm`, `rdi_*`, `pdb`,

@@ -16,31 +16,37 @@ Windows only for now; macOS is milestones 9-10, at the very end (decided 2026-11
 | 4 to 11                              | Not started. |
 
 Milestone 3 details:
+- The buffer is the `text_buffer` layer (`TB_`), used by the code view.
 - Checked in the running app: typing, Enter (keeps indent), Backspace,
-  Ctrl+S save (file on disk updated, no temp file left, dirty dot cleared).
-- Checked by `rad_tests` (46,316,762 checks, 0 failures): patched text, line
-  map and offset-to-line after random edits, LF and CRLF.
-- NOT checked yet: Ctrl+Z / Ctrl+Y in the app, Delete, Ctrl+X / Ctrl+V,
-  "close/exit again to discard" guards, panel split/close, large files.
-  `rad_tests` does not cover undo/redo or the save rebase.
+  Delete, Ctrl+Z (one undo removes a typed word), Ctrl+Y, Ctrl+S (file on
+  disk correct, no temp file left, dirty dot and "(modified)" cleared, no
+  false "(changed on disk)" after our own save).
+- Checked by `rad_tests` (36,270,433 checks, 0 failures, ~37 s): patched
+  text after random edits (LF, CRLF); buffer undo/redo/save/dirty against a
+  model; undo groups; reload when the file changes while clean, flag while
+  dirty; empty text; ~2 MB text with 2,000 edits and compactions.
+- NOT checked yet in the app: Ctrl+X / Ctrl+V, "close/exit again to
+  discard" guards, panel split/close, external file change.
 
 ## Next steps
 
-1. Move the edit buffer (patch list, undo history, save rebase) out of
-   `rad_views.c` into UI-independent code, and test undo/redo/rebase in
-   `rad_tests`.
-2. Check the untested items above in the app.
-3. Milestone 4: file explorer panel.
+1. Check the untested items above in the app (best done by the user: the
+   scripted tests steal keyboard focus, see "Driving the UI" below).
+2. Milestone 4: file explorer panel.
 4. For milestone 9 (Mac, at the end), already known: `base_core.h:276-277`
    and `base_core.c:667` need ARM64 guards; drop `-mcx16` on ARM64.
 
 ## Known limits
 
-- Every edit appends to a patch list that is re-applied each frame until the
-  next save, so editing slows down the longer you go without saving. Needs
-  compaction or a real buffer (rope / piece table).
-- Scope lines and end-of-scope annotations are off while a file has unsaved
-  edits (the lexer's token data is for the saved text).
+- Scope lines and end-of-scope annotations are off while patches exist,
+  i.e. while typing; they come back ~100 ms after typing stops (compaction).
+- Compaction re-lexes the whole file. Fine for normal files; on very large
+  files typed into very fast, patches pile up while a lex is in flight.
+- One buffer per tab, not per file. Fine while a file can only be open in
+  one tab; LSP will want one buffer per file.
+- Buffers only tick while their tab is visible (background tabs don't
+  notice disk changes until shown).
+- Undo history grows without limit while a file is open.
 - Open File uses the native dialog (`sh_pick_file`), not raddbg's lister.
 - Settings are hardcoded raddbg defaults (`rad_default_settings`). Window
   position and panel layout are not saved between runs.
@@ -66,6 +72,8 @@ Milestone 3 details:
   Plain keys work through `PostMessage`; Ctrl/Shift do not (the win32 layer
   reads them with `GetKeyState`), so chords need `keybd_event` while rad is
   the foreground window. rad ignores keys when its window is not focused.
+  Taking the foreground interrupts the user, and their own keystrokes then
+  land in rad (happened once). Prefer `rad_tests`; keep app runs short.
 
 ## Code map (`src/rad/`)
 
@@ -78,14 +86,27 @@ Milestone 3 details:
 - `rad_widgets.h/.c`: menu bar button, icon buttons, command buttons, the
   code slice (port of `rd_code_slice`).
 - `rad_views.h/.c`: view states, the code view (port of
-  `rd_code_view_build`) with editing, undo/redo, save, rebase after save.
-- `tests/rad_tests.c`: console tests on base/content/text.
+  `rd_code_view_build`) with editing; the text view feeds the file stream's
+  content to the tab's `TB_Buffer` and ticks it each frame.
+- `tests/rad_tests.c`: console tests on base/content/text/text_buffer.
+
+`src/text_buffer/` (`TB_`): the editable buffer, see the notes at the top
+of `text_buffer.h`.
 
 ## Journal
 
 ### 2026-11-03
 - Decided: Windows only until the IDE is done; macOS at the very end.
   Milestones renumbered in CLAUDE.md (Mac is now 9 and 10).
+- New layer `text_buffer` (TB_): buffer logic moved out of `rad_views.c`.
+  Background compaction fixes the "slower until you save" problem (the old
+  random-edit test showed it: 135 s for 300-patch sessions). Undo groups
+  (typing / backspace / delete merge; line breaks, pauses, cursor moves and
+  undo/redo end a group). Dirty = history position != saved position, so
+  undoing back to the saved text is clean again. Disk tracking by hash.
+- In-app run: one of the user's keystroke bursts ("uit i") landed in rad
+  while the test held the foreground. Nothing saved; noted in the testing
+  section.
 
 ### 2026-11-02
 - Built raddbg; read base, ui, draw and the raddbg code view; wrote

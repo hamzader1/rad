@@ -4,10 +4,13 @@
 ////////////////////////////////
 //~ rad: Notes
 //
-// Console test program for the editor's text buffer, which is the text
-// layer's patched representation (base data + TXT_PatchList ->
-// TXT_Patched). Each test applies edits and compares the patched memory map
-// and line map against a plain string that is edited the same way.
+// Console test program for the editor's text buffer:
+// - the text layer's patched representation (base data + TXT_PatchList ->
+//   TXT_Patched);
+// - the text_buffer layer (TB_Buffer) on top of it: undo/redo, undo groups,
+//   compaction, save, reload / "changed on disk", empty and large texts.
+// Each test applies edits and compares the patched memory map and line map
+// against a plain string that is edited the same way.
 //
 // Build: `build rad_tests`, run: `build\rad_tests.exe`. Exit code 0 = pass.
 
@@ -26,6 +29,7 @@
 #include "artifact_cache/artifact_cache.h"
 #include "content/content.h"
 #include "text/text.h"
+#include "text_buffer/text_buffer.h"
 
 #include "base/base_inc.c"
 #include "win32/win32_inc.c"
@@ -33,6 +37,7 @@
 #include "artifact_cache/artifact_cache.c"
 #include "content/content.c"
 #include "text/text.c"
+#include "text_buffer/text_buffer.c"
 
 ////////////////////////////////
 //~ rad: Helpers
@@ -234,26 +239,37 @@ test_rand(U64 *state)
   return x * 2685821657736338717ull;
 }
 
-internal void
-test_random_edits(char *test_name, U64 seed, U64 edits_count, B32 crlf)
+internal String8
+test_random_text(Arena *arena, U64 *rng, U64 lines_count, B32 crlf)
 {
-  Temp scratch = scratch_begin(0, 0);
-  U64 rng = seed;
-
-  //- rad: random base text with short lines
-  String8List base_parts = {0};
-  for EachIndex(line_idx, 200)
+  // rad: random text with short lines of lowercase letters
+  String8List parts = {0};
+  for EachIndex(line_idx, lines_count)
   {
-    U64 len = test_rand(&rng)%40;
-    U8 *line = push_array(scratch.arena, U8, len);
-    for EachIndex(c, len) { line[c] = (U8)('a' + test_rand(&rng)%26); }
-    str8_list_push(scratch.arena, &base_parts, str8(line, len));
-    str8_list_push(scratch.arena, &base_parts, crlf ? str8_lit("\r\n") : str8_lit("\n"));
+    U64 len = test_rand(rng)%40;
+    U8 *line = push_array(arena, U8, len);
+    for EachIndex(c, len) { line[c] = (U8)('a' + test_rand(rng)%26); }
+    str8_list_push(arena, &parts, str8(line, len));
+    str8_list_push(arena, &parts, crlf ? str8_lit("\r\n") : str8_lit("\n"));
   }
-  String8 base = str8_list_join(scratch.arena, &base_parts, 0);
-  TXT_TextInfo info = test_text_info_from_data(scratch.arena, base);
-  TXT_PatchList patches = {0};
-  String8 expected = base;
+  return str8_list_join(arena, &parts, 0);
+}
+
+internal Rng1U64
+test_random_range(U64 *rng, String8 text)
+{
+  // rad: a range on character boundaries (never splits "\r\n")
+  U64 a = text.size ? test_rand(rng)%(text.size+1) : 0;
+  U64 len = (test_rand(rng)%4 == 0) ? test_rand(rng)%60 : (test_rand(rng)%3);
+  U64 b = Min(text.size, a + len);
+  if(a > 0 && a < text.size && text.str[a] == '\n' && text.str[a-1] == '\r') { a -= 1; }
+  if(b > 0 && b < text.size && text.str[b] == '\n' && text.str[b-1] == '\r') { b += 1; }
+  return r1u64(a, b);
+}
+
+internal String8
+test_random_snippet(U64 *rng, B32 crlf)
+{
   String8 snippets[] =
   {
     str8_lit("x"), str8_lit("hello"), str8_lit("\n"), str8_lit("\n\n"), str8_lit("a\nb"),
@@ -264,16 +280,22 @@ test_random_edits(char *test_name, U64 seed, U64 edits_count, B32 crlf)
     str8_lit("x"), str8_lit("hello"), str8_lit("\r\n"), str8_lit("\r\n\r\n"), str8_lit("a\r\nb"),
     str8_lit("\r\nfoo\r\nbar\r\n"), str8_lit(""), str8_lit("    "), str8_lit("fn main() {\r\n}\r\n"),
   };
+  return crlf ? crlf_snippets[test_rand(rng)%ArrayCount(crlf_snippets)] : snippets[test_rand(rng)%ArrayCount(snippets)];
+}
+
+internal void
+test_random_edits(char *test_name, U64 seed, U64 edits_count, B32 crlf)
+{
+  Temp scratch = scratch_begin(0, 0);
+  U64 rng = seed;
+  String8 base = test_random_text(scratch.arena, &rng, 200, crlf);
+  TXT_TextInfo info = test_text_info_from_data(scratch.arena, base);
+  TXT_PatchList patches = {0};
+  String8 expected = base;
   for EachIndex(edit_idx, edits_count)
   {
-    //- rad: pick a range on character boundaries (never split "\r\n")
-    U64 a = expected.size ? test_rand(&rng)%(expected.size+1) : 0;
-    U64 len = (test_rand(&rng)%4 == 0) ? test_rand(&rng)%60 : (test_rand(&rng)%3);
-    U64 b = Min(expected.size, a + len);
-    if(a > 0 && a < expected.size && expected.str[a] == '\n' && expected.str[a-1] == '\r') { a -= 1; }
-    if(b > 0 && b < expected.size && expected.str[b] == '\n' && expected.str[b-1] == '\r') { b += 1; }
-    Rng1U64 range = r1u64(a, b);
-    String8 replace = crlf ? crlf_snippets[test_rand(&rng)%ArrayCount(crlf_snippets)] : snippets[test_rand(&rng)%ArrayCount(snippets)];
+    Rng1U64 range = test_random_range(&rng, expected);
+    String8 replace = test_random_snippet(&rng, crlf);
     txt_patch_list_push_new(scratch.arena, &patches, range, replace);
     expected = test_string_replace(scratch.arena, expected, range, replace);
     TXT_Patched patched = txt_patched_from_info_data_patches(scratch.arena, &info, base, &patches);
@@ -287,11 +309,425 @@ test_random_edits(char *test_name, U64 seed, U64 edits_count, B32 crlf)
 }
 
 ////////////////////////////////
+//~ rad: Text Buffer Test Harness
+//
+// Drives TB_Buffer like the editor does: a fake "file stream" key provides
+// the source text, edits go through tb_buffer_edit, compaction runs through
+// tb_buffer_tick with a fake clock (the real async lexer still runs).
+
+typedef struct TestBuf TestBuf;
+struct TestBuf
+{
+  TB_Buffer *buffer;
+  C_Key source_key;
+  TXT_LangKind lang;
+  U64 now_us;
+};
+
+internal void
+test_expect(char *test_name, char *what, B32 cond)
+{
+  test_checks += 1;
+  if(!cond)
+  {
+    printf("FAIL %s: %s\n", test_name, what);
+    test_failures += 1;
+  }
+}
+
+internal U128
+test_buf_submit_source(TestBuf *t, String8 text)
+{
+  // rad: like the file stream: submit the bytes, then wait until they are lexed
+  Arena *data_arena = arena_alloc();
+  String8 copy = push_str8_copy(data_arena, text);
+  U128 hash = c_submit_data(t->source_key, &data_arena, copy);
+  B32 ready = 0;
+  for(U64 start_us = now_time_us(); !ready && now_time_us() - start_us < 10000000;)
+  {
+    Access *access = access_open();
+    ready = (txt_text_info_from_hash_lang(access, hash, t->lang).lines_count != 0);
+    access_close(access);
+    if(!ready) { sleep_ms(1); }
+  }
+  test_expect("source", "source text got lexed", ready);
+  return hash;
+}
+
+internal void
+test_buf_observe(TestBuf *t, U128 hash)
+{
+  Access *access = access_open();
+  tb_buffer_observe_source(t->buffer, access, hash);
+  access_close(access);
+}
+
+internal TestBuf
+test_buf_open(String8 text, TXT_LangKind lang)
+{
+  TestBuf t = {0};
+  t.lang = lang;
+  t.source_key = c_key_make(c_root_alloc(), c_id_make(0, 1));
+  t.buffer = tb_buffer_alloc(lang);
+  U128 hash = test_buf_submit_source(&t, text);
+  test_buf_observe(&t, hash);
+  return t;
+}
+
+internal void
+test_buf_close(TestBuf *t)
+{
+  tb_buffer_release(t->buffer);
+  c_root_release(t->source_key.root);
+}
+
+internal void
+test_buf_tick(TestBuf *t, U64 advance_us)
+{
+  t->now_us += advance_us;
+  Access *access = access_open();
+  tb_buffer_tick(t->buffer, access, t->now_us);
+  access_close(access);
+}
+
+internal void
+test_buf_settle(char *test_name, TestBuf *t)
+{
+  // rad: tick until every patch is compacted into the base
+  for(U64 start_us = now_time_us(); tb_buffer_is_busy(t->buffer) && now_time_us() - start_us < 10000000;)
+  {
+    test_buf_tick(t, TB_COMPACT_PAUSE_US);
+    if(tb_buffer_is_busy(t->buffer)) { sleep_ms(1); }
+  }
+  test_expect(test_name, "compaction finished", !tb_buffer_is_busy(t->buffer));
+}
+
+internal B32
+test_buf_check(char *test_name, U64 step, TestBuf *t, String8 expected)
+{
+  Temp scratch = scratch_begin(0, 0);
+  Access *access = access_open();
+  TB_Text text = tb_text_from_buffer(scratch.arena, access, t->buffer);
+  B32 good = test_check_patched(test_name, step, &text.patched, expected);
+  access_close(access);
+  scratch_end(scratch);
+  return good;
+}
+
+internal void
+test_buf_edit(TestBuf *t, U64 min, U64 max, String8 replace)
+{
+  Temp scratch = scratch_begin(0, 0);
+  Access *access = access_open();
+  TB_Text text = tb_text_from_buffer(scratch.arena, access, t->buffer);
+  tb_buffer_edit(t->buffer, &text.patched, r1u64(min, max), replace);
+  access_close(access);
+  scratch_end(scratch);
+}
+
+internal B32
+test_buf_save(TestBuf *t, String8 path)
+{
+  Access *access = access_open();
+  B32 good = tb_buffer_save(t->buffer, access, path);
+  access_close(access);
+  return good;
+}
+
+////////////////////////////////
+//~ rad: Text Buffer Tests
+
+internal void
+test_buffer_random(char *test_name, U64 seed, U64 ops_count, B32 crlf)
+{
+  // rad: random edits / undos / redos / ticks / saves against a model: the
+  // list of texts at each history position (each edit its own undo record)
+  Temp scratch = scratch_begin(0, 0);
+  U64 rng = seed;
+  String8 base = test_random_text(scratch.arena, &rng, 100, crlf);
+  TestBuf t = test_buf_open(base, TXT_LangKind_Rust);
+  String8 save_path = push_str8f(scratch.arena, "%S/rad_tests_save.tmp", get_process_info()->binary_path);
+  String8 *states = push_array(scratch.arena, String8, ops_count+1);
+  U64 states_count = 1;
+  U64 pos = 0;
+  S64 saved_pos = 0;
+  states[0] = base;
+  U64 last_version = t.buffer->version;
+  for EachIndex(op_idx, ops_count)
+  {
+    U64 r = test_rand(&rng)%100;
+    B32 changed = 0;
+    if(r < 60)
+    {
+      Rng1U64 range = test_random_range(&rng, states[pos]);
+      String8 replace = test_random_snippet(&rng, crlf);
+      if(range.min == range.max && replace.size == 0) { replace = str8_lit("x"); }
+      tb_buffer_close_undo_group(t.buffer);
+      test_buf_edit(&t, range.min, range.max, replace);
+      if(saved_pos > (S64)pos) { saved_pos = -1; }
+      states[pos+1] = test_string_replace(scratch.arena, states[pos], range, replace);
+      pos += 1;
+      states_count = pos+1;
+      changed = 1;
+    }
+    else if(r < 75)
+    {
+      B32 did = tb_buffer_undo(t.buffer, 0);
+      test_expect(test_name, "undo available exactly when there is history", did == (pos > 0));
+      if(did) { pos -= 1; changed = 1; }
+    }
+    else if(r < 87)
+    {
+      B32 did = tb_buffer_redo(t.buffer, 0);
+      test_expect(test_name, "redo available exactly when there is a redo tail", did == (pos+1 < states_count));
+      if(did) { pos += 1; changed = 1; }
+    }
+    else if(r < 95)
+    {
+      test_buf_tick(&t, test_rand(&rng)%(2*TB_COMPACT_PAUSE_US));
+    }
+    else if(r < 98)
+    {
+      test_buf_settle(test_name, &t);
+    }
+    else
+    {
+      test_expect(test_name, "save succeeded", test_buf_save(&t, save_path));
+      test_expect(test_name, "saved bytes match", str8_match(data_from_file_path(scratch.arena, save_path), states[pos], 0));
+      saved_pos = (S64)pos;
+    }
+    test_expect(test_name, "version moves on every text change, and only then", changed ? (t.buffer->version > last_version) : (t.buffer->version == last_version));
+    test_expect(test_name, "dirty iff history position != saved position", tb_buffer_is_dirty(t.buffer) == ((S64)pos != saved_pos));
+    last_version = t.buffer->version;
+    if(!test_buf_check(test_name, op_idx, &t, states[pos]))
+    {
+      break;
+    }
+  }
+  test_buf_settle(test_name, &t);
+  test_buf_check(test_name, max_U64, &t, states[pos]);
+  delete_file_at_path(save_path);
+  test_buf_close(&t);
+  scratch_end(scratch);
+}
+
+internal void
+test_buffer_undo_groups(void)
+{
+  char *name = "undo_groups";
+  String8 base = str8_lit("fn x() {\n}\n");
+  TestBuf t = test_buf_open(base, TXT_LangKind_Rust);
+
+  //- rad: typing merges into one record
+  test_buf_edit(&t, 8, 8, str8_lit("a"));
+  test_buf_edit(&t, 9, 9, str8_lit("b"));
+  test_buf_edit(&t, 10, 10, str8_lit("c"));
+  test_buf_check(name, 0, &t, str8_lit("fn x() {abc\n}\n"));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 1, &t, base);
+  tb_buffer_redo(t.buffer, 0);
+  test_buf_check(name, 2, &t, str8_lit("fn x() {abc\n}\n"));
+
+  //- rad: redo closed the group -> next typing is a new record
+  test_buf_edit(&t, 11, 11, str8_lit("d"));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 3, &t, str8_lit("fn x() {abc\n}\n"));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 4, &t, base);
+
+  //- rad: a line break is its own record and ends the group
+  test_buf_edit(&t, 8, 8, str8_lit("a"));
+  test_buf_edit(&t, 9, 9, str8_lit("\n"));
+  test_buf_edit(&t, 10, 10, str8_lit("b"));
+  test_buf_check(name, 5, &t, str8_lit("fn x() {a\nb\n}\n"));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 6, &t, str8_lit("fn x() {a\n\n}\n"));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 7, &t, str8_lit("fn x() {a\n}\n"));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 8, &t, base);
+
+  //- rad: backspacing merges
+  test_buf_edit(&t, 8, 8, str8_lit("abcd"));
+  tb_buffer_close_undo_group(t.buffer);
+  test_buf_edit(&t, 11, 12, str8_lit(""));
+  test_buf_edit(&t, 10, 11, str8_lit(""));
+  test_buf_edit(&t, 9, 10, str8_lit(""));
+  test_buf_check(name, 9, &t, str8_lit("fn x() {a\n}\n"));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 10, &t, str8_lit("fn x() {abcd\n}\n"));
+
+  //- rad: forward deleting merges
+  test_buf_edit(&t, 8, 9, str8_lit(""));
+  test_buf_edit(&t, 8, 9, str8_lit(""));
+  test_buf_edit(&t, 8, 9, str8_lit(""));
+  test_buf_check(name, 11, &t, str8_lit("fn x() {d\n}\n"));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 12, &t, str8_lit("fn x() {abcd\n}\n"));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 13, &t, base);
+
+  //- rad: typing over a selection merges with the typing after it
+  test_buf_edit(&t, 3, 4, str8_lit("y"));
+  test_buf_edit(&t, 4, 4, str8_lit("z"));
+  test_buf_check(name, 14, &t, str8_lit("fn yz() {\n}\n"));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 15, &t, base);
+
+  //- rad: a pause ends the group
+  test_buf_edit(&t, 8, 8, str8_lit("a"));
+  test_buf_tick(&t, 0);
+  test_buf_tick(&t, TB_UNDO_GROUP_PAUSE_US);
+  test_buf_edit(&t, 9, 9, str8_lit("b"));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 16, &t, str8_lit("fn x() {a\n}\n"));
+
+  //- rad: groups survive compaction
+  tb_buffer_close_undo_group(t.buffer);
+  test_buf_edit(&t, 9, 9, str8_lit("b"));
+  test_buf_edit(&t, 10, 10, str8_lit("c"));
+  test_buf_settle(name, &t);
+  test_buf_check(name, 17, &t, str8_lit("fn x() {abc\n}\n"));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 18, &t, str8_lit("fn x() {a\n}\n"));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 19, &t, base);
+  test_expect(name, "clean after undoing everything", !tb_buffer_is_dirty(t.buffer));
+  test_buf_close(&t);
+}
+
+internal void
+test_buffer_disk(void)
+{
+  char *name = "disk";
+  Temp scratch = scratch_begin(0, 0);
+  String8 path = push_str8f(scratch.arena, "%S/rad_tests_disk.tmp", get_process_info()->binary_path);
+  String8 a = str8_lit("one\ntwo\n");
+  TestBuf t = test_buf_open(a, TXT_LangKind_Null);
+  test_expect(name, "loads clean", tb_buffer_is_loaded(t.buffer) && !tb_buffer_is_dirty(t.buffer));
+  test_buf_check(name, 0, &t, a);
+
+  //- rad: external change while clean -> reload
+  String8 b = str8_lit("one\ntwo\nthree\n");
+  U64 version_before = t.buffer->version;
+  test_buf_observe(&t, test_buf_submit_source(&t, b));
+  test_expect(name, "clean buffer reloads", !t.buffer->changed_on_disk && t.buffer->version > version_before);
+  test_buf_check(name, 1, &t, b);
+
+  //- rad: external change while dirty -> keep the edits, flag it
+  test_buf_edit(&t, 0, 0, str8_lit("zero\n"));
+  U128 c_hash = test_buf_submit_source(&t, str8_lit("changed\n"));
+  test_buf_observe(&t, c_hash);
+  test_expect(name, "dirty buffer flags the change", t.buffer->changed_on_disk && tb_buffer_is_dirty(t.buffer));
+  test_buf_check(name, 2, &t, str8_lit("zero\none\ntwo\nthree\n"));
+
+  //- rad: undo back to clean -> the waiting disk change loads
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_observe(&t, c_hash);
+  test_expect(name, "undo to clean loads the disk change", !t.buffer->changed_on_disk && !tb_buffer_is_dirty(t.buffer));
+  test_buf_check(name, 3, &t, str8_lit("changed\n"));
+  test_expect(name, "reload clears history", !tb_buffer_undo(t.buffer, 0));
+
+  //- rad: save; the file stream then reports our own bytes -> not a change
+  test_buf_edit(&t, 0, 0, str8_lit("saved "));
+  test_expect(name, "save succeeded", test_buf_save(&t, path));
+  test_expect(name, "clean after save", !tb_buffer_is_dirty(t.buffer));
+  String8 on_disk = data_from_file_path(scratch.arena, path);
+  test_expect(name, "saved bytes match", str8_match(on_disk, str8_lit("saved changed\n"), 0));
+  test_buf_observe(&t, test_buf_submit_source(&t, on_disk));
+  test_expect(name, "own save is not a change on disk", !t.buffer->changed_on_disk && !tb_buffer_is_dirty(t.buffer));
+  test_buf_check(name, 4, &t, on_disk);
+
+  //- rad: undo past the save -> dirty; redo back to it -> clean
+  tb_buffer_undo(t.buffer, 0);
+  test_expect(name, "dirty after undoing the saved edit", tb_buffer_is_dirty(t.buffer));
+  tb_buffer_redo(t.buffer, 0);
+  test_expect(name, "clean after redoing back to the save", !tb_buffer_is_dirty(t.buffer));
+
+  //- rad: undo past the save, then a new edit -> the saved state is gone
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_edit(&t, 0, 0, str8_lit("other "));
+  tb_buffer_undo(t.buffer, 0);
+  test_expect(name, "dirty forever once the saved state is dropped", tb_buffer_is_dirty(t.buffer));
+  test_buf_check(name, 5, &t, str8_lit("changed\n"));
+
+  delete_file_at_path(path);
+  test_buf_close(&t);
+  scratch_end(scratch);
+}
+
+internal void
+test_buffer_empty(void)
+{
+  char *name = "empty";
+  TestBuf t = test_buf_open(str8_lit(""), TXT_LangKind_Null);
+  test_expect(name, "empty text loads", tb_buffer_is_loaded(t.buffer));
+  test_buf_check(name, 0, &t, str8_lit(""));
+  test_buf_edit(&t, 0, 0, str8_lit("x"));
+  test_buf_settle(name, &t);
+  test_buf_check(name, 1, &t, str8_lit("x"));
+  test_buf_edit(&t, 0, 1, str8_lit(""));
+  test_buf_settle(name, &t);
+  test_buf_check(name, 2, &t, str8_lit(""));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_settle(name, &t);
+  test_buf_check(name, 3, &t, str8_lit("x"));
+  test_buf_close(&t);
+}
+
+internal void
+test_buffer_large(void)
+{
+  // rad: ~2 MB text, many edits with compactions in between; the model is a
+  // flat byte array edited in place
+  char *name = "large";
+  Temp scratch = scratch_begin(0, 0);
+  U64 rng = 0x5DEECE66Dull;
+  String8 base = test_random_text(scratch.arena, &rng, 100000, 0);
+  U64 cap = base.size + 1000000;
+  U8 *model = push_array_no_zero(scratch.arena, U8, cap);
+  U64 model_size = base.size;
+  MemoryCopy(model, base.str, base.size);
+  TestBuf t = test_buf_open(base, TXT_LangKind_Null);
+  for EachIndex(edit_idx, 2000)
+  {
+    Rng1U64 range = test_random_range(&rng, str8(model, model_size));
+    String8 replace = test_random_snippet(&rng, 0);
+    test_buf_edit(&t, range.min, range.max, replace);
+    MemoryCopy(model + range.min + replace.size, model + range.max, model_size - range.max);
+    MemoryCopy(model + range.min, replace.str, replace.size);
+    model_size = model_size - dim_1u64(range) + replace.size;
+    test_buf_tick(&t, test_rand(&rng)%(2*TB_COMPACT_PAUSE_US));
+    if(edit_idx%500 == 499)
+    {
+      test_buf_settle(name, &t);
+      if(!test_buf_check(name, edit_idx, &t, str8(model, model_size)))
+      {
+        break;
+      }
+    }
+  }
+  test_buf_close(&t);
+  scratch_end(scratch);
+}
+
+////////////////////////////////
 //~ rad: Entry Point
+
+internal void
+test_section_end(char *section_name, U64 *start_us)
+{
+  U64 end_us = now_time_us();
+  printf("  %-44s %8I64u ms\n", section_name, (end_us - *start_us)/1000);
+  fflush(stdout);
+  *start_us = end_us;
+}
 
 internal void
 entry_point(CmdLine *cmd_line)
 {
+  U64 section_start_us = now_time_us();
+
   //- rad: hand-written cases
   {
     TestEdit edits[] =
@@ -320,6 +756,7 @@ entry_point(CmdLine *cmd_line)
     };
     test_edits("insert_delete_at_start", "line one\nline two\nline three", edits, ArrayCount(edits));
   }
+  test_section_end("patched text: hand-written", &section_start_us);
 
   //- rad: real text-layer info (same cases, lexed as Rust and as plain text)
   {
@@ -332,13 +769,32 @@ entry_point(CmdLine *cmd_line)
     test_edits_real_info("real_info_rust", text, TXT_LangKind_Rust, edits, ArrayCount(edits));
     test_edits_real_info("real_info_null", text, TXT_LangKind_Null, edits, ArrayCount(edits));
   }
+  test_section_end("patched text: real lexer info", &section_start_us);
 
   //- rad: random edits
-  for(U64 seed = 1; seed <= 20; seed += 1)
+  // NOTE(rad): cost grows ~cubically with the patch count (every step
+  // re-applies every patch, and lookups walk the patched maps), so keep this
+  // short; long edit sessions are covered by the buffer tests (compaction).
+  for(U64 seed = 1; seed <= 10; seed += 1)
   {
-    test_random_edits("random_lf", seed*0x9E3779B97F4A7C15ull, 300, 0);
-    test_random_edits("random_crlf", seed*0xD1B54A32D192ED03ull, 300, 1);
+    test_random_edits("random_lf", seed*0x9E3779B97F4A7C15ull, 150, 0);
+    test_random_edits("random_crlf", seed*0xD1B54A32D192ED03ull, 150, 1);
   }
+  test_section_end("patched text: random edits", &section_start_us);
+
+  //- rad: text buffer (undo/redo, groups, compaction, save, disk changes)
+  test_buffer_undo_groups();
+  test_buffer_disk();
+  test_buffer_empty();
+  test_section_end("buffer: undo groups, disk, empty", &section_start_us);
+  for(U64 seed = 1; seed <= 10; seed += 1)
+  {
+    test_buffer_random("buffer_random_lf", seed*0x9E3779B97F4A7C15ull, 400, 0);
+    test_buffer_random("buffer_random_crlf", seed*0xD1B54A32D192ED03ull, 400, 1);
+  }
+  test_section_end("buffer: random edits/undo/redo/save", &section_start_us);
+  test_buffer_large();
+  test_section_end("buffer: large text (~2 MB)", &section_start_us);
 
   printf("%I64u checks, %I64u failing test(s)\n", test_checks, test_failures);
   fflush(stdout);
