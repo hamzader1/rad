@@ -3148,6 +3148,117 @@ rad_exec_cmd(RAD_Cmd *cmd)
 }
 
 ////////////////////////////////
+//~ rad: Folder Watches
+
+internal RAD_FolderWatchChange
+rad_folder_watch_take_change(String8 folder)
+{
+  // NOTE(rad): UI thread. a new watch reports a change once (the caller
+  // lists the folder anyway); a failed one reports NoWatch (caller polls)
+  RAD_FolderWatchChange result = RAD_FolderWatchChange_None;
+  MutexScope(rad_state->watch_mutex)
+  {
+    RAD_FolderWatch *w = 0;
+    for(RAD_FolderWatch *n = rad_state->first_watch; n != 0; n = n->next)
+    {
+      if(str8_match(str8(n->path_buffer, n->path_size), folder, StringMatchFlag_CaseInsensitive|StringMatchFlag_SlashInsensitive))
+      {
+        w = n;
+        break;
+      }
+    }
+    if(w == 0 && folder.size <= sizeof(w->path_buffer))
+    {
+      w = rad_state->free_watch;
+      if(w != 0)
+      {
+        SLLStackPop(rad_state->free_watch);
+      }
+      else
+      {
+        w = push_array_no_zero(rad_state->arena, RAD_FolderWatch, 1);
+      }
+      MemoryZeroStruct(w);
+      MemoryCopy(w->path_buffer, folder.str, folder.size);
+      w->path_size = folder.size;
+      w->watch = file_watch_alloc(folder, 1);
+      w->changed = 1;
+      SLLStackPush(rad_state->first_watch, w);
+    }
+    if(w == 0 || w->watch.u64[0] == 0)
+    {
+      result = RAD_FolderWatchChange_NoWatch;
+    }
+    else
+    {
+      result = (ins_atomic_u32_eval_assign(&w->changed, 0) ? RAD_FolderWatchChange_Changed : RAD_FolderWatchChange_None);
+    }
+    if(w != 0)
+    {
+      w->last_frame_index_touched = rad_state->frame_index;
+    }
+  }
+  return result;
+}
+
+internal void
+rad_folder_watches_gc(void)
+{
+  MutexScope(rad_state->watch_mutex)
+  {
+    for(RAD_FolderWatch **link = &rad_state->first_watch; *link != 0;)
+    {
+      RAD_FolderWatch *w = *link;
+      if(w->last_frame_index_touched+2 < rad_state->frame_index)
+      {
+        *link = w->next;
+        file_watch_release(w->watch);
+        SLLStackPush(rad_state->free_watch, w);
+      }
+      else
+      {
+        link = &w->next;
+      }
+    }
+  }
+}
+
+internal void
+rad_watch_thread_entry_point(void *p)
+{
+  // NOTE(rad): every 100 ms: a watched folder changed, or file_stream saw a
+  // streamed (open) file change -> flag it and wake the UI thread, which
+  // otherwise sleeps until input arrives
+  ThreadNameF("rad_watch_thread");
+  for(;;)
+  {
+    sleep_ms(100);
+    B32 changed = 0;
+    U64 fs_gen = fs_change_gen();
+    if(fs_gen != rad_state->watch_fs_change_gen)
+    {
+      rad_state->watch_fs_change_gen = fs_gen;
+      changed = 1;
+    }
+    MutexScope(rad_state->watch_mutex)
+    {
+      for(RAD_FolderWatch *w = rad_state->first_watch; w != 0; w = w->next)
+      {
+        if(w->watch.u64[0] != 0 && file_watch_check(w->watch))
+        {
+          ins_atomic_u32_eval_assign(&w->changed, 1);
+          changed = 1;
+        }
+      }
+    }
+    if(changed)
+    {
+      wm_send_wakeup_event();
+    }
+  }
+}
+
+////////////////////////////////
 //~ rad: User Data (Session)
 
 internal String8
@@ -3508,6 +3619,11 @@ rad_init(CmdLine *cmdln)
   //- rad: scripted tests (`--script:<file>`, see rad_script.h)
   rad_script_init(cmdln);
 
+  //- rad: folder watches + watcher thread (wakes the UI on disk changes)
+  rad_state->watch_mutex = mutex_alloc();
+  rad_state->watch_fs_change_gen = fs_change_gen();
+  rad_state->watch_thread = thread_launch(rad_watch_thread_entry_point, 0);
+
   ProfEnd();
   scratch_end(scratch);
 }
@@ -3674,7 +3790,7 @@ rad_frame(void)
   //////////////////////////////
   //- rad: get events from the OS
   //
-  WM_EventList events = wm_get_events(scratch.arena, rad_state->num_frames_requested == 0 && !rad_script_is_active());
+  WM_EventList events = wm_get_events(scratch.arena, rad_state->num_frames_requested == 0 && (!rad_script_is_active() || rad_script_lets_rad_sleep()));
 
   //////////////////////////////
   //- rad: open windows for all window configs which do not have one yet
@@ -3954,6 +4070,7 @@ rad_frame(void)
   //
   rad_view_state_gc();
   rad_documents_gc();
+  rad_folder_watches_gc();
 
   //////////////////////////////
   //- rad: save the session (user data) when it changed: checked every 2 s

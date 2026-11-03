@@ -53,6 +53,13 @@ struct FileMap
   U64 u64[1];
 };
 
+// rad: folder change watch (zero = none / failed)
+typedef struct FileWatch FileWatch;
+struct FileWatch
+{
+  U64 u64[1];
+};
+
 ////////////////////////////////
 //~ rjf: Handle Type Functions
 
@@ -114,5 +121,13 @@ internal void file_iter_end(FileIter *iter);
 
 //- rjf: directory creation
 internal B32 make_directory(String8 path);
+
+//- rad: folder change watches. `file_watch_check` does not block: it returns
+// 1 if a file or folder in the watched folder (and its subfolders, when
+// recursive) was created, deleted, renamed or written since the last check,
+// and re-arms the watch. A platform without watches returns 1 every time.
+internal FileWatch file_watch_alloc(String8 folder_path, B32 recursive);
+internal void      file_watch_release(FileWatch watch);
+internal B32       file_watch_check(FileWatch watch);
 
 #endif // BASE_FILES_H

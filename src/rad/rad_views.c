@@ -214,7 +214,19 @@ internal void
 rad_documents_tick(void)
 {
   // NOTE(rad): feed each file stream's current content to its buffer (load,
-  // reload, "changed on disk"), let the buffer compact its patches
+  // reload, "changed on disk"), let the buffer compact its patches. after
+  // file_stream saw a file change (the watcher thread woke us), keep
+  // drawing for a second so the new content gets streamed, lexed and shown.
+  U64 fs_gen = fs_change_gen();
+  if(fs_gen != rad_state->docs_fs_change_gen)
+  {
+    rad_state->docs_fs_change_gen = fs_gen;
+    rad_state->docs_refresh_until_us = now_time_us() + 1000000;
+  }
+  if(now_time_us() < rad_state->docs_refresh_until_us)
+  {
+    rad_request_frame();
+  }
   Access *access = access_open();
   for(RAD_Document *doc = rad_state->first_document; doc != 0; doc = doc->next)
   {
@@ -1529,11 +1541,18 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
   }
 
   //////////////////////////////
-  //- rad: rebuild rows when stale
+  //- rad: rebuild rows when stale: expansions changed, a new root, or the
+  // root's folder watch saw a change (no watch -> once a second)
   //
-  if(root.size != 0 && (ex->rows_dirty || !str8_match(ex->rows_root, root, 0) || now_time_us() >= ex->rows_build_us + RAD_EXPLORER_REFRESH_US))
+  if(root.size != 0)
   {
-    rad_explorer_rows_build(ex, root);
+    RAD_FolderWatchChange change = rad_folder_watch_take_change(root);
+    if(ex->rows_dirty || !str8_match(ex->rows_root, root, 0) ||
+       change == RAD_FolderWatchChange_Changed ||
+       (change == RAD_FolderWatchChange_NoWatch && now_time_us() >= ex->rows_build_us + RAD_EXPLORER_REFRESH_US))
+    {
+      rad_explorer_rows_build(ex, root);
+    }
   }
 
   //////////////////////////////

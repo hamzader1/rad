@@ -62,6 +62,31 @@ struct RAD_Query
 };
 
 ////////////////////////////////
+//~ rad: Folder Watch Types
+//
+// One OS folder watch (base: file_watch_*) per watched folder, checked by a
+// background thread every 100 ms; the UI thread takes the change flag.
+
+typedef enum RAD_FolderWatchChange
+{
+  RAD_FolderWatchChange_None,
+  RAD_FolderWatchChange_Changed,
+  RAD_FolderWatchChange_NoWatch,
+}
+RAD_FolderWatchChange;
+
+typedef struct RAD_FolderWatch RAD_FolderWatch;
+struct RAD_FolderWatch
+{
+  RAD_FolderWatch *next;
+  U8 path_buffer[1024];
+  U64 path_size;
+  FileWatch watch;
+  U32 changed;
+  U64 last_frame_index_touched;
+};
+
+////////////////////////////////
 //~ rad: Generated Code
 
 #include "rad/generated/rad.meta.h"
@@ -245,6 +270,16 @@ struct RAD_State
   struct RAD_ViewStateSlot *view_state_slots;
   struct RAD_ViewState *free_view_state;
 
+  // rad: folder watches + the watcher thread, which wakes the UI when a
+  // watched folder or a streamed file (file_stream change gen) changes
+  Mutex watch_mutex;
+  struct RAD_FolderWatch *first_watch;
+  struct RAD_FolderWatch *free_watch;
+  U64 watch_fs_change_gen;
+  Thread watch_thread;
+  U64 docs_fs_change_gen;
+  U64 docs_refresh_until_us;
+
   // rad: user data file (session: windows, panels, tabs, explorer folder;
   // port of raddbg's user file). empty path = no file (scripted tests)
   String8 user_path;
@@ -286,6 +321,13 @@ internal void rad_set_error(String8 string);
 internal void rad_push_cmd(RAD_CmdKind kind, RAD_CmdParams *params);
 #define rad_cmd(kind, ...) rad_push_cmd((kind), &(RAD_CmdParams){.window = 0, __VA_ARGS__})
 internal void rad_exec_cmd(RAD_Cmd *cmd);
+
+////////////////////////////////
+//~ rad: Folder Watch Functions
+
+internal RAD_FolderWatchChange rad_folder_watch_take_change(String8 folder);
+internal void rad_folder_watches_gc(void);
+internal void rad_watch_thread_entry_point(void *p);
 
 ////////////////////////////////
 //~ rad: User Data (Session) Functions

@@ -38,6 +38,12 @@
 //   click <target>              left click
 //   double_click <target>
 //   drag <target> <target>      left press at the first, move, release at the second
+//   write_file <path> "<text>"  write a file on disk (as another program would)
+//   delete_file <path>
+//   write_file_later <ms> <path> "<text>"  the same, from a thread, after <ms>
+//   sleep_until_woken           let rad block in its event wait, like an idle
+//                               app, until something wakes it (field
+//                               last_sleep_ms = how long it slept)
 //   wait <ms>
 //   wait_frames <count>
 //   wait_idle [timeout_ms]      until rad requests no more frames (text loaded,
@@ -82,6 +88,7 @@
 //   doc_count                   open documents (one per file, shared by tabs)
 //   error                       bottom bar error message ("" when none)
 //   elapsed_ms                  time since the script started
+//   last_sleep_ms               duration of the last sleep_until_woken
 
 ////////////////////////////////
 //~ rad: Script Types
@@ -124,12 +131,21 @@ struct RAD_ScriptInput
   F32 wheel_delta;
 };
 
+typedef struct RAD_ScriptDelayedWrite RAD_ScriptDelayedWrite;
+struct RAD_ScriptDelayedWrite
+{
+  U64 delay_ms;
+  String8 path;
+  String8 data;
+};
+
 typedef enum RAD_ScriptWaitKind
 {
   RAD_ScriptWaitKind_Null,
   RAD_ScriptWaitKind_Time,
   RAD_ScriptWaitKind_Frames,
   RAD_ScriptWaitKind_Idle,
+  RAD_ScriptWaitKind_Woken,
 }
 RAD_ScriptWaitKind;
 
@@ -158,6 +174,8 @@ struct RAD_ScriptState
   U64 wait_line_num;
   U64 wait_until_us;
   U64 wait_frames_left;
+  U64 sleep_begin_us;
+  U64 last_sleep_us;
 
   //- rad: queued input steps (one per frame)
   Arena *input_arena;
@@ -187,6 +205,8 @@ global RAD_ScriptState *rad_script = 0;
 
 internal void rad_script_init(CmdLine *cmdln);
 internal B32 rad_script_is_active(void);
+internal B32 rad_script_lets_rad_sleep(void);
+internal void rad_script_delayed_write_entry_point(void *p);
 internal void rad_script_tick(void);
 internal void rad_script_frame_end(U64 frame_work_us, U64 ui_build_us);
 

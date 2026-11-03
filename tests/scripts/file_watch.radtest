@@ -1,0 +1,42 @@
+# File watching: disk changes show up by themselves. The explorer re-lists
+# when its folder changes (OS folder watch); an open file reloads when it is
+# unmodified, and keeps its edits (flagged) when it is modified.
+# (Scripts keep rad drawing every frame, so this checks the change
+# detection; waking an idle rad is not covered here.)
+
+open_folder ../fixtures/project
+wait_idle
+expect explorer_rows == 4
+write_file ../fixtures/project/new.rs "fn new() {}\n"
+wait 600
+expect explorer_rows == 5
+delete_file ../fixtures/project/new.rs
+wait 600
+expect explorer_rows == 4
+
+open ../fixtures/edit.txt
+wait_idle
+expect line 1 == "alpha"
+write_file ../fixtures/edit.txt "changed\non disk\n"
+wait 2500
+expect line 1 == "changed"
+expect line 2 == "on disk"
+expect dirty == 0
+
+click code 1 1
+text "X"
+write_file ../fixtures/edit.txt "again\n"
+wait 2500
+expect line 1 == "Xchanged"
+expect dirty == 1
+
+# an idle rad (blocked waiting for input) is woken by the change: it sleeps
+# until the write 1 s later, then shows the new text
+key ctrl+z
+wait_idle
+expect dirty == 0
+write_file_later 1000 ../fixtures/edit.txt "woken\n"
+sleep_until_woken
+expect last_sleep_ms >= 800
+wait 2000
+expect line 1 == "woken"

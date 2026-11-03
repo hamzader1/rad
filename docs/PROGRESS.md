@@ -129,7 +129,14 @@ Milestone 6 details (each item with its script):
   (folder -> Open Folder, files -> Open File). Script runs use no user file
   unless `#! args: --user:...` is the script's first line. Not saved:
   cursor/scroll positions (view state, not cfg).
-- [ ] File watching instead of polling
+- [x] File watching (script `file_watch`, 12 checks). `base`: new
+  `file_watch_alloc/check/release` (win32: FindFirstChangeNotification;
+  linux: NOT implemented, reports a change every check = polling). rad: a
+  watcher thread (every 100 ms) checks the explorer's folder watch and
+  file_stream's change gen, and wakes the UI (`wm_send_wakeup_event`). The
+  explorer re-lists only when its folder changed (was: every second, on
+  the UI thread). Checked: an idle rad (blocked on input) wakes and shows
+  a file written 1 s later (`sleep_until_woken`).
 - [ ] Audit of the port against raddbg's per-frame steps
 
 ## Next steps
@@ -156,10 +163,11 @@ Milestone 6 details (each item with its script):
 - No tab drag/drop between panels (raddbg's was not ported). If it is
   ported, it must keep tabs out of the explorer's panel and the explorer
   in it.
-- The explorer re-lists expanded folders from disk once a second, on the
-  UI thread (no file watching); very large expanded trees are capped at
-  100,000 rows. Fine for inkdb (whole `target/` = 2,171 entries); huge
-  expanded trees would stutter once a second. Fix later: file watching.
+- The explorer re-lists all expanded folders on the UI thread when its
+  folder watch fires (any change below the root, e.g. a build writing to
+  `target/`); trees are capped at 100,000 rows.
+- Open files are still checked by file_stream's timestamp poll (async
+  threads, about once a second), not by OS notifications.
 - Settings are hardcoded raddbg defaults (`rad_default_settings`). Window
   position and panel layout are not saved between runs.
 - Tab inserts 4 spaces. No smart indent after `{`.
@@ -232,6 +240,12 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (file watching)
+- Folder watches in `base`, watcher thread in rad, explorer refresh on
+  change, idle wake-up. Script commands `write_file`, `delete_file`,
+  `write_file_later`, `sleep_until_woken`. 11 scripts pass; raddbg and
+  rad_tests still build.
 
 ### 2026-11-03 (session memory)
 - User file load/save + window state commit; runner supports `#! args:`.

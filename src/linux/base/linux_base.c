@@ -1527,6 +1527,27 @@ make_directory(String8 path)
   return result;
 }
 
+//- rad: folder change watches. TODO(rad): inotify; until then every check
+// reports a change, so callers fall back to polling.
+
+internal FileWatch
+file_watch_alloc(String8 folder_path, B32 recursive)
+{
+  FileWatch result = {0};
+  return result;
+}
+
+internal void
+file_watch_release(FileWatch watch)
+{
+}
+
+internal B32
+file_watch_check(FileWatch watch)
+{
+  return 1;
+}
+
 ////////////////////////////////
 //~ rjf: @per_os_impl Aborting
 

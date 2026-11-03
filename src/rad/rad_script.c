@@ -460,6 +460,11 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     value = push_str8f(arena, "%I64u", count);
   }
 
+  else if(str8_match(name, str8_lit("last_sleep_ms"), 0))
+  {
+    value = push_str8f(arena, "%I64u", rad_script->last_sleep_us/1000);
+  }
+
   //- rad: time since the script started
   else if(str8_match(name, str8_lit("elapsed_ms"), 0))
   {
@@ -868,6 +873,44 @@ rad_script_run_line(RAD_ScriptLine *line)
     }
   }
 
+  //- rad: changing files on disk (as another program would)
+  else if(str8_match(cmd, str8_lit("write_file"), 0))
+  {
+    if(args_count < 2 || !write_data_to_file_path(rad_script_path(scratch.arena, args[0]), args[1]))
+    {
+      error = str8_lit("write_file: needs <path> \"<content>\" (or the write failed)");
+    }
+  }
+  else if(str8_match(cmd, str8_lit("delete_file"), 0))
+  {
+    if(args_count < 1 || !delete_file_at_path(rad_script_path(scratch.arena, args[0])))
+    {
+      error = str8_lit("delete_file: needs <path> (or the delete failed)");
+    }
+  }
+
+  else if(str8_match(cmd, str8_lit("write_file_later"), 0))
+  {
+    U64 ms = 0;
+    if(args_count < 3 || !try_u64_from_str8_c_rules(args[0], &ms))
+    {
+      error = str8_lit("write_file_later: needs <ms> <path> \"<content>\"");
+    }
+    else
+    {
+      RAD_ScriptDelayedWrite *w = push_array(rad_script->arena, RAD_ScriptDelayedWrite, 1);
+      w->delay_ms = ms;
+      w->path = rad_script_path(rad_script->arena, args[1]);
+      w->data = push_str8_copy(rad_script->arena, args[2]);
+      thread_launch(rad_script_delayed_write_entry_point, w);
+    }
+  }
+  else if(str8_match(cmd, str8_lit("sleep_until_woken"), 0))
+  {
+    rad_script->wait_kind = RAD_ScriptWaitKind_Woken;
+    rad_script->sleep_begin_us = now_time_us();
+  }
+
   //- rad: waiting
   else if(str8_match(cmd, str8_lit("wait"), 0))
   {
@@ -1060,6 +1103,20 @@ rad_script_init(CmdLine *cmdln)
   }
 }
 
+internal void
+rad_script_delayed_write_entry_point(void *p)
+{
+  RAD_ScriptDelayedWrite *w = (RAD_ScriptDelayedWrite *)p;
+  sleep_ms((U32)w->delay_ms);
+  write_data_to_file_path(w->path, w->data);
+}
+
+internal B32
+rad_script_lets_rad_sleep(void)
+{
+  return (rad_script != 0 && !rad_script->done && rad_script->wait_kind == RAD_ScriptWaitKind_Woken);
+}
+
 internal B32
 rad_script_is_active(void)
 {
@@ -1114,6 +1171,11 @@ rad_script_tick(void)
     {
       rad_script->wait_frames_left -= 1;
       return;
+    }break;
+    case RAD_ScriptWaitKind_Woken:
+    {
+      // rad: any frame after the sleep began means rad was woken
+      rad_script->last_sleep_us = now_us - rad_script->sleep_begin_us;
     }break;
     case RAD_ScriptWaitKind_Idle:
     if(rad_state->num_frames_requested != 0)

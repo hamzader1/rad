@@ -1554,6 +1554,52 @@ make_directory(String8 path)
   return(result);
 }
 
+//- rad: folder change watches (FindFirstChangeNotification handles)
+
+internal FileWatch
+file_watch_alloc(String8 folder_path, B32 recursive)
+{
+  FileWatch result = {0};
+  Temp scratch = scratch_begin(0, 0);
+  String16 path16 = str16_from_8(scratch.arena, folder_path);
+  HANDLE handle = FindFirstChangeNotificationW((WCHAR *)path16.str, !!recursive,
+                                               FILE_NOTIFY_CHANGE_FILE_NAME|
+                                               FILE_NOTIFY_CHANGE_DIR_NAME|
+                                               FILE_NOTIFY_CHANGE_SIZE|
+                                               FILE_NOTIFY_CHANGE_LAST_WRITE);
+  if(handle != INVALID_HANDLE_VALUE && handle != 0)
+  {
+    result.u64[0] = (U64)handle;
+  }
+  scratch_end(scratch);
+  return result;
+}
+
+internal void
+file_watch_release(FileWatch watch)
+{
+  if(watch.u64[0] != 0)
+  {
+    FindCloseChangeNotification((HANDLE)watch.u64[0]);
+  }
+}
+
+internal B32
+file_watch_check(FileWatch watch)
+{
+  B32 result = 1;
+  if(watch.u64[0] != 0)
+  {
+    HANDLE handle = (HANDLE)watch.u64[0];
+    result = (WaitForSingleObject(handle, 0) == WAIT_OBJECT_0);
+    if(result)
+    {
+      FindNextChangeNotification(handle);
+    }
+  }
+  return result;
+}
+
 ////////////////////////////////
 //~ rjf: @per_os_impl Aborting
 
