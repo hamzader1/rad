@@ -272,6 +272,20 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   {
     value = push_str8f(arena, "%I64u", tree.focused->tabs.count);
   }
+  else if(str8_match(name, str8_lit("panel_count"), 0) || str8_match(name, str8_lit("explorer_panel_tabs"), 0))
+  {
+    U64 leaf_count = 0;
+    U64 explorer_panel_tabs = 0;
+    for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+    {
+      leaf_count += (p->first == &cfg_nil_panel_node);
+      if(rad_explorer_tab_from_panel(p->cfg) != &cfg_nil_node)
+      {
+        explorer_panel_tabs = p->tabs.count;
+      }
+    }
+    value = push_str8f(arena, "%I64u", str8_match(name, str8_lit("panel_count"), 0) ? leaf_count : explorer_panel_tabs);
+  }
 
   //- rad: editor
   else if(str8_match(name, str8_lit("cursor_line"), 0) || str8_match(name, str8_lit("cursor_col"), 0) ||

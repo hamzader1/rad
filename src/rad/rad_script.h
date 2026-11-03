@@ -66,6 +66,8 @@
 //   panel                       focused panel's selected tab kind ("text", "explorer", ...)
 //   tab                         its name (file name, folder name, or kind)
 //   tab_count                   number of tabs in the focused panel
+//   panel_count                 number of leaf panels in the window
+//   explorer_panel_tabs         number of tabs in the explorer's panel
 //   cursor_line cursor_col mark_line mark_col     editor cursor/mark (1-based)
 //   visible_first visible_last  editor's visible line range
 //   line_count                  editor's line count

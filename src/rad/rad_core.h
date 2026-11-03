@@ -256,6 +256,8 @@ internal FNT_RasterFlags rad_raster_flags_from_slot(RAD_FontSlot slot);
 internal CFG_Node *rad_window_cfg_from_cfg(CFG_Node *cfg);
 internal void rad_focus_panel(CFG_Node *panel);
 internal void rad_focus_tab(CFG_Node *tab);
+internal CFG_Node *rad_explorer_tab_from_panel(CFG_Node *panel);
+internal CFG_Node *rad_panel_alloc_at_window_edge(CFG_Node *window, Side side, F32 pct);
 internal String8 rad_file_path_from_tab(CFG_Node *tab);
 internal DR_FStrList rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab);
 

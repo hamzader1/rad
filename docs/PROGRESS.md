@@ -15,9 +15,9 @@ optimized build in `build\release\rad.exe` at the end of every milestone.
 | 1. Build and read                    | Done. `build rad` works; notes in `docs/notes/`; option B chosen. |
 | 2. Editor view without a debugger    | Done. |
 | 3. Editable text core                | Mostly done, see below (rest folds into 6). |
-| 4. File explorer                     | Done (keyboard, mouse, Open Folder checked). "+" in its panel = Open Folder. |
+| 4. File explorer                     | Done (keyboard, mouse, Open Folder checked). Special panel: "+" = Open Folder, tab not closable, no other tabs in its panel; width adjustable. |
 | 5. Test and measure                  | Done. `tests\run_scripts.ps1`: 4 scripts, 60 checks, all pass (debug and release). |
-| 6. Editor essentials                 | Not started. |
+| 6. Editor essentials                 | In progress. |
 | 7. Rust syntax highlighting          | Not started. |
 | 8. Cargo integration                 | Not started. |
 | 9. LSP client                        | Not started. |
@@ -99,10 +99,8 @@ Milestone 5 details:
 1. Milestone 6, editor essentials: one buffer per file, Find (Ctrl+F) and
    Go to Line ported from raddbg, session memory, Save All, file watching,
    audit of the port against raddbg's per-frame steps. Each with a script.
-2. Open questions for the user: explorer as a "special panel" beyond "+"
-   (tab not closable? fixed-width sidebar? other tabs kept out of it?);
-   what exactly feels slow (typing delay, scrolling, opening, startup).
-   Measured: 1 frame from input to screen, see milestone 5.
+2. Speed: the user will come back to what feels slow (2026-11-03: "ignore,
+   we will come back later"). Measured so far: 1 frame from input to screen.
 3. Milestone 7 (Rust lexer in `text`, C lexer style, `.rs`).
 4. For milestone 11 (Mac, at the end), already known: `base_core.h:276-277`
    and `base_core.c:667` need ARM64 guards; drop `-mcx16` on ARM64.
@@ -120,8 +118,9 @@ Milestone 5 details:
 - Undo history grows without limit while a file is open.
 - Open File uses the native dialog (`sh_pick_file`), not raddbg's lister.
   Open Folder likewise (`sh_pick_folder`).
-- Closing the explorer panel and then using Open Folder puts a new explorer
-  tab in the focused panel; it does not rebuild the 20/80 layout.
+- No tab drag/drop between panels (raddbg's was not ported). If it is
+  ported, it must keep tabs out of the explorer's panel and the explorer
+  in it.
 - The explorer re-lists expanded folders from disk once a second, on the
   UI thread (no file watching); very large expanded trees are capped at
   100,000 rows. Fine for inkdb (whole `target/` = 2,171 entries); huge
@@ -160,10 +159,14 @@ Milestone 5 details:
   (language at the top of `src/rad/rad_script.h`).
 - If `build\rad.exe` is open, linking it fails (LNK1104); build the same cl
   line to another exe name and pass it with `-Exe`.
+- Screenshots: `tests\screenshot.ps1 -Script <file> -Out <png>` runs a
+  script (ending in `wait <ms>` + `quit`) and captures the window with
+  `PrintWindow` after `-AfterMs`, without focus. Works because rad renders
+  every frame while a script runs. Use it for side-by-side UI checks.
 - Old way, avoid: driving the real window with `PostMessage`/`keybd_event`
   needs the foreground, interrupts the user, and their keystrokes then land
-  in rad (happened once). `PrintWindow` on a background rad window can
-  block for a minute or return blank pixels.
+  in rad (happened once). `PrintWindow` on an idle background rad window
+  (not scripted) can block for a minute or return blank pixels.
 
 ## Code map (`src/rad/`)
 
@@ -185,7 +188,7 @@ Milestone 5 details:
   queue (one step per frame), state fields, targets from the last frame's
   layout (`layout_*` fields in the code view and explorer states), timing.
 - `tests/rad_tests.c`: console tests on base/content/text/text_buffer.
-- Repo root `tests/` (not `src/rad/tests/`): `run_scripts.ps1`,
+- Repo root `tests/` (not `src/rad/tests/`): `run_scripts.ps1`, `screenshot.ps1`,
   `scripts/*.radtest`, `fixtures/` (stored byte-exact: `-text` in
   `.gitattributes`): app-level UI tests.
 
@@ -193,6 +196,19 @@ Milestone 5 details:
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (explorer: special panel)
+- User decision: the explorer's tab cannot be closed; no other tabs in its
+  panel; its width stays adjustable (no fixed-width sidebar).
+- Close Tab (button not built for it, Ctrl+W, middle-click, tab menu) and
+  Close Panel do nothing to it. Open File aimed at its panel (focused,
+  file drop, explorer Enter) goes to the editor panel; with no editor panel
+  left, a new one is made on the right (80%). Open Folder with no explorer
+  (only possible from an edited layout) makes a 20% panel on the left
+  (`rad_panel_alloc_at_window_edge`). Splitting its panel is allowed: the
+  new panel is a normal one.
+- Script `explorer_panel` (28 checks) passes; screenshot checked: the
+  explorer tab has no close button, the other tabs are unchanged.
 
 ### 2026-11-03 (milestone 5: test and measure)
 - Script mode + simulated input in `window_manager` + runner, 4 scripts,

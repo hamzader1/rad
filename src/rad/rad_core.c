@@ -203,6 +203,70 @@ rad_focus_tab(CFG_Node *tab)
   scratch_end(scratch);
 }
 
+internal CFG_Node *
+rad_explorer_tab_from_panel(CFG_Node *panel)
+{
+  // NOTE(rad): the explorer is the only tab of its panel: it cannot be
+  // closed, and nothing else is opened into its panel.
+  CFG_Node *result = &cfg_nil_node;
+  for(CFG_Node *child = panel->first; child != &cfg_nil_node; child = child->next)
+  {
+    if(str8_match(child->string, str8_lit("explorer"), 0))
+    {
+      result = child;
+      break;
+    }
+  }
+  return result;
+}
+
+internal CFG_Node *
+rad_panel_alloc_at_window_edge(CFG_Node *window, Side side, F32 pct)
+{
+  // NOTE(rad): new full-height panel at the window's left (Side_Min) or right
+  // (Side_Max) edge, `pct` of the window's width; the other panels keep their
+  // layout in the rest.
+  Temp scratch = scratch_begin(0, 0);
+  CFG_PanelTree panel_tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+  CFG_PanelNode *root = panel_tree.root;
+  CFG_Node *panel = cfg_node_alloc(rad_state->cfg);
+  cfg_node_equip_stringf(rad_state->cfg, panel, "%f", pct);
+
+  // rad: no panels -> new root
+  if(root == &cfg_nil_panel_node)
+  {
+    cfg_node_equip_string(rad_state->cfg, panel, str8_lit("panels"));
+    cfg_node_insert_child(rad_state->cfg, window, window->last, panel);
+  }
+
+  // rad: root already split left/right -> new first/last child, others shrink
+  else if(root->first != &cfg_nil_panel_node && root->split_axis == Axis2_X)
+  {
+    for(CFG_PanelNode *child = root->first; child != &cfg_nil_panel_node; child = child->next)
+    {
+      cfg_node_equip_stringf(rad_state->cfg, child->cfg, "%f", child->pct_of_parent*(1.f-pct));
+    }
+    CFG_Node *prev = (side == Side_Min ? &cfg_nil_node : root->last->cfg);
+    cfg_node_insert_child(rad_state->cfg, root->cfg, prev, panel);
+  }
+
+  // rad: root is one panel, or split top/bottom -> new left/right root above it
+  else
+  {
+    CFG_Node *old_root = root->cfg;
+    CFG_Node *new_root = cfg_node_alloc(rad_state->cfg);
+    cfg_node_unhook(rad_state->cfg, window, old_root);
+    cfg_node_equip_stringf(rad_state->cfg, old_root, "%f", 1.f-pct);
+    cfg_node_equip_string(rad_state->cfg, new_root, str8_lit("panels"));
+    cfg_node_insert_child(rad_state->cfg, new_root, new_root->last, side == Side_Min ? panel : old_root);
+    cfg_node_insert_child(rad_state->cfg, new_root, new_root->last, side == Side_Min ? old_root : panel);
+    cfg_node_insert_child(rad_state->cfg, window, window->last, new_root);
+    cfg_node_child_from_string_or_alloc(rad_state->cfg, window, str8_lit("split_x"));
+  }
+  scratch_end(scratch);
+  return panel;
+}
+
 internal String8
 rad_file_path_from_tab(CFG_Node *tab)
 {
@@ -1412,7 +1476,8 @@ rad_window_frame(RAD_Window *ws)
               UI_TagF(tab != panel->selected_tab ? "inactive" : "")
               {
                 DR_FStrList tab_title_fstrs = rad_title_fstrs_from_tab(scratch.arena, tab);
-                F32 tab_width_target = dr_dim_from_fstrs(ui_top_tab_size(), &tab_title_fstrs).x + tab_close_width_px + ui_top_font_size()*1.f;
+                B32 tab_is_closable = !str8_match(tab->string, str8_lit("explorer"), 0);
+                F32 tab_width_target = dr_dim_from_fstrs(ui_top_tab_size(), &tab_title_fstrs).x + tab_is_closable*tab_close_width_px + ui_top_font_size()*1.f;
                 B32 tab_is_selected = (tab == panel->selected_tab);
                 if(tab_is_selected && panel_tree.focused == panel)
                 {
@@ -1513,7 +1578,8 @@ rad_window_frame(RAD_Window *ws)
                         ui_box_equip_display_fstrs(name_box, &tab_fstrs);
                       }
                     }
-                    UI_PrefWidth(ui_px(tab_close_width_px, 1.f))
+                    if(!str8_match(tab->string, str8_lit("explorer"), 0))
+                      UI_PrefWidth(ui_px(tab_close_width_px, 1.f))
                       UI_TextAlignment(UI_TextAlign_Center)
                       RAD_Font(RAD_FontSlot_Icons)
                       UI_FontSize(ui_top_font_size()*0.75f)
@@ -2158,14 +2224,15 @@ rad_exec_cmd(RAD_Cmd *cmd)
         file_path = sh_pick_file(scratch.arena, str8_lit("Open File"), str8_zero());
       }
 
-      // rad: no explicit panel & focused panel shows an explorer -> open in
-      // the editor panel instead
-      if(cmd->params.panel == 0)
+      // rad: never into the explorer's panel (focused, dropped on, or passed):
+      // into the editor panel instead; none left -> a new one on the right
+      CFG_Node *explorer_tab = rad_explorer_tab_from_panel(panel_cfg);
+      if(file_path.size != 0 && explorer_tab != &cfg_nil_node)
       {
-        CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, panel_cfg);
-        if(str8_match(panel->selected_tab->string, str8_lit("explorer"), 0))
+        panel_cfg = rad_explorer_target_panel_from_tab(explorer_tab);
+        if(panel_cfg == explorer_tab->parent)
         {
-          panel_cfg = rad_explorer_target_panel_from_tab(panel->selected_tab);
+          panel_cfg = rad_panel_alloc_at_window_edge(rad_window_cfg_from_cfg(explorer_tab), Side_Max, 0.8f);
         }
       }
 
@@ -2226,14 +2293,15 @@ rad_exec_cmd(RAD_Cmd *cmd)
         folder = sh_pick_folder(scratch.arena, str8_lit("Open Folder"), rad_explorer_folder_from_tab(explorer_tab));
       }
 
-      // rad: point the explorer at it (no explorer left -> new explorer tab
-      // in the focused panel), focus it
-      if(folder.size != 0 && panel_cfg != &cfg_nil_node)
+      // rad: point the explorer at it (no explorer -> new explorer panel on
+      // the left, the explorer as its only tab), focus it
+      if(folder.size != 0 && window != &cfg_nil_node)
       {
         folder = path_normalized_from_string(scratch.arena, folder);
         if(explorer_tab == &cfg_nil_node)
         {
-          explorer_tab = cfg_node_new(rad_state->cfg, panel_cfg, str8_lit("explorer"));
+          CFG_Node *explorer_panel = rad_panel_alloc_at_window_edge(window, Side_Min, 0.2f);
+          explorer_tab = cfg_node_new(rad_state->cfg, explorer_panel, str8_lit("explorer"));
         }
         rad_explorer_set_folder(explorer_tab, folder);
         rad_focus_tab(explorer_tab);
@@ -2432,10 +2500,11 @@ rad_exec_cmd(RAD_Cmd *cmd)
     //- rad: panel removal
     case RAD_CmdKind_ClosePanel:
     {
-      // NOTE(rad): port of raddbg's RD_CmdKind_ClosePanel
+      // NOTE(rad): port of raddbg's RD_CmdKind_ClosePanel; the explorer's
+      // panel stays (closing it would close the explorer)
       CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, panel_cfg);
       CFG_PanelNode *parent = panel->parent;
-      if(parent != &cfg_nil_panel_node)
+      if(parent != &cfg_nil_panel_node && rad_explorer_tab_from_panel(panel_cfg) == &cfg_nil_node)
       {
         // rad: if we're removing all but the last child of this parent, we should just remove both children.
         if(parent->child_count == 2)
@@ -2601,7 +2670,11 @@ rad_exec_cmd(RAD_Cmd *cmd)
       }
     }break;
     case RAD_CmdKind_CloseTab:
-    if(tab_cfg != &cfg_nil_node && rad_tab_is_dirty(tab_cfg) &&
+    if(str8_match(tab_cfg->string, str8_lit("explorer"), 0))
+    {
+      // rad: the explorer cannot be closed
+    }
+    else if(tab_cfg != &cfg_nil_node && rad_tab_is_dirty(tab_cfg) &&
        !(rad_state->discard_confirm_cfg_id == tab_cfg->id && now_time_us() < rad_state->discard_confirm_deadline_us))
     {
       // rad: unsaved changes -> require a second close within a few seconds

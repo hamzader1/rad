@@ -1,0 +1,68 @@
+# The explorer is a special panel: its tab cannot be closed, and no other
+# tab goes into its panel. (Its width can still be changed.)
+
+open_folder ../fixtures/project
+wait_idle
+expect panel == "explorer"
+expect panel_count == 2
+expect explorer_panel_tabs == 1
+
+# Close Tab (command and Ctrl+W) and Close Panel do nothing to it
+cmd close_tab
+wait_idle
+expect panel == "explorer"
+expect explorer_panel_tabs == 1
+key ctrl+w
+wait_idle
+expect explorer_panel_tabs == 1
+cmd close_panel
+wait_idle
+expect panel == "explorer"
+expect panel_count == 2
+
+# Open File while the explorer is focused: into the editor panel
+open ../fixtures/edit.txt
+wait_idle
+expect panel == "text"
+expect tab == "edit.txt"
+expect explorer_panel_tabs == 1
+
+# split the explorer's panel: files go into the new panel, not the explorer's
+key ctrl+comma
+expect panel == "explorer"
+cmd new_panel_right
+wait_idle
+expect panel_count == 3
+open ../fixtures/lines_3000.txt
+wait_idle
+expect tab == "lines_3000.txt"
+expect tab_count == 1
+expect explorer_panel_tabs == 1
+cmd close_panel
+wait_idle
+expect panel_count == 2
+
+# close the editor panel: the explorer is left alone; opening a file
+# makes a new editor panel on the right
+key ctrl+comma
+expect panel == "text"
+cmd close_panel
+wait_idle
+expect panel_count == 1
+expect panel == "explorer"
+open ../fixtures/edit.txt
+wait_idle
+expect panel_count == 2
+expect panel == "text"
+expect tab == "edit.txt"
+expect explorer_panel_tabs == 1
+
+# Enter on a file in the explorer opens it there too
+key ctrl+comma
+expect panel == "explorer"
+click explorer Cargo.toml
+key return
+wait_idle
+expect panel == "text"
+expect tab == "Cargo.toml"
+expect explorer_panel_tabs == 1
