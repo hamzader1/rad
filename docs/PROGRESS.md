@@ -17,7 +17,7 @@ optimized build in `build\release\rad.exe` at the end of every milestone.
 | 3. Editable text core                | Mostly done, see below (rest folds into 6). |
 | 4. File explorer                     | Done (keyboard, mouse, Open Folder checked). Special panel: "+" = Open Folder, tab not closable, no other tabs in its panel; width adjustable. |
 | 5. Test and measure                  | Done. `tests\run_scripts.ps1`: 4 scripts, 60 checks, all pass (debug and release). |
-| 6. Editor essentials                 | Done. 13 scripts, 210 checks, all pass (debug and release, `buildeleasead.exe` 2026-11-03). |
+| 6. Editor essentials                 | Done. 13 scripts, 210 checks, all pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 7. Rust syntax highlighting          | Not started. |
 | 8. Cargo integration                 | Not started. |
 | 9. LSP client                        | Not started. |
@@ -269,14 +269,14 @@ of `text_buffer.h`.
 ## Journal
 
 ### 2026-11-03 (milestone 6 done)
-- Release build in `buildeleasead.exe`; all 13 scripts pass on it
+- Release build in `build\release\rad.exe`; all 13 scripts pass on it
   (typing/wheel: UI build ~2 ms, every input in the next frame).
 
 ### 2026-11-03 (audit done: loading overlay)
 - Ported raddbg's loading overlay. file_watch: an early wake (557 ms
   instead of ~1000) came once in 6 runs from a late reload of the earlier
   write; the script now lets it settle and checks the reload. 13 scripts
-  pass (on a test copy: `buildad.exe` was open).
+  pass (on a test copy: `build\rad.exe` was open).
 
 ### 2026-11-03 (audit, panel zoom)
 - Ported raddbg's panel zoom; checked by screenshot (zoomed panel fills
@@ -295,7 +295,7 @@ of `text_buffer.h`.
 
 ### 2026-11-03 (session memory)
 - User file load/save + window state commit; runner supports `#! args:`.
-  10 scripts, 173 checks pass (on a test copy: `buildad.exe` was open).
+  10 scripts, 173 checks pass (on a test copy: `build\rad.exe` was open).
 
 ### 2026-11-03 (Go to Line, Find)
 - Ported raddbg's query bar, search/goto commands and line editing; see
