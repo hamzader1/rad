@@ -30,7 +30,7 @@ optimized build in `build\release\rad.exe` at the end of every milestone.
 | 4. File explorer                     | Done (keyboard, mouse, Open Folder checked). Special panel: "+" = Open Folder, tab not closable, no other tabs in its panel; width adjustable. |
 | 5. Test and measure                  | Done. `tests\run_scripts.ps1`: 4 scripts, 60 checks, all pass (debug and release). |
 | 6. Editor essentials                 | Done. 13 scripts, 210 checks, all pass (debug and release, `build\release\rad.exe` 2026-11-03). |
-| 7. Rust syntax highlighting          | Not started. |
+| 7. Rust syntax highlighting          | Done. Rust lexing in the `text` layer (see below, `docs/notes/04-syntax-highlighting.md`); 14 scripts, 242 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 8. Cargo integration                 | Not started. |
 | 9. LSP client                        | Not started. |
 | 10. Remove debugger, rebrand         | Not started. |
@@ -106,6 +106,31 @@ Milestone 5 details:
   is the vsync wait. "Input latency" is app-side only (the OS and the
   compositor add more, not measured).
 
+Milestone 7 details:
+- `text` layer: Rust big tokens (strings incl. raw/byte/C strings, chars vs
+  lifetimes, nested block comments, attributes) decided by one pair of
+  helpers, used by the whole-file token pt scan, the re-lex after edits and
+  the visible-range tokenizer (`txt_token_array_from_data__rust`).
+  `TXT_TokenPt` gained `aux` (raw-string hashes etc.), `TXT_TextInfo` gained
+  `lang`. Primitive types added to the Rust keyword table.
+- Colors (raddbg theme slots, nothing new): lifetimes/labels = keyword,
+  attributes = meta, strings/chars = string. Screenshot checked
+  (`tests/fixtures/syntax.rs`). Not compared with raddbg.exe (raddbg colors
+  Rust with the C rules, so it differs on purpose for lifetimes etc.).
+- Fixed in the shared edit path (C too), found by the new tests: point
+  lookups between map ranges returned "no token" (text after an edit inside a
+  multi-line comment/string lost its color); edits across several points
+  gave two ranges the same numbers; text inserted right before an opener
+  dropped that token's start. The range selection is rewritten (see the note).
+- Tests: `rad_tests` (37,593,641 checks: Rust token kinds; per-line resume
+  equals whole-text lexing before/after hand-written and 20x50 random
+  edits); script `rust_syntax` (32 checks, field `token <line> <col>`).
+- Not done: macro names (`println!`) and function names are plain
+  identifiers (raddbg colors functions from debug info; LSP semantic tokens
+  can do it in milestone 9). Resuming inside a nested comment level > 1 or
+  inside nested attribute brackets assumes depth 1. While a token is left
+  open by an edit, colors after it are approximate until the buffer compacts.
+
 Milestone 6 details (each item with its script):
 - [x] One document per file (`RAD_Document`, script `shared_document`).
   Tabs on the same file share text, undo, dirty, save; each keeps its own
@@ -178,7 +203,9 @@ Milestone 6 details (each item with its script):
 
 ## Next steps
 
-1. Milestone 7 (Rust lexer in `text`, C lexer style, `.rs`).
+1. Milestone 8 (Cargo integration: build/run/test, output panel,
+   `cargo check --message-format=json` diagnostics in the editor, clickable
+   locations; builds the process-with-pipes + JSON plumbing for LSP).
 2. Speed: the user will come back to what feels slow (2026-11-03: "ignore,
    we will come back later"). Measured so far: 1 frame from input to
    screen (release: UI build ~2 ms/frame, input shows in the next frame).
@@ -286,6 +313,14 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (milestone 7: Rust syntax highlighting)
+- The visible-range tokenizer, the whole-file pt scan and the edit re-lex
+  all had C rules (Rust's `'a` turned the rest of a file into a char
+  literal). Rust versions share one pair of helpers. The new resume tests
+  found three bugs in the shared edit path; fixed (see milestone 7
+  details). Release build: all 14 scripts pass. Design:
+  `docs/notes/04-syntax-highlighting.md`.
 
 ### 2026-11-03 (handoff)
 - Build helpers moved from the session scratchpad into `tests/`

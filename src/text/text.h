@@ -72,6 +72,7 @@ struct TXT_TokenPt
 {
   TXT_TokenKind kind;
   U64 off;
+  U64 aux; // rad: per-language token state (Rust: see txt_rust_big_token_from_off); 0 for C/C++
 };
 
 typedef struct TXT_TokenChunkNode TXT_TokenChunkNode;
@@ -166,6 +167,7 @@ struct TXT_TextInfo
   TXT_ScopeNodeArray scope_nodes;
   U64 bytes_processed;
   U64 bytes_to_process;
+  U32 lang; // rad: TXT_LangKind the info was built for (the enum is generated below)
 };
 
 typedef struct TXT_LineTokensSlice TXT_LineTokensSlice;
@@ -301,6 +303,22 @@ internal TXT_TokenArray txt_token_array_from_string__jai(Arena *arena, U64 *byte
 internal TXT_TokenArray txt_token_array_from_string__zig(Arena *arena, U64 *bytes_processed_counter, String8 string);
 internal TXT_TokenArray txt_token_array_from_string__rust(Arena *arena, U64 *bytes_processed_counter, String8 string);
 internal TXT_TokenArray txt_token_array_from_string__disasm_x64_intel(Arena *arena, U64 *bytes_processed_counter, String8 string);
+
+////////////////////////////////
+//~ rad: Rust Lexing
+//
+// Rust's strings, chars, comments and attributes may span lines ("big
+// tokens"). One set of helpers finds them, shared by the whole-file token pt
+// scan, the re-lex after edits and the visible-range tokenizer, so all three
+// agree. C rules do not fit Rust: `'` also starts lifetimes ('a, 'static),
+// `#` starts attributes (#[...], #![...]) and raw strings (r#"..."#), block
+// comments nest.
+
+internal B32 txt_rust_byte_is_ident(U8 byte);
+internal B32 txt_rust_quote_is_char(String8 data, U64 off);
+internal TXT_TokenPt txt_rust_big_token_from_off(String8 data, U64 off, U64 *starter_size_out);
+internal U64 txt_rust_big_token_advance(String8 data, U64 off, TXT_TokenPt *pt, B32 *ended_out);
+internal TXT_TokenArray txt_token_array_from_data__rust(Arena *arena, TXT_TokenPt ctx_token_pt, String8 data, U64 base_off);
 
 ////////////////////////////////
 //~ rjf: Text Info Extractor Helpers

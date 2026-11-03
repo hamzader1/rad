@@ -34,7 +34,7 @@ extern String8 txt_keywords__cpp[97];
 extern String8 txt_keywords__odin[40];
 extern String8 txt_keywords__jai[39];
 extern String8 txt_keywords__zig[49];
-extern String8 txt_keywords__rust[43];
+extern String8 txt_keywords__rust[60];
 
 C_LINKAGE_END
 

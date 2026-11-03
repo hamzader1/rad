@@ -733,6 +733,337 @@ test_buffer_large(void)
 }
 
 ////////////////////////////////
+//~ rad: Rust Lexing Tests
+//
+// 1. Token kinds: the visible-range tokenizer on a source with every tricky
+//    construct (lifetimes vs chars, raw strings, nested comments, multi-line
+//    attributes, numbers).
+// 2. Resume: the code view tokenizes from the first visible line, starting
+//    from the token pt before it (strings/comments/attributes spanning
+//    lines). Tokenizing any line that way must give the same kinds as
+//    tokenizing the whole text, with the real whole-file token pts and with
+//    the pts re-lexed after edits.
+
+global char *test_rust_source =
+"#![allow(dead_code)]\n"
+"//! crate doc\n"
+"use std::fmt;\n"
+"\n"
+"/// doc comment with 'quote and \"quote\n"
+"#[derive(Debug, Clone)]\n"
+"struct Holder<'a, T: 'static> {\n"
+"    name: &'a str,\n"
+"    raw: &'static str,\n"
+"    value: T,\n"
+"}\n"
+"\n"
+"#[cfg(all(\n"
+"    feature = \"x\",\n"
+"    not(test)\n"
+"))]\n"
+"fn multi() {}\n"
+"\n"
+"fn main() {\n"
+"    let c = 'x';\n"
+"    let e = '\\n';\n"
+"    let q = '\\'';\n"
+"    let u = '\\u{1F600}';\n"
+"    let b = b'a';\n"
+"    let s = \"tab\\t \\\"quoted\\\" \\\\\";\n"
+"    let r = r\"C:\\path\\\";\n"
+"    let r2 = r#\"has \"quotes\" inside\"#;\n"
+"    let r3 = br##\"a \"# b\"##;\n"
+"    let ml = \"first line\n"
+"second line\";\n"
+"    let raw_ml = r#\"line one \"\n"
+"line two \"#;\n"
+"    /* outer /* inner */ still outer */\n"
+"    /* block\n"
+"       comment */\n"
+"    let n = 1_000_000u64 + 0xff_u8 as u64 + 2.5e10 as u64;\n"
+"    for i in 0..10 { let _ = i; }\n"
+"    'outer: loop { break 'outer; }\n"
+"    let r#type = 1;\n"
+"    println!(\"{}\", r#type);\n"
+"}\n";
+
+global char *test_token_kind_names[] =
+{
+  "Null", "Error", "Whitespace", "Keyword", "Identifier", "Numeric",
+  "String", "Char", "Symbol", "LineComment", "BlockComment", "Meta",
+};
+
+typedef struct TestTokenExpect TestTokenExpect;
+struct TestTokenExpect
+{
+  char *needle; // "<prefix>|<target>": target is the token, right after prefix
+  TXT_TokenKind kind;
+};
+
+internal void
+test_rust_tokens(void)
+{
+  Temp scratch = scratch_begin(0, 0);
+  String8 src = str8_cstring(test_rust_source);
+  TXT_TokenPt null_pt = {0};
+  TXT_TokenArray tokens = txt_token_array_from_data(scratch.arena, TXT_LangKind_Rust, null_pt, src, 0, max_U64);
+
+  //- rad: tokens tile the source; no error tokens
+  {
+    U64 next_off = 0;
+    B32 tiles = 1;
+    U64 error_count = 0;
+    for EachIndex(idx, tokens.count)
+    {
+      tiles = (tiles && tokens.v[idx].range.min == next_off);
+      next_off = tokens.v[idx].range.max;
+      error_count += (tokens.v[idx].kind == TXT_TokenKind_Error);
+    }
+    test_checks += 1;
+    if(!tiles || next_off != src.size || error_count != 0)
+    {
+      printf("FAIL rust_tokens: tiles %i, end %I64u of %I64u, %I64u error tokens\n", tiles, next_off, src.size, error_count);
+      test_failures += 1;
+    }
+  }
+
+  //- rad: expected tokens
+  TestTokenExpect expects[] =
+  {
+    {"|#![allow(dead_code)]",                       TXT_TokenKind_Meta},
+    {"|//! crate doc\n",                            TXT_TokenKind_LineComment},
+    {"|/// doc comment with 'quote and \"quote\n",  TXT_TokenKind_LineComment},
+    {"|#[derive(Debug, Clone)]",                    TXT_TokenKind_Meta},
+    {"|struct",                                     TXT_TokenKind_Keyword},
+    {"struct |Holder",                              TXT_TokenKind_Identifier},
+    {"Holder<|'a",                                  TXT_TokenKind_Keyword},
+    {"T: |'static",                                 TXT_TokenKind_Keyword},
+    {"&'a |str",                                    TXT_TokenKind_Keyword},
+    {"|#[cfg(all(\n    feature = \"x\",\n    not(test)\n))]", TXT_TokenKind_Meta},
+    {"\n|fn",                                       TXT_TokenKind_Keyword},
+    {"c = |'x'",                                    TXT_TokenKind_Char},
+    {"e = |'\\n'",                                  TXT_TokenKind_Char},
+    {"q = |'\\''",                                  TXT_TokenKind_Char},
+    {"u = |'\\u{1F600}'",                           TXT_TokenKind_Char},
+    {"b = |b'a'",                                   TXT_TokenKind_Char},
+    {"s = |\"tab\\t \\\"quoted\\\" \\\\\"",         TXT_TokenKind_String},
+    {"r = |r\"C:\\path\\\"",                        TXT_TokenKind_String},
+    {"r2 = |r#\"has \"quotes\" inside\"#",          TXT_TokenKind_String},
+    {"r3 = |br##\"a \"# b\"##",                     TXT_TokenKind_String},
+    {"ml = |\"first line\nsecond line\"",           TXT_TokenKind_String},
+    {"raw_ml = |r#\"line one \"\nline two \"#",     TXT_TokenKind_String},
+    {"|/* outer /* inner */ still outer */",        TXT_TokenKind_BlockComment},
+    {"|/* block\n       comment */",                TXT_TokenKind_BlockComment},
+    {"|1_000_000u64",                               TXT_TokenKind_Numeric},
+    {"|0xff_u8",                                    TXT_TokenKind_Numeric},
+    {"|2.5e10",                                     TXT_TokenKind_Numeric},
+    {"as |u64",                                     TXT_TokenKind_Keyword},
+    {"in |0",                                       TXT_TokenKind_Numeric},
+    {"0..|10",                                      TXT_TokenKind_Numeric},
+    {"|'outer",                                     TXT_TokenKind_Keyword},
+    {"break |'outer",                               TXT_TokenKind_Keyword},
+    {"let |r#type",                                 TXT_TokenKind_Identifier},
+    {"|println",                                    TXT_TokenKind_Identifier},
+    {"(|\"{}\"",                                    TXT_TokenKind_String},
+  };
+  for EachElement(idx, expects)
+  {
+    String8 needle = str8_cstring(expects[idx].needle);
+    U64 bar = str8_find_needle(needle, 0, str8_lit("|"), 0);
+    String8 prefix = str8_prefix(needle, bar);
+    String8 target = str8_skip(needle, bar+1);
+    String8 joined = push_str8f(scratch.arena, "%S%S", prefix, target);
+    U64 pos = str8_find_needle(src, 0, joined, 0);
+    Rng1U64 want = r1u64(pos + prefix.size, pos + prefix.size + target.size);
+    TXT_Token *got = 0;
+    for EachIndex(t_idx, tokens.count)
+    {
+      if(tokens.v[t_idx].range.min <= want.min && want.min < tokens.v[t_idx].range.max)
+      {
+        got = &tokens.v[t_idx];
+        break;
+      }
+    }
+    test_checks += 1;
+    if(pos >= src.size || got == 0 || got->kind != expects[idx].kind ||
+       got->range.min != want.min || got->range.max != want.max)
+    {
+      String8 got_string = (got != 0) ? str8_substr(src, got->range) : str8_lit("(none)");
+      printf("FAIL rust_tokens: `%.*s` expected %s [%I64u, %I64u), got %s [%I64u, %I64u) `%.*s`\n",
+             str8_varg(target), test_token_kind_names[expects[idx].kind], want.min, want.max,
+             got ? test_token_kind_names[got->kind] : "-", got ? got->range.min : 0, got ? got->range.max : 0,
+             str8_varg(got_string));
+      test_failures += 1;
+    }
+  }
+  scratch_end(scratch);
+}
+
+internal B32
+test_rust_check_resume(char *test_name, U64 step, TXT_Patched *patched, String8 text)
+{
+  Temp scratch = scratch_begin(0, 0);
+  B32 good = 1;
+
+  //- rad: kinds from tokenizing the whole text
+  TXT_TokenKind *kinds = push_array(scratch.arena, TXT_TokenKind, text.size+1);
+  TXT_TokenPt null_pt = {0};
+  TXT_TokenArray all = txt_token_array_from_data(scratch.arena, TXT_LangKind_Rust, null_pt, text, 0, max_U64);
+  for EachIndex(idx, all.count)
+  {
+    for(U64 off = all.v[idx].range.min; off < all.v[idx].range.max && off < text.size; off += 1)
+    {
+      kinds[off] = all.v[idx].kind;
+    }
+  }
+
+  //- rad: each line, tokenized from its token pt context (as the code view)
+  for(U64 line_num = 1; good && line_num <= patched->line_map.total_line_count; line_num += 1)
+  {
+    Rng1U64 line = txt_range_from_line_num(&patched->line_map, line_num);
+    U64 ctx_num = txt_token_pt_num_from_off(&patched->token_pt_map, line.min);
+    TXT_TokenPt ctx = txt_token_pt_from_num(&patched->token_pt_map, ctx_num);
+    TXT_TokenArray part = txt_token_array_from_data(scratch.arena, TXT_LangKind_Rust, ctx, str8_substr(text, line), line.min, max_U64);
+    test_checks += 1;
+    for(U64 idx = 0; good && idx < part.count; idx += 1)
+    {
+      for(U64 off = Max(part.v[idx].range.min, line.min); off < Min(part.v[idx].range.max, line.max); off += 1)
+      {
+        if(kinds[off] != part.v[idx].kind)
+        {
+          String8 line_string = str8_substr(text, line);
+          printf("FAIL %s step %I64u: line %I64u col %I64u is %s from the line's context (pt %s at %I64u), %s in the whole text: `%.*s`\n",
+                 test_name, step, line_num, off-line.min+1, test_token_kind_names[part.v[idx].kind],
+                 test_token_kind_names[ctx.kind], ctx.off, test_token_kind_names[kinds[off]], str8_varg(line_string));
+          for(U64 num = 1; num <= patched->token_pt_map.total_pt_count; num += 1)
+          {
+            TXT_TokenPt dbg = txt_token_pt_from_num(&patched->token_pt_map, num);
+            if(dbg.off + 80 > line.min && dbg.off < line.max + 40)
+            {
+              printf("  DEBUG pt %I64u: %s at %I64u aux %I64u\n", num, test_token_kind_names[dbg.kind], dbg.off, dbg.aux);
+            }
+          }
+          for EachNode(rn, TXT_TokenPtMapRangeNode, patched->token_pt_map.first_range)
+          {
+            printf("  DEBUG range [%I64u, %I64u) delta %I64d\n", rn->num_range.min, rn->num_range.max, rn->delta);
+          }
+          good = 0;
+          break;
+        }
+      }
+    }
+  }
+  if(!good)
+  {
+    test_failures += 1;
+  }
+  scratch_end(scratch);
+  return good;
+}
+
+typedef struct TestAnchorEdit TestAnchorEdit;
+struct TestAnchorEdit
+{
+  char *anchor;     // edit at the first occurrence of this text
+  U64 delete_size;  // bytes deleted there
+  char *insert;     // then inserted there
+};
+
+internal U64 test_rand(U64 *state);
+
+internal TestAnchorEdit *
+test_rust_random_edits(Arena *arena, U64 seed, U64 count)
+{
+  // NOTE(rad): complete snippets (every token in them closed), each inserted
+  // at the start of a random line of the test source whose first line
+  // (anchor) is outside any multi-line token. the snippets end in a newline.
+  char *snippets[] =
+  {
+    "let s = \"a\nb\";\n",
+    "/* x\n y */\n",
+    "let r = r#\"q \" \"#;\n",
+    "fn f<'a>(x: &'a u8) -> char { 'z' }\n",
+    "// note 'x \"y\n",
+    "#[cfg(any(\n    a,\n    b))]\n",
+    "let c = '\\'';\n",
+    "let n = 0x_ff_u8 + 1_0.5e3 as u8;\n",
+    "/* a /* b */ c */\n",
+    "let b = br##\"#\"\"##;\n",
+    "'l: loop { break 'l; }\n",
+  };
+  char *anchors[] =
+  {
+    "use std", "#[derive", "struct Holder", "    value", "fn multi",
+    "fn main", "    let c", "    let s =", "    let r2", "    let n =",
+    "    for i", "    'outer", "    println", "}\n", "    raw:",
+  };
+  // NOTE(rad): `count` inserts, then the same snippets deleted again, last
+  // first (as undo would); 2*count edits
+  U64 state = seed;
+  TestAnchorEdit *edits = push_array(arena, TestAnchorEdit, count*2);
+  for EachIndex(idx, count)
+  {
+    edits[idx].anchor = anchors[test_rand(&state) % ArrayCount(anchors)];
+    edits[idx].delete_size = 0;
+    edits[idx].insert = snippets[test_rand(&state) % ArrayCount(snippets)];
+    edits[count*2-1-idx].anchor = edits[idx].insert;
+    edits[count*2-1-idx].delete_size = str8_cstring(edits[idx].insert).size;
+    edits[count*2-1-idx].insert = "";
+  }
+  return edits;
+}
+
+internal void
+test_rust_resume(char *test_name, TestAnchorEdit *edits, U64 edits_count)
+{
+  Temp scratch = scratch_begin(0, 0);
+  String8 base = str8_cstring(test_rust_source);
+  C_Key key = c_key_make(c_root_alloc(), c_id_make(0, 1));
+  Arena *data_arena = arena_alloc();
+  String8 data_copy = push_str8_copy(data_arena, base);
+  c_submit_data(key, &data_arena, data_copy);
+  TXT_TextInfo info = {0};
+  U128 hash = {0};
+  Access *access = access_open();
+  for(U64 start_us = now_time_us(); now_time_us() - start_us < 10000000;)
+  {
+    info = txt_text_info_from_key_lang(access, key, TXT_LangKind_Rust, &hash);
+    if(info.lines_count != 0) { break; }
+    access_close(access);
+    sleep_ms(1);
+    access = access_open();
+  }
+  String8 data = c_data_from_hash(access, hash);
+  test_checks += 1;
+  if(info.lines_count == 0)
+  {
+    printf("FAIL %s: text info never became ready\n", test_name);
+    test_failures += 1;
+  }
+  else
+  {
+    TXT_PatchList patches = {0};
+    TXT_Patched patched0 = txt_patched_from_info_data_patches(scratch.arena, &info, data, &patches);
+    B32 good = test_rust_check_resume(test_name, max_U64, &patched0, base);
+    String8 expected = base;
+    for(U64 idx = 0; good && idx < edits_count; idx += 1)
+    {
+      U64 at = str8_find_needle(expected, 0, str8_cstring(edits[idx].anchor), 0);
+      Rng1U64 range = r1u64(at, at + edits[idx].delete_size);
+      String8 replace = str8_cstring(edits[idx].insert);
+      txt_patch_list_push_new(scratch.arena, &patches, range, replace);
+      expected = test_string_replace(scratch.arena, expected, range, replace);
+      TXT_Patched patched = txt_patched_from_info_data_patches(scratch.arena, &info, data, &patches);
+      String8 text = memory_map_data_from_range(scratch.arena, &patched.memory_map, r1u64(0, patched.size));
+      good = test_check_patched(test_name, idx, &patched, expected);
+      good = good && test_rust_check_resume(test_name, idx, &patched, text);
+    }
+  }
+  access_close(access);
+  scratch_end(scratch);
+}
+
+////////////////////////////////
 //~ rad: Entry Point
 
 internal void
@@ -791,6 +1122,30 @@ entry_point(CmdLine *cmd_line)
     test_edits_real_info("real_info_null", text, TXT_LangKind_Null, edits, ArrayCount(edits));
   }
   test_section_end("patched text: real lexer info", &section_start_us);
+
+  //- rad: Rust lexing: token kinds; resuming at any line, before and after edits
+  test_rust_tokens();
+  test_rust_resume("rust_resume", 0, 0);
+  {
+    TestAnchorEdit edits[] =
+    {
+      {"fn main",       0, "fn g<'b>(v: &'b str) -> char { 'z' }\n"},
+      {"    let c",     0, "    let x = r#\"new \"raw\"#;\n"},
+      {"line one",      0, "more "},
+      {"    /* outer", 39, ""},
+      {"#[cfg",         0, "/* added\n   comment */\n"},
+      {"    'outer",    0, "    let s2 = \"two\nlines\";\n"},
+    };
+    test_rust_resume("rust_resume_edits", edits, ArrayCount(edits));
+  }
+  for(U64 seed = 1; seed <= 20; seed += 1)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    TestAnchorEdit *edits = test_rust_random_edits(scratch.arena, seed*0x9E3779B97F4A7C15ull, 25);
+    test_rust_resume("rust_resume_random", edits, 50);
+    scratch_end(scratch);
+  }
+  test_section_end("rust lexing: kinds, resume, edits", &section_start_us);
 
   //- rad: random edits
   // NOTE(rad): cost grows ~cubically with the patch count (every step

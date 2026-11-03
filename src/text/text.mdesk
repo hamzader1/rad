@@ -242,5 +242,9 @@ txt_keywords__rust:
   {"use"} {"where"} {"while"} {"yield"}
   {"async"} {"await"} {"dyn"} {"macro_rules"}
   {"raw"} {"safe"} {"union"}
+  // rad: primitive types, as the C table has int/char/...
+  {"bool"} {"char"} {"str"} {"f32"} {"f64"}
+  {"i8"} {"i16"} {"i32"} {"i64"} {"i128"} {"isize"}
+  {"u8"} {"u16"} {"u32"} {"u64"} {"u128"} {"usize"}
 }
 @data(String8) txt_keywords__rust: {@expand(txt_keywords__rust a) `str8_lit_comp("$(a.string)")`}

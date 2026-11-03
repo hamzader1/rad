@@ -318,6 +318,7 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   else if(str8_match(name, str8_lit("cursor_line"), 0) || str8_match(name, str8_lit("cursor_col"), 0) ||
           str8_match(name, str8_lit("mark_line"), 0) || str8_match(name, str8_lit("mark_col"), 0) ||
           str8_match(name, str8_lit("line_count"), 0) || str8_match(name, str8_lit("line"), 0) ||
+          str8_match(name, str8_lit("token"), 0) ||
           str8_match(name, str8_lit("visible_first"), 0) || str8_match(name, str8_lit("visible_last"), 0) ||
           str8_match(name, str8_lit("dirty"), 0))
   {
@@ -358,6 +359,44 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       else if(str8_match(name, str8_lit("dirty"), 0))
       {
         value = push_str8f(arena, "%i", !!tb_buffer_is_dirty(doc->buffer));
+      }
+      else if(str8_match(name, str8_lit("token"), 0))
+      {
+        // rad: kind of the token at <line> <col>, lexed as the code view does
+        // it: from the line's token pt context (strings/comments spanning
+        // lines), with the visible-range tokenizer
+        S64 n = 0;
+        S64 col = 0;
+        if(args_count < 3 || !try_s64_from_str8_c_rules(args[1], &n) || !try_s64_from_str8_c_rules(args[2], &col) ||
+           n < 1 || (U64)n > text.patched.line_map.total_line_count || col < 1)
+        {
+          *error_out = push_str8f(arena, "token: needs <line> <col>, line in 1..%I64u", text.patched.line_map.total_line_count);
+          result = 0;
+        }
+        else
+        {
+          Rng1U64 range = txt_range_from_line_num(&text.patched.line_map, (U64)n);
+          U64 ctx_num = txt_token_pt_num_from_off(&text.patched.token_pt_map, range.min);
+          TXT_TokenPt ctx = txt_token_pt_from_num(&text.patched.token_pt_map, ctx_num);
+          String8 line_data = memory_map_data_from_range(scratch.arena, &text.patched.memory_map, range);
+          TXT_TokenArray tokens = txt_token_array_from_data(scratch.arena, doc->lang, ctx, line_data, range.min, max_U64);
+          U64 off = range.min + (U64)col - 1;
+          String8 kind_names[] =
+          {
+            str8_lit_comp("null"), str8_lit_comp("error"), str8_lit_comp("whitespace"), str8_lit_comp("keyword"),
+            str8_lit_comp("identifier"), str8_lit_comp("numeric"), str8_lit_comp("string"), str8_lit_comp("char"),
+            str8_lit_comp("symbol"), str8_lit_comp("line_comment"), str8_lit_comp("block_comment"), str8_lit_comp("meta"),
+          };
+          value = str8_lit("none");
+          for EachIndex(idx, tokens.count)
+          {
+            if(tokens.v[idx].range.min <= off && off < tokens.v[idx].range.max && tokens.v[idx].kind < ArrayCount(kind_names))
+            {
+              value = kind_names[tokens.v[idx].kind];
+              break;
+            }
+          }
+        }
       }
       else
       {

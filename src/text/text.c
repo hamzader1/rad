@@ -2365,41 +2365,34 @@ txt_token_pt_map_push(Arena *arena, TXT_TokenPtMap *map, Rng1U64 num_range, TXT_
 internal U64
 txt_token_pt_num_from_off(TXT_TokenPtMap *map, U64 off)
 {
+  // NOTE(rad): the number of the last pt at or before `off` (0 = none). after
+  // edits the map has several ranges (before an edit / re-lexed / after it),
+  // not kept in offset order; an `off` between two ranges belongs to the last
+  // pt of the earlier one. (this used to find a pt only inside one range and
+  // returned 0 = "no token" between ranges, so the text after an edit inside
+  // a multi-line comment or string lost its context.) pts at equal offsets:
+  // the last one (an ender and the next starter at the same line start).
   U64 result = 0;
   for EachNode(n, TXT_TokenPtMapRangeNode, map->first_range)
   {
     U64 num_pts = dim_1u64(n->num_range);
-    if(num_pts != 0)
+    if(num_pts != 0 && n->pts[0].off + n->delta <= off)
     {
-      U64 first_off = n->pts[0].off + n->delta;
-      U64 last_off = n->pts[num_pts-1].off + n->delta;
-      if(first_off <= off && off <= last_off)
+      U64 lo = 1;
+      U64 hi = num_pts;
+      for(;lo < hi;)
       {
-        U64 found_idx = 0;
-        U64 first_idx = 0;
-        U64 last_idx = num_pts-1;
-        for(;first_idx <= last_idx;)
+        U64 mid = (lo + hi) / 2;
+        if(n->pts[mid].off + n->delta <= off)
         {
-          U64 mid_idx = (last_idx + first_idx) / 2;
-          U64 mid_off = n->pts[mid_idx].off + n->delta;
-          if(off < mid_off)
-          {
-            last_idx = mid_idx - 1;
-          }
-          else if(mid_off < off)
-          {
-            found_idx = mid_idx;
-            first_idx = mid_idx + 1;
-          }
-          else if(off == mid_off)
-          {
-            found_idx = mid_idx;
-            break;
-          }
+          lo = mid + 1;
         }
-        result = n->num_range.min + found_idx;
-        break;
+        else
+        {
+          hi = mid;
+        }
       }
+      result = Max(result, n->num_range.min + lo - 1);
     }
   }
   return result;
@@ -2424,9 +2417,381 @@ txt_token_pt_from_num(TXT_TokenPtMap *map, U64 num)
   return pt;
 }
 
+////////////////////////////////
+//~ rad: Rust Lexing
+
+internal B32
+txt_rust_byte_is_ident(U8 byte)
+{
+  // NOTE(rad): bytes >= 0x80 are parts of UTF-8 encoded (unicode) identifiers
+  return (('a' <= byte && byte <= 'z') ||
+          ('A' <= byte && byte <= 'Z') ||
+          ('0' <= byte && byte <= '9') ||
+          byte == '_' || byte >= 0x80);
+}
+
+internal B32
+txt_rust_quote_is_char(String8 data, U64 off)
+{
+  // NOTE(rad): the `'` at `off` starts a char literal ('a', '\n', '\u{1F600}',
+  // 'é'), else a lifetime or a loop label ('a, 'static, 'outer:)
+  B32 result = 0;
+  if(off+1 < data.size)
+  {
+    U8 c1 = data.str[off+1];
+    if(c1 == '\\')
+    {
+      result = 1;
+    }
+    else if(c1 != '\'' && c1 != '\n' && c1 != '\r')
+    {
+      UnicodeDecode decode = utf8_decode(data.str+off+1, data.size-(off+1));
+      U64 close_off = off+1+Max(decode.inc, 1);
+      result = (close_off < data.size && data.str[close_off] == '\'');
+    }
+  }
+  return result;
+}
+
+internal TXT_TokenPt
+txt_rust_big_token_from_off(String8 data, U64 off, U64 *starter_size_out)
+{
+  // NOTE(rad): with no token active, does a big token start at `off`? kind
+  // Null if not. aux: String = raw-string hash count + 1 (0 = normal string,
+  // with escapes); BlockComment = nesting depth; Meta (attribute) = bracket
+  // depth. *starter_size_out = size of the opener ("//", "r##\"", ...).
+  TXT_TokenPt result = {TXT_TokenKind_Null, off, 0};
+  U64 starter_size = 0;
+  U8 b0 = (off+0 < data.size) ? data.str[off+0] : 0;
+  U8 b1 = (off+1 < data.size) ? data.str[off+1] : 0;
+  U8 b2 = (off+2 < data.size) ? data.str[off+2] : 0;
+  switch(b0)
+  {
+    default:{}break;
+    case '/':
+    {
+      if(b1 == '/')      { result.kind = TXT_TokenKind_LineComment; starter_size = 2; }
+      else if(b1 == '*') { result.kind = TXT_TokenKind_BlockComment; result.aux = 1; starter_size = 2; }
+    }break;
+    case '"':
+    {
+      result.kind = TXT_TokenKind_String;
+      starter_size = 1;
+    }break;
+    case '\'':
+    {
+      if(txt_rust_quote_is_char(data, off))
+      {
+        result.kind = TXT_TokenKind_Char;
+        starter_size = 1;
+      }
+    }break;
+    case '#':
+    {
+      if(b1 == '[')                  { result.kind = TXT_TokenKind_Meta; result.aux = 1; starter_size = 2; }
+      else if(b1 == '!' && b2 == '[') { result.kind = TXT_TokenKind_Meta; result.aux = 1; starter_size = 3; }
+    }break;
+
+    // rad: prefixed literals: b"..", c"..", b'x', r"..", r#".."#, br#".."#, cr".."
+    case 'b':
+    case 'c':
+    case 'r':
+    if(off == 0 || !txt_rust_byte_is_ident(data.str[off-1]))
+    {
+      U64 r_off = off;
+      if(b0 != 'r')
+      {
+        if(b1 == '"')
+        {
+          result.kind = TXT_TokenKind_String;
+          starter_size = 2;
+          break;
+        }
+        if(b0 == 'b' && b1 == '\'' && txt_rust_quote_is_char(data, off+1))
+        {
+          result.kind = TXT_TokenKind_Char;
+          starter_size = 2;
+          break;
+        }
+        if(b1 != 'r')
+        {
+          break;
+        }
+        r_off = off+1;
+      }
+      U64 hashes = 0;
+      for(;r_off+1+hashes < data.size && data.str[r_off+1+hashes] == '#'; hashes += 1);
+      if(r_off+1+hashes < data.size && data.str[r_off+1+hashes] == '"')
+      {
+        result.kind = TXT_TokenKind_String;
+        result.aux = hashes+1;
+        starter_size = (r_off+1+hashes+1) - off;
+      }
+    }break;
+  }
+  if(starter_size_out != 0)
+  {
+    *starter_size_out = starter_size;
+  }
+  return result;
+}
+
+internal U64
+txt_rust_big_token_advance(String8 data, U64 off, TXT_TokenPt *pt, B32 *ended_out)
+{
+  // NOTE(rad): one step inside the active big token `pt`, at `off` (<
+  // data.size): returns the bytes consumed (>= 1), updates pt->aux (nesting),
+  // *ended_out = the token ends after those bytes. A token resumed in the
+  // middle starts from the aux of its start (nesting 1).
+  U64 advance = 1;
+  B32 ended = 0;
+  U8 byte      = data.str[off];
+  U8 next_byte = (off+1 < data.size) ? data.str[off+1] : 0;
+  switch(pt->kind)
+  {
+    default:
+    {
+      ended = 1;
+    }break;
+    case TXT_TokenKind_LineComment:
+    {
+      ended = (byte == '\n');
+    }break;
+    case TXT_TokenKind_BlockComment:
+    {
+      if(byte == '/' && next_byte == '*')
+      {
+        pt->aux += 1;
+        advance = 2;
+      }
+      else if(byte == '*' && next_byte == '/')
+      {
+        pt->aux = (pt->aux > 1) ? pt->aux-1 : 0;
+        ended = (pt->aux == 0);
+        advance = 2;
+      }
+    }break;
+    case TXT_TokenKind_String:
+    {
+      if(pt->aux == 0)
+      {
+        if(byte == '\\')     { advance = 2; }
+        else if(byte == '"') { ended = 1; }
+      }
+      else if(byte == '"')
+      {
+        U64 hashes = pt->aux-1;
+        B32 closes = (off+1+hashes <= data.size);
+        for(U64 idx = 0; closes && idx < hashes; idx += 1)
+        {
+          closes = (data.str[off+1+idx] == '#');
+        }
+        if(closes)
+        {
+          ended = 1;
+          advance = 1+hashes;
+        }
+      }
+    }break;
+    case TXT_TokenKind_Char:
+    {
+      if(byte == '\\')                       { advance = 2; }
+      else if(byte == '\'' || byte == '\n') { ended = 1; }
+    }break;
+    case TXT_TokenKind_Meta:
+    {
+      if(byte == '[')
+      {
+        pt->aux += 1;
+      }
+      else if(byte == ']')
+      {
+        pt->aux = (pt->aux > 1) ? pt->aux-1 : 0;
+        ended = (pt->aux == 0);
+      }
+    }break;
+  }
+  advance = Min(advance, data.size-off);
+  if(ended_out != 0)
+  {
+    *ended_out = ended;
+  }
+  return advance;
+}
+
+internal TXT_TokenArray
+txt_token_array_from_data__rust(Arena *arena, TXT_TokenPt ctx_token_pt, String8 data, U64 base_off)
+{
+  // NOTE(rad): Rust version of txt_token_array_from_data (same token kinds
+  // and conventions). Lifetimes and labels are emitted as keywords; whole
+  // attributes as meta; raw identifiers (r#type) never as keywords.
+  Temp scratch = scratch_begin(&arena, 1);
+  TXT_TokenChunkList tokens = {0};
+  String8Array keywords = txt_keywords_from_lang_kind_table[TXT_LangKind_Rust];
+  U64 chunk_size = Clamp(8, data.size/8, 4096);
+  U64 off = 0;
+
+  //- rad: data starts inside a big token -> finish it first
+  if(ctx_token_pt.kind != TXT_TokenKind_Null)
+  {
+    TXT_TokenPt pt = ctx_token_pt;
+    B32 ended = 0;
+    for(;off < data.size && !ended;)
+    {
+      off += txt_rust_big_token_advance(data, off, &pt, &ended);
+    }
+    TXT_Token token = {pt.kind, r1u64(ctx_token_pt.off, base_off+off)};
+    txt_token_chunk_list_push(scratch.arena, &tokens, chunk_size, &token);
+  }
+
+  //- rad: all following tokens
+  for(;off < data.size;)
+  {
+    U64 start_off = off;
+    U8 byte      = data.str[off];
+    U8 next_byte = (off+1 < data.size) ? data.str[off+1] : 0;
+    TXT_TokenKind kind = TXT_TokenKind_Null;
+    U64 starter_size = 0;
+    TXT_TokenPt big = txt_rust_big_token_from_off(data, off, &starter_size);
+
+    // rad: strings, chars, comments, attributes
+    if(big.kind != TXT_TokenKind_Null)
+    {
+      kind = big.kind;
+      off += starter_size;
+      B32 ended = 0;
+      for(;off < data.size && !ended;)
+      {
+        off += txt_rust_big_token_advance(data, off, &big, &ended);
+      }
+    }
+
+    // rad: whitespace
+    else if(byte == ' ' || byte == '\n' || byte == '\t' || byte == '\r' || byte == '\f' || byte == '\v')
+    {
+      kind = TXT_TokenKind_Whitespace;
+      for(;off < data.size; off += 1)
+      {
+        U8 b = data.str[off];
+        if(b != ' ' && b != '\n' && b != '\t' && b != '\r' && b != '\f' && b != '\v')
+        {
+          break;
+        }
+      }
+    }
+
+    // rad: lifetimes and labels (char literals were taken above)
+    else if(byte == '\'')
+    {
+      kind = TXT_TokenKind_Keyword;
+      for(off += 1; off < data.size && txt_rust_byte_is_ident(data.str[off]); off += 1);
+      if(off == start_off+1)
+      {
+        kind = TXT_TokenKind_Symbol;
+      }
+    }
+
+    // rad: identifiers, keywords, raw identifiers; `$` starts macro_rules
+    // metavariables ($x), as in the C tokenizer
+    else if(byte == '_' || byte == '$' || byte >= 0x80 ||
+            ('a' <= byte && byte <= 'z') ||
+            ('A' <= byte && byte <= 'Z'))
+    {
+      B32 is_raw = (byte == 'r' && next_byte == '#' && off+2 < data.size &&
+                    txt_rust_byte_is_ident(data.str[off+2]) && !('0' <= data.str[off+2] && data.str[off+2] <= '9'));
+      kind = TXT_TokenKind_Identifier;
+      for(off += (is_raw ? 2 : 1); off < data.size && txt_rust_byte_is_ident(data.str[off]); off += 1);
+      if(!is_raw)
+      {
+        String8 token_string = str8_substr(data, r1u64(start_off, off));
+        for EachIndex(idx, keywords.count)
+        {
+          if(str8_match(keywords.v[idx], token_string, 0))
+          {
+            kind = TXT_TokenKind_Keyword;
+            break;
+          }
+        }
+      }
+    }
+
+    // rad: numbers: 1_000, 0xff_u8, 2.5e10f64; a '.' continues only before
+    // a digit, once (0..10, 1.max(2), x.0 are not one number)
+    else if('0' <= byte && byte <= '9')
+    {
+      kind = TXT_TokenKind_Numeric;
+      B32 seen_dot = 0;
+      for(off += 1; off < data.size;)
+      {
+        U8 b = data.str[off];
+        U8 n = (off+1 < data.size) ? data.str[off+1] : 0;
+        if(b < 0x80 && txt_rust_byte_is_ident(b))
+        {
+          off += 1;
+        }
+        else if(b == '.' && !seen_dot && '0' <= n && n <= '9')
+        {
+          seen_dot = 1;
+          off += 1;
+        }
+        else
+        {
+          break;
+        }
+      }
+    }
+
+    // rad: symbols; a run stops where a comment or an attribute starts
+    else if(byte == '~' || byte == '!' || byte == '%' || byte == '^' ||
+            byte == '&' || byte == '*' || byte == '(' || byte == ')' ||
+            byte == '-' || byte == '=' || byte == '+' || byte == '[' ||
+            byte == ']' || byte == '{' || byte == '}' || byte == ':' ||
+            byte == ';' || byte == ',' || byte == '.' || byte == '<' ||
+            byte == '>' || byte == '/' || byte == '?' || byte == '|' ||
+            byte == '@' || byte == '#')
+    {
+      kind = TXT_TokenKind_Symbol;
+      for(off += 1; off < data.size; off += 1)
+      {
+        U8 b = data.str[off];
+        if(!(b == '~' || b == '!' || b == '%' || b == '^' ||
+             b == '&' || b == '*' || b == '(' || b == ')' ||
+             b == '-' || b == '=' || b == '+' || b == '[' ||
+             b == ']' || b == '{' || b == '}' || b == ':' ||
+             b == ';' || b == ',' || b == '.' || b == '<' ||
+             b == '>' || b == '/' || b == '?' || b == '|' ||
+             b == '@' || b == '#') ||
+           txt_rust_big_token_from_off(data, off, 0).kind != TXT_TokenKind_Null)
+        {
+          break;
+        }
+      }
+    }
+
+    // rad: anything else
+    else
+    {
+      kind = TXT_TokenKind_Error;
+      off += 1;
+    }
+
+    TXT_Token token = {kind, r1u64(base_off+start_off, base_off+off)};
+    txt_token_chunk_list_push(scratch.arena, &tokens, chunk_size, &token);
+  }
+
+  TXT_TokenArray result = txt_token_array_from_chunk_list(arena, &tokens);
+  scratch_end(scratch);
+  return result;
+}
+
 internal TXT_TokenArray
 txt_token_array_from_data(Arena *arena, TXT_LangKind lang_kind, TXT_TokenPt ctx_token_pt, String8 data, U64 base_off, U64 limit)
 {
+  // rad: Rust has its own rules (lifetimes, raw strings, attributes)
+  if(lang_kind == TXT_LangKind_Rust)
+  {
+    return txt_token_array_from_data__rust(arena, ctx_token_pt, data, base_off);
+  }
   Temp scratch = scratch_begin(&arena, 1);
   TXT_TokenChunkList tokens = {0};
   if(lang_kind != TXT_LangKind_Null)
@@ -2713,15 +3078,8 @@ txt_patched_from_info_data_patches(Arena *arena, TXT_TextInfo *info, String8 dat
     Rng1U64 pre_replace_line_num_range = r1u64(1, replace_line_num_range.min);
     Rng1U64 post_replace_line_num_range = r1u64(replace_line_num_range.max+1, last_line_map.total_line_count+1);
     
-    ////////////////////////////
-    //- rjf: map this replace range -> range of token pts
-    //
-    Rng1U64 replace_token_pt_range = {0};
-    {
-      replace_token_pt_range.min = txt_token_pt_num_from_off(&last_token_pt_map, n->v.range.min);
-      replace_token_pt_range.max = txt_token_pt_num_from_off(&last_token_pt_map, n->v.range.max);
-    }
-    
+    // NOTE(rad): (the token pts kept around this replace are picked below)
+
     ////////////////////////////
     //- rjf: compute delta & next size
     //
@@ -2854,44 +3212,38 @@ txt_patched_from_info_data_patches(Arena *arena, TXT_TextInfo *info, String8 dat
     //- rjf: compute token pt delta, + token pt ranges to keep, + new token pts
     //
     S64 token_pt_delta = 0;
-    Rng1U64 pre_replace_token_pt_range = r1u64(1, replace_token_pt_range.min);
-    Rng1U64 post_replace_token_pt_range = r1u64(replace_token_pt_range.max, last_token_pt_map.total_pt_count+1);
+    Rng1U64 pre_replace_token_pt_range = {0};
+    Rng1U64 post_replace_token_pt_range = {0};
     TXT_TokenPt *new_token_pts = 0;
     U64 new_token_pts_count = 0;
     {
-      U64 token_pt_lex_start_off = n->v.range.min;
-      
-      //- rjf: eliminate starter token pt - range may not cover entire token pt, but we will re-lex this portion
-      if(replace_token_pt_range.min != 0)
+      // NOTE(rad): rewritten. kept before the edit: the pts before the re-lex
+      // start; kept after it: the pts at or after the end of the replaced
+      // range (shifted by the size delta); the re-lex makes the pts in
+      // between, and the numbers stay contiguous by construction. (the old
+      // code kept/dropped single pts next to the edit and renumbered only for
+      // those, so an edit across several pts gave two ranges the same
+      // numbers, and text inserted right before an opener dropped its start
+      // pt.) the re-lex starts 3 bytes before the edit: an edit can complete
+      // an opener ("/" + "/", "r#" + "\"").
+      U64 token_pt_lex_start_off = n->v.range.min - Min(n->v.range.min, 3);
+      U64 pre_last_num = (token_pt_lex_start_off > 0) ? txt_token_pt_num_from_off(&last_token_pt_map, token_pt_lex_start_off-1) : 0;
+      U64 post_first_num = ((n->v.range.max > 0) ? txt_token_pt_num_from_off(&last_token_pt_map, n->v.range.max-1) : 0) + 1;
+      TXT_TokenPt ctx_token_pt = txt_token_pt_from_num(&last_token_pt_map, pre_last_num);
+
+      //- rad: Rust: inside a token at the re-lex start -> re-lex that whole
+      // token from its start (if it is not huge): starting inside it can land
+      // in the middle of its closer (`"#`) or right after an escape
+      if(info->lang == TXT_LangKind_Rust && ctx_token_pt.kind != TXT_TokenKind_Null &&
+         token_pt_lex_start_off - ctx_token_pt.off <= KB(64))
       {
-        TXT_TokenPt starter_token_pt = txt_token_pt_from_num(&last_token_pt_map, replace_token_pt_range.min);
-        Rng1U64 starter_token_pt_range = r1u64(starter_token_pt.off, starter_token_pt.off + 4);
-        if(contains_1u64(starter_token_pt_range, n->v.range.min))
-        {
-          token_pt_delta -= 1;
-          token_pt_lex_start_off = starter_token_pt.off > 0 ? starter_token_pt.off-1 : starter_token_pt.off;
-          if(replace_token_pt_range.min == replace_token_pt_range.max)
-          {
-            post_replace_token_pt_range.min += 1;
-          }
-        }
-        else
-        {
-          pre_replace_token_pt_range.max += 1;
-        }
+        token_pt_lex_start_off = ctx_token_pt.off;
+        pre_last_num -= 1;
+        ctx_token_pt = txt_token_pt_from_num(&last_token_pt_map, pre_last_num);
       }
-      
-      //- rjf: eliminate ender token pt
-      if(replace_token_pt_range.max != 0 && replace_token_pt_range.max != replace_token_pt_range.min)
-      {
-        TXT_TokenPt ender_token_pt = txt_token_pt_from_num(&last_token_pt_map, replace_token_pt_range.min+1);
-        if(n->v.range.max > ender_token_pt.off)
-        {
-          token_pt_delta -= 1;
-          post_replace_token_pt_range.min += 1;
-        }
-      }
-      
+      pre_replace_token_pt_range = r1u64(1, pre_last_num+1);
+      post_replace_token_pt_range = r1u64(post_first_num, last_token_pt_map.total_pt_count+1);
+
       //- rjf: re-lex region to find new token pts
       typedef struct TokenPtChunkNode TokenPtChunkNode;
       struct TokenPtChunkNode
@@ -2905,13 +3257,70 @@ txt_patched_from_info_data_patches(Arena *arena, TXT_TextInfo *info, String8 dat
       TokenPtChunkNode *last_pt_chunk = 0;
       U64 total_new_pt_count = 0;
       {
-        U64 ctx_token_pt_num = txt_token_pt_num_from_off(&last_token_pt_map, token_pt_lex_start_off);
-        TXT_TokenPt ctx_token_pt = txt_token_pt_from_num(&last_token_pt_map, ctx_token_pt_num);
         TXT_TokenKind active_token_kind = ctx_token_pt.kind;
         U64 active_token_start_off = 0;
         String8 herestring_marker = {0};
         Rng1U64 relex_range = r1u64(token_pt_lex_start_off, n->v.range.min + n->v.replace.size);
         String8 relex_data = memory_map_data_from_range(scratch.arena, &next_memory_map, relex_range);
+
+        //- rad: Rust: the same big-token helpers as the whole-file scan
+        if(info->lang == TXT_LangKind_Rust)
+        {
+          TXT_TokenPt active_pt = ctx_token_pt;
+          String8 lex_data = relex_data;
+          for(U64 off = 0; off < lex_data.size;)
+          {
+            B32 pt_changed = 0;
+            TXT_TokenPt pt = {0};
+            if(active_pt.kind == TXT_TokenKind_Null)
+            {
+              U64 starter_size = 0;
+              TXT_TokenPt start_pt = txt_rust_big_token_from_off(lex_data, off, &starter_size);
+              if(start_pt.kind == TXT_TokenKind_Null)
+              {
+                off += 1;
+              }
+              else
+              {
+                start_pt.off = relex_range.min + off;
+                active_pt = start_pt;
+                pt = start_pt;
+                pt_changed = 1;
+                off += starter_size;
+              }
+            }
+            else
+            {
+              B32 ended = 0;
+              off += txt_rust_big_token_advance(lex_data, off, &active_pt, &ended);
+              if(ended)
+              {
+                pt.kind = TXT_TokenKind_Null;
+                pt.off = relex_range.min + off;
+                MemoryZeroStruct(&active_pt);
+                pt_changed = 1;
+              }
+            }
+            if(pt_changed)
+            {
+              TokenPtChunkNode *chunk = last_pt_chunk;
+              if(chunk == 0 || chunk->count >= chunk->cap)
+              {
+                chunk = push_array(scratch.arena, TokenPtChunkNode, 1);
+                SLLQueuePush(first_pt_chunk, last_pt_chunk, chunk);
+                chunk->cap = 256;
+                chunk->v = push_array(scratch.arena, TXT_TokenPt, chunk->cap);
+              }
+              chunk->v[chunk->count] = pt;
+              chunk->count += 1;
+              total_new_pt_count += 1;
+            }
+          }
+        }
+
+        //- rjf: other languages
+        else
+        {
         B32 escaped = 0;
         for(U64 off = 0; off <= relex_data.size; off += 1)
         {
@@ -3038,16 +3447,16 @@ txt_patched_from_info_data_patches(Arena *arena, TXT_TextInfo *info, String8 dat
           
           //- rjf: reset escaped state
           escaped = 0;
-          
+
           //- rjf: do extra advance
           off += extra_advance;
+        }
         }
       }
       
       //- rjf: join new token pts
       if(total_new_pt_count != 0)
       {
-        token_pt_delta += total_new_pt_count;
         new_token_pts_count = total_new_pt_count;
         new_token_pts = push_array(arena, TXT_TokenPt, new_token_pts_count);
         U64 idx = 0;
@@ -3057,6 +3466,9 @@ txt_patched_from_info_data_patches(Arena *arena, TXT_TextInfo *info, String8 dat
           idx += n->count;
         }
       }
+
+      //- rad: kept-after pts are numbered right after the new ones
+      token_pt_delta = (S64)(pre_replace_token_pt_range.max + new_token_pts_count) - (S64)post_replace_token_pt_range.min;
     }
     
     ////////////////////////////
@@ -3739,6 +4151,11 @@ txt_artifact_create(String8 key, B32 *cancel_signal, AC_Status *status_out, U64 
       TokenEndpointCandidateChunkNode *first_chunk = 0;
       TokenEndpointCandidateChunkNode *last_chunk = 0;
       Rng1U64 range = lane_range(data.size);
+      if(lang == TXT_LangKind_Rust)
+      {
+        // rad: Rust does not use the candidates (see the Rust scan below)
+        range = r1u64(0, 0);
+      }
       for EachInRange(off, range)
       {
         U8 byte = data.str[off];
@@ -3845,7 +4262,51 @@ txt_artifact_create(String8 key, B32 *cancel_signal, AC_Status *status_out, U64 
     TokenPtChunkNode *first_token_pt_chunk = 0;
     TokenPtChunkNode *last_token_pt_chunk = 0;
     U64 total_token_pt_count = 0;
-    if(lang != TXT_LangKind_Null && lane_idx() == 0)
+
+    //- rad: Rust: one byte scan with the shared big-token helpers (the
+    // candidate scan below has C rules: `'` always opens a char, `#` a
+    // preprocessor line, block comments do not nest)
+    if(lang == TXT_LangKind_Rust && lane_idx() == 0)
+    {
+      for(U64 off = 0; off < data.size;)
+      {
+        U64 starter_size = 0;
+        TXT_TokenPt start_pt = txt_rust_big_token_from_off(data, off, &starter_size);
+        if(start_pt.kind == TXT_TokenKind_Null)
+        {
+          off += 1;
+          continue;
+        }
+        TXT_TokenPt pt = start_pt;
+        U64 end_off = off + starter_size;
+        B32 ended = 0;
+        for(;end_off < data.size && !ended;)
+        {
+          end_off += txt_rust_big_token_advance(data, end_off, &pt, &ended);
+        }
+        TXT_TokenPt pts[] =
+        {
+          start_pt,
+          {TXT_TokenKind_Null, end_off},
+        };
+        for EachElement(pt_idx, pts)
+        {
+          TokenPtChunkNode *chunk = last_token_pt_chunk;
+          if(chunk == 0 || chunk->count >= chunk->cap)
+          {
+            chunk = push_array(scratch.arena, TokenPtChunkNode, 1);
+            SLLQueuePush(first_token_pt_chunk, last_token_pt_chunk, chunk);
+            chunk->cap = 512;
+            chunk->v = push_array(scratch.arena, TXT_TokenPt, chunk->cap);
+          }
+          chunk->v[chunk->count] = pts[pt_idx];
+          chunk->count += 1;
+          total_token_pt_count += 1;
+        }
+        off = end_off;
+      }
+    }
+    else if(lang != TXT_LangKind_Null && lane_idx() == 0)
     {
       TXT_TokenKind active_token_kind = TXT_TokenKind_Null;
       U64 active_token_start_off = 0;
@@ -4056,6 +4517,7 @@ txt_artifact_create(String8 key, B32 *cancel_signal, AC_Status *status_out, U64 
     //- rjf: form final token pt buffer
     if(lane_idx() == 0)
     {
+      shared->info.lang = (U32)lang;
       shared->info.big_token_pts_count = total_token_pt_count;
       shared->info.big_token_pts = push_array(shared->arena, TXT_TokenPt, shared->info.big_token_pts_count);
     }

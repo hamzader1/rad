@@ -1,0 +1,65 @@
+# Rust syntax highlighting (milestone 7): token kinds as the code view lexes
+# them (`token <line> <col>`), from each line's context, before and after
+# edits that change what is a string or a comment.
+
+open ../fixtures/syntax.rs
+wait_idle
+expect tab == "syntax.rs"
+
+# comments and attributes
+expect token 1 1 == "line_comment"
+expect token 2 1 == "meta"
+expect token 2 20 == "meta"
+expect token 4 5 == "meta"
+
+# keywords, identifiers, lifetimes (not char literals)
+expect token 5 1 == "keyword"
+expect token 5 8 == "identifier"
+expect token 5 15 == "keyword"
+expect token 5 19 == "symbol"
+expect token 6 12 == "keyword"
+expect token 6 15 == "keyword"
+expect token 10 13 == "char"
+
+# raw string with quotes inside; it ends at "#
+expect token 11 21 == "string"
+expect token 11 34 == "string"
+expect token 11 35 == "symbol"
+
+# a string over two lines: the second line starts inside it
+expect token 13 1 == "string"
+expect token 13 8 == "symbol"
+
+# nested block comment: still a comment after the inner */
+expect token 14 26 == "block_comment"
+
+# numbers with _ and a suffix; a label used twice
+expect token 15 13 == "numeric"
+expect token 15 15 == "numeric"
+expect token 16 5 == "keyword"
+expect token 16 26 == "keyword"
+expect token 16 32 == "symbol"
+
+# typing an unclosed /* turns the rest of the file into a comment; undo
+# brings the code back
+click code 15 5
+text "/* "
+wait_frames 3
+expect token 15 1 == "whitespace"
+expect token 15 5 == "block_comment"
+expect token 16 5 == "block_comment"
+key ctrl+z
+wait_frames 3
+expect token 16 5 == "keyword"
+
+# closing the raw string early ("# inside it): the rest of the line changes
+click code 11 21
+text "\"#"
+wait_frames 3
+expect token 11 23 == "identifier"
+expect token 11 13 == "string"
+key ctrl+z
+wait_frames 3
+expect token 11 21 == "string"
+expect token 13 1 == "string"
+expect dirty == 0

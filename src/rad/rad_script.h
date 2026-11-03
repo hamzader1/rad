@@ -80,6 +80,9 @@
 //   visible_first visible_last  editor's visible line range
 //   line_count                  editor's line count
 //   line <n>                    text of editor line n (without the line end)
+//   token <n> <col>             kind of the token there, as the code view lexes it:
+//                               keyword, identifier, string, char, numeric, symbol,
+//                               line_comment, block_comment, meta, whitespace, error
 //   dirty                       1 if the editor's buffer has unsaved changes
 //   loading                     editor tab's loading overlay strength, 0..1
 //   file <path>                 contents of a file on disk

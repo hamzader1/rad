@@ -407,7 +407,7 @@ str8_lit_comp("volatile"),
 str8_lit_comp("while"),
 };
 
-String8 txt_keywords__rust[43] =
+String8 txt_keywords__rust[60] =
 {
 str8_lit_comp("as"),
 str8_lit_comp("break"),
@@ -452,6 +452,23 @@ str8_lit_comp("macro_rules"),
 str8_lit_comp("raw"),
 str8_lit_comp("safe"),
 str8_lit_comp("union"),
+str8_lit_comp("bool"),
+str8_lit_comp("char"),
+str8_lit_comp("str"),
+str8_lit_comp("f32"),
+str8_lit_comp("f64"),
+str8_lit_comp("i8"),
+str8_lit_comp("i16"),
+str8_lit_comp("i32"),
+str8_lit_comp("i64"),
+str8_lit_comp("i128"),
+str8_lit_comp("isize"),
+str8_lit_comp("u8"),
+str8_lit_comp("u16"),
+str8_lit_comp("u32"),
+str8_lit_comp("u64"),
+str8_lit_comp("u128"),
+str8_lit_comp("usize"),
 };
 
 C_LINKAGE_END
