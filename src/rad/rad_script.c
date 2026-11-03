@@ -252,6 +252,34 @@ rad_script_line_text(Arena *arena, TB_Text *text, S64 line_num)
   return result;
 }
 
+internal CFG_Node *
+rad_script_window_tab(String8 kind)
+{
+  CFG_Node *result = &cfg_nil_node;
+  if(rad_state->first_window != 0)
+  {
+    result = rad_tab_from_window_kind(cfg_node_from_id(rad_state->first_window->cfg_id), kind);
+  }
+  return result;
+}
+
+internal String8
+rad_script_diag_string(Arena *arena, RAD_Diagnostic *diag)
+{
+  // NOTE(rad): "<kind> <path relative to the workspace root>:<line>:<col> <message>"
+  Temp scratch = scratch_begin(&arena, 1);
+  String8 root = rad_cargo_workspace_root(scratch.arena);
+  String8 path = diag->path;
+  if(root.size != 0 && path.size > root.size+1 &&
+     str8_match(str8_prefix(path, root.size), root, StringMatchFlag_CaseInsensitive|StringMatchFlag_SlashInsensitive))
+  {
+    path = str8_skip(path, root.size+1);
+  }
+  String8 result = push_str8f(arena, "%S %S:%I64d:%I64d %S", rad_diagnostic_kind_name(diag->kind), path, diag->line, diag->column, diag->message);
+  scratch_end(scratch);
+  return result;
+}
+
 internal B32
 rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out, String8 *error_out)
 {
@@ -544,6 +572,167 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     }
   }
 
+  //- rad: cargo command state
+  else if(str8_match(name, str8_lit("cargo_status"), 0) || str8_match(name, str8_lit("cargo_exit_code"), 0) ||
+          str8_match(name, str8_lit("cargo_cmd"), 0))
+  {
+    RAD_CargoState *c = rad_cargo;
+    B32 stopped = 0;
+    B32 launch_failed = 0;
+    U64 exit_code = 0;
+    MutexScope(c->mutex)
+    {
+      stopped = c->stop_requested;
+      launch_failed = c->launch_failed;
+      exit_code = c->exit_code;
+    }
+    if(str8_match(name, str8_lit("cargo_exit_code"), 0))
+    {
+      value = push_str8f(arena, "%I64u", exit_code);
+    }
+    else if(str8_match(name, str8_lit("cargo_cmd"), 0))
+    {
+      value = (c->run != 0 ? rad_cargo_cmd_display_name(c->run->kind) : str8_zero());
+    }
+    else
+    {
+      value = (c->run == 0             ? str8_lit("none") :
+               rad_cargo_is_running()  ? str8_lit("running") :
+               stopped                 ? str8_lit("stopped") :
+               launch_failed           ? str8_lit("launch_failed") :
+               exit_code != 0          ? str8_lit("failed") :
+               str8_lit("finished"));
+    }
+  }
+
+  //- rad: diagnostics of the last cargo command
+  else if(str8_match(name, str8_lit("diag_count"), 0))
+  {
+    value = push_str8f(arena, "%I64u", rad_cargo->diags_count);
+  }
+  else if(str8_match(name, str8_lit("diag_errors"), 0))
+  {
+    value = push_str8f(arena, "%I64u", rad_cargo->error_count);
+  }
+  else if(str8_match(name, str8_lit("diag_warnings"), 0))
+  {
+    value = push_str8f(arena, "%I64u", rad_cargo->warning_count);
+  }
+  else if(str8_match(name, str8_lit("diag_selected"), 0))
+  {
+    value = push_str8f(arena, "%I64u", rad_cargo->diag_cursor);
+  }
+  else if(str8_match(name, str8_lit("diag"), 0))
+  {
+    S64 n = 0;
+    if(args_count < 2 || !try_s64_from_str8_c_rules(args[1], &n) || n < 1 || (U64)n > rad_cargo->diags_count)
+    {
+      *error_out = push_str8f(arena, "diag: needs a number in 1..%I64u", rad_cargo->diags_count);
+      result = 0;
+    }
+    else
+    {
+      value = rad_script_diag_string(arena, rad_cargo->diags[n-1]);
+    }
+  }
+
+  //- rad: the cargo output text (as written so far; the Output tab shows it
+  // up to 100 ms later)
+  else if(str8_match(name, str8_lit("output_lines"), 0) || str8_match(name, str8_lit("output_line"), 0) ||
+          str8_match(name, str8_lit("output_has"), 0))
+  {
+    String8 output = {0};
+    MutexScope(rad_cargo->mutex)
+    {
+      output = push_str8_copy(scratch.arena, str8(rad_cargo->output_base, rad_cargo->output_size));
+    }
+    U8 split_char = '\n';
+    String8List lines = str8_split(scratch.arena, output, &split_char, 1, StringSplitFlag_KeepEmpties);
+    if(str8_match(name, str8_lit("output_has"), 0))
+    {
+      if(args_count < 2)
+      {
+        *error_out = str8_lit("output_has: needs a string");
+        result = 0;
+      }
+      else
+      {
+        value = push_str8f(arena, "%i", str8_find_needle(output, 0, args[1], 0) < output.size);
+      }
+    }
+    else if(str8_match(name, str8_lit("output_lines"), 0))
+    {
+      value = push_str8f(arena, "%I64u", lines.node_count);
+    }
+    else
+    {
+      S64 n = 0;
+      if(args_count < 2 || !try_s64_from_str8_c_rules(args[1], &n) || n < 1 || (U64)n > lines.node_count)
+      {
+        *error_out = push_str8f(arena, "output_line: needs a line number in 1..%I64u", lines.node_count);
+        result = 0;
+      }
+      else
+      {
+        String8Node *node = lines.first;
+        for(S64 idx = 1; idx < n; idx += 1) { node = node->next; }
+        String8 line = node->string;
+        if(line.size != 0 && line.str[line.size-1] == '\r') { line.size -= 1; }
+        value = push_str8_copy(arena, line);
+      }
+    }
+  }
+
+  //- rad: the Output tab's cursor line (follows the end while it is there)
+  else if(str8_match(name, str8_lit("output_cursor_line"), 0) || str8_match(name, str8_lit("output_line_count"), 0))
+  {
+    CFG_Node *tab = rad_script_window_tab(str8_lit("output"));
+    if(tab == &cfg_nil_node)
+    {
+      *error_out = str8_lit("no output tab");
+      result = 0;
+    }
+    else
+    {
+      Access *access = access_open();
+      TB_Text text = tb_text_from_buffer(scratch.arena, access, rad_cargo->output_buffer);
+      access_close(access);
+      RAD_CodeViewState *cv = &rad_view_state_from_cfg(tab)->cv;
+      U64 count = (text.base_info.lines_count != 0 ? text.patched.line_map.total_line_count : 0);
+      U64 line = (count != 0 ? txt_line_num_from_off(&text.patched.line_map, Min(cv->cursor, text.patched.size)) : 0);
+      value = push_str8f(arena, "%I64u", str8_match(name, str8_lit("output_line_count"), 0) ? count : line);
+    }
+  }
+
+  //- rad: the diagnostic shown on an editor line ("error", "warning", ...,
+  // or "" for none), where it is now (it follows edits)
+  else if(str8_match(name, str8_lit("line_diag"), 0))
+  {
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    S64 n = 0;
+    result = rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out);
+    if(result && (args_count < 2 || !try_s64_from_str8_c_rules(args[1], &n)))
+    {
+      *error_out = str8_lit("line_diag: needs a line number");
+      result = 0;
+    }
+    for(U64 idx = 0; result && idx < rad_cargo->diags_count; idx += 1)
+    {
+      RAD_Diagnostic *diag = rad_cargo->diags[idx];
+      if(str8_match(diag->path, doc->path, StringMatchFlag_CaseInsensitive|StringMatchFlag_SlashInsensitive))
+      {
+        Rng1U64 range = rad_diagnostic_range_from_document(diag, doc, &text.patched);
+        if((S64)txt_line_num_from_off(&text.patched.line_map, range.min) == n)
+        {
+          value = rad_diagnostic_kind_name(diag->kind);
+          break;
+        }
+      }
+    }
+  }
+
   else
   {
     *error_out = push_str8f(arena, "unknown field \"%S\"", name);
@@ -654,6 +843,74 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
                  ? ex->layout_first_row_rect.x0 + ex->rows[row_idx].depth*ex->layout_font_size + expander_size_px/2
                  : center_2f32(ex->layout_first_row_rect).x);
         pos.y = row_y0 + ex->layout_row_height/2;
+        args_used = 2;
+        result = 1;
+      }
+    }
+  }
+
+  //- rad: Output tab: a visible text position
+  else if(str8_match(kind, str8_lit("output"), 0))
+  {
+    CFG_Node *tab = rad_script_window_tab(str8_lit("output"));
+    S64 line_num = 0;
+    S64 col = 0;
+    if(tab == &cfg_nil_node)
+    {
+      *error_out = str8_lit("output: no output tab");
+    }
+    else if(args_count < 3 || !try_s64_from_str8_c_rules(args[1], &line_num) || !try_s64_from_str8_c_rules(args[2], &col) || col < 1)
+    {
+      *error_out = str8_lit("output: needs <line> <col>");
+    }
+    else
+    {
+      RAD_CodeViewState *cv = &rad_view_state_from_cfg(tab)->cv;
+      Access *access = access_open();
+      TB_Text text = tb_text_from_buffer(scratch.arena, access, rad_cargo->output_buffer);
+      access_close(access);
+      if(text.base_info.lines_count == 0 || line_num < cv->layout_visible_lines.min || cv->layout_visible_lines.max < line_num)
+      {
+        *error_out = push_str8f(arena, "output: line %I64d is not visible (visible: %I64d-%I64d)", line_num, cv->layout_visible_lines.min, cv->layout_visible_lines.max);
+      }
+      else
+      {
+        String8 line_text = rad_script_line_text(scratch.arena, &text, line_num);
+        String8 prefix = str8_prefix(line_text, (U64)col-1);
+        F32 advance = fnt_dim_from_tag_size_string(cv->layout_font, cv->layout_font_size, 0, cv->layout_tab_size, prefix).x;
+        pos.x = cv->layout_text_rect.x0 + cv->layout_text_x_off + advance + 1.f;
+        pos.y = cv->layout_text_rect.y0 + ((F32)(line_num - cv->layout_visible_lines.min) + 0.5f)*cv->layout_line_height;
+        args_used = 3;
+        result = 1;
+      }
+    }
+  }
+
+  //- rad: Problems tab: a visible row (1-based)
+  else if(str8_match(kind, str8_lit("problem"), 0))
+  {
+    CFG_Node *tab = rad_script_window_tab(str8_lit("problems"));
+    S64 n = 0;
+    if(tab == &cfg_nil_node)
+    {
+      *error_out = str8_lit("problem: no problems tab");
+    }
+    else if(args_count < 2 || !try_s64_from_str8_c_rules(args[1], &n) || n < 1 || (U64)n > rad_cargo->diags_count)
+    {
+      *error_out = push_str8f(arena, "problem: needs a row number in 1..%I64u", rad_cargo->diags_count);
+    }
+    else
+    {
+      RAD_ProblemsState *pr = &rad_view_state_from_cfg(tab)->pr;
+      F32 row_y0 = pr->layout_first_row_rect.y0 + (F32)((n-1) - pr->layout_first_row)*pr->layout_row_height;
+      if(row_y0 < pr->layout_rect.y0 || pr->layout_rect.y1 < row_y0 + pr->layout_row_height)
+      {
+        *error_out = push_str8f(arena, "problem: row %I64d is not visible", n);
+      }
+      else
+      {
+        pos.x = center_2f32(pr->layout_first_row_rect).x;
+        pos.y = row_y0 + pr->layout_row_height/2;
         args_used = 2;
         result = 1;
       }
@@ -1001,6 +1258,20 @@ rad_script_run_line(RAD_ScriptLine *line)
       rad_script_wait_frames(count);
     }
   }
+  else if(str8_match(cmd, str8_lit("wait_cargo"), 0))
+  {
+    U64 ms = 120000;
+    if(args_count >= 1 && !try_u64_from_str8_c_rules(args[0], &ms))
+    {
+      error = str8_lit("wait_cargo: bad timeout");
+    }
+    else
+    {
+      rad_script->wait_kind = RAD_ScriptWaitKind_Cargo;
+      rad_script->wait_line_num = line->line_num;
+      rad_script->wait_until_us = now_time_us() + ms*1000;
+    }
+  }
   else if(str8_match(cmd, str8_lit("wait_idle"), 0))
   {
     U64 ms = RAD_SCRIPT_DEFAULT_TIMEOUT_US/1000;
@@ -1240,6 +1511,16 @@ rad_script_tick(void)
     {
       // rad: any frame after the sleep began means rad was woken
       rad_script->last_sleep_us = now_us - rad_script->sleep_begin_us;
+    }break;
+    case RAD_ScriptWaitKind_Cargo:
+    if(rad_cargo_is_running() || rad_cargo->pending_kind != RAD_CargoCmdKind_Null)
+    {
+      if(now_us < rad_script->wait_until_us)
+      {
+        return;
+      }
+      rad_script->error_count += 1;
+      rad_script_resultf("ERROR %I64u: wait_cargo timed out", rad_script->wait_line_num);
     }break;
     case RAD_ScriptWaitKind_Idle:
     if(rad_state->num_frames_requested != 0)

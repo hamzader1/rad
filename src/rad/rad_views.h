@@ -19,6 +19,7 @@ struct RAD_Document
   RAD_Document *next;
   RAD_Document *prev;
   Arena *arena;
+  U64 id;       // unique per document (a reopened file gets a new one)
   String8 path;
   TXT_LangKind lang;
   TB_Buffer *buffer;
@@ -50,6 +51,7 @@ struct RAD_CodeViewState
 
   // rad: per-frame command info
   S64 goto_line_num;
+  S64 goto_column_num;
   U8 find_text_buffer[1024];
   U64 find_text_size;
   B32 find_text_backward;
@@ -57,6 +59,12 @@ struct RAD_CodeViewState
   B32 center_cursor;
   B32 contain_cursor;
   B32 force_contain_only;
+
+  // rad: read-only views that grow (Output): the text size last frame, so a
+  // cursor at the end can follow new text; the last double-click, if any
+  U64 last_text_size;
+  B32 double_clicked;
+  U64 double_clicked_off;
 
   // rad: layout of the last build, in window pixels (scripted input aims
   // with it; see rad_script.h)
@@ -134,6 +142,30 @@ struct RAD_ExplorerState
 };
 
 ////////////////////////////////
+//~ rad: Problems Types
+//
+// The Problems view: the last cargo run's diagnostics, one row each, built
+// like the explorer (raddbg's watch-table rows). Enter or a double-click
+// goes to the location; Next/Previous Error (F8 / Shift+F8) move the
+// selection too.
+
+typedef struct RAD_ProblemsState RAD_ProblemsState;
+struct RAD_ProblemsState
+{
+  // rad: selection + scroll (cursor.y = 1-based row, 0 = none)
+  UI_ScrollPt2 scroll_pos;
+  Vec2S64 cursor;
+  Vec2S64 mark;
+  U64 diags_gen_seen;
+
+  // rad: layout of the last build (scripted input aims with it)
+  Rng2F32 layout_rect;
+  S64 layout_first_row;
+  Rng2F32 layout_first_row_rect;
+  F32 layout_row_height;
+};
+
+////////////////////////////////
 //~ rad: View State Cache Types
 
 typedef struct RAD_ViewState RAD_ViewState;
@@ -145,6 +177,7 @@ struct RAD_ViewState
   Arena *arena;
   RAD_CodeViewState cv;
   RAD_ExplorerState ex;
+  RAD_ProblemsState pr;
 
   // rad: query bar (port of raddbg's RD_ViewState query state; the command
   // and committed input live in the tab's `query` cfg child)
@@ -213,5 +246,12 @@ internal void rad_explorer_set_expanded(RAD_ExplorerState *ex, String8 path, B32
 internal void rad_explorer_rows_build(RAD_ExplorerState *ex, String8 root);
 internal CFG_Node *rad_explorer_target_panel_from_tab(CFG_Node *tab);
 internal void rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect);
+
+////////////////////////////////
+//~ rad: Output + Problems
+
+internal void rad_output_view_ui(CFG_Node *tab, Rng2F32 rect);
+internal void rad_problems_view_ui(CFG_Node *tab, Rng2F32 rect);
+internal void rad_goto_diagnostic(CFG_Node *window, U64 diag_num);
 
 #endif // RAD_VIEWS_H

@@ -152,6 +152,7 @@ struct RAD_CmdParams
   CFG_ID tab;
   String8 file_path;
   S64 line_num;
+  S64 column_num;
   String8 string;
 };
 
@@ -307,6 +308,7 @@ struct RAD_State
   U64 user_data_check_us;
 
   // rad: documents (one text buffer per open file, shared by its tabs)
+  U64 document_id_gen;
   struct RAD_Document *first_document;
   struct RAD_Document *last_document;
   struct RAD_Document *free_document;
@@ -371,6 +373,12 @@ internal void rad_focus_panel(CFG_Node *panel);
 internal void rad_focus_tab(CFG_Node *tab);
 internal CFG_Node *rad_explorer_tab_from_panel(CFG_Node *panel);
 internal CFG_Node *rad_panel_alloc_at_window_edge(CFG_Node *window, Side side, F32 pct);
+internal CFG_Node *rad_panel_split(CFG_Node *panel, Dir2 dir, F32 new_pct);
+internal B32 rad_tab_is_tool(CFG_Node *tab);
+internal B32 rad_tab_has_code_view(CFG_Node *tab);
+internal CFG_Node *rad_tab_from_window_kind(CFG_Node *window, String8 kind);
+internal CFG_Node *rad_editor_panel_from_window(CFG_Node *window);
+internal void rad_output_tab_reveal(CFG_Node *window);
 internal RAD_CmdKind rad_cmd_kind_from_code_name(String8 code_name);
 internal String8 rad_tab_query_input(CFG_Node *tab);
 internal void rad_tab_query_open(CFG_Node *tab, RAD_CmdKind kind);

@@ -152,6 +152,7 @@ typedef enum RAD_ScriptWaitKind
   RAD_ScriptWaitKind_Frames,
   RAD_ScriptWaitKind_Idle,
   RAD_ScriptWaitKind_Woken,
+  RAD_ScriptWaitKind_Cargo,
 }
 RAD_ScriptWaitKind;
 

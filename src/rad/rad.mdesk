@@ -1064,6 +1064,21 @@ RAD_CmdTable:
   {NextTab                next_tab             "Next Tab"             RightArrow        PageDown   ctrl   0      0      Null     0         0           0         0 }
   {PrevTab                prev_tab             "Previous Tab"         LeftArrow         PageUp     ctrl   0      0      Null     0         0           0         0 }
   {CloseTab               close_tab            "Close Tab"            X                 W          ctrl   0      0      Null     0         0           0         0 }
+
+  //- rad: cargo (Run and Stop take raddbg's Run / Kill All keys)
+  {CargoBuild             cargo_build          "Build"                Gear              B          ctrl   shift  0      Null     0         0           0         0 }
+  {CargoCheck             cargo_check          "Check"                Check             F7         0      0      0      Null     0         0           0         0 }
+  {CargoRun               cargo_run            "Run"                  Play              F5         0      0      0      Null     0         0           0         0 }
+  {CargoTest              cargo_test           "Test"                 CheckFilled       T          ctrl   shift  0      Null     0         0           0         0 }
+  {CargoStop              cargo_stop           "Stop"                 Stop              F5         0      shift  0      Null     0         0           0         0 }
+  {NextError              next_error           "Next Error"           DownArrow         F8         0      0      0      Null     0         0           0         0 }
+  {PrevError              prev_error           "Previous Error"       UpArrow           F8         0      shift  0      Null     0         0           0         0 }
+  {ShowOutput             show_output          "Output"               List              Null       0      0      0      Null     0         0           0         0 }
+  {ShowProblems           show_problems        "Problems"             WarningSmall      Null       0      0      0      Null     0         0           0         0 }
+  {ClearOutput            clear_output         "Clear Output"         Trash             Null       0      0      0      Null     0         0           0         0 }
+
+  //- rad: locations (internal; no default bindings)
+  {GoToLocation           goto_location        "Go To Location"       Null              Null       0      0      0      Null     0         0           0         0 }
 }
 
 @struct RAD_CmdKindInfo:

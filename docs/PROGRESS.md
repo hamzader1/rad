@@ -31,7 +31,7 @@ optimized build in `build\release\rad.exe` at the end of every milestone.
 | 5. Test and measure                  | Done. `tests\run_scripts.ps1`: 4 scripts, 60 checks, all pass (debug and release). |
 | 6. Editor essentials                 | Done. 13 scripts, 210 checks, all pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 7. Rust syntax highlighting          | Done. Rust lexing in the `text` layer (see below, `docs/notes/04-syntax-highlighting.md`); 14 scripts, 242 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
-| 8. Cargo integration                 | In progress: `json` layer done (see journal). |
+| 8. Cargo integration                 | In progress: `json` layer; cargo runner, Output + Problems tabs, Build menu, Next/Previous Error (see journal). Next: diagnostics in the editor, more scripts. |
 | 9. LSP client                        | Not started. |
 | 10. Remove debugger, rebrand         | Not started. |
 | 11-13. Mac foundation, Mac UI, debugging | Not started. |
@@ -313,6 +313,26 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (milestone 8, step 2: cargo runner, Output, Problems)
+- `rad_cargo.c/.h`: Build (Ctrl+Shift+B), Check (F7), Run (F5), Test
+  (Ctrl+Shift+T), Stop (Shift+F5); Run/Stop take raddbg's Run/Kill All keys.
+  Saves changed files, runs `cargo <cmd> --message-format=json` in the
+  project folder (explorer folder with a Cargo.toml, else the nearest one
+  above the editor's file), stdout+stderr on one pipe, in a job object
+  (Stop kills cargo, rustc and the program). A runner thread splits lines:
+  compiler messages -> rendered text + diagnostic; other cargo JSON dropped;
+  the rest printed as is. Paths resolved against the workspace root
+  (`cargo locate-project --workspace`).
+- Output tab: read-only code view on a TB_Buffer following a content key
+  the UI thread fills at most every 100 ms (raddbg's mutable_text copies
+  the whole log per append). Follows the end; double-click a location.
+- Problems tab: rows like the explorer's; Enter / double-click go there;
+  F8 / Shift+F8 walk them. Both tabs open in a panel under the editor (30%)
+  on the first command. Bottom bar: raddbg's run-state tags.
+- Script `cargo_build` (37 checks): new `wait_cargo`, fields `cargo_*`,
+  `diag*`, `output_*`, `line_diag`, targets `output`, `problem`. 15 scripts
+  pass (on `build\rad_probe.exe`; `build\rad.exe` was open).
 
 ### 2026-11-03 (milestone 8, step 1: json layer)
 - New layer `json` (`JSON_`, `src/json/`, base only): parser into an arena

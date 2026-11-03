@@ -161,7 +161,7 @@ rad_focus_panel(CFG_Node *panel)
       ws->menu_bar_focused = 0;
     }
     CFG_PanelNode *panel_node = cfg_panel_node_from_tree_cfg(panel_tree.root, panel);
-    if(panel_node->first == &cfg_nil_panel_node && !str8_match(panel_node->selected_tab->string, str8_lit("explorer"), 0))
+    if(panel_node->first == &cfg_nil_panel_node && !rad_tab_is_tool(panel_node->selected_tab))
     {
       rad_state->last_editor_panel = panel->id;
     }
@@ -266,6 +266,191 @@ rad_panel_alloc_at_window_edge(CFG_Node *window, Side side, F32 pct)
   }
   scratch_end(scratch);
   return panel;
+}
+
+internal CFG_Node *
+rad_panel_split(CFG_Node *split_panel, Dir2 split_dir, F32 new_pct)
+{
+  // NOTE(rad): port of the split part of raddbg's RD_CmdKind_NewPanel*/
+  // SplitPanel (without tab drag/drop handling): a new empty panel on
+  // `split_dir`'s side of `split_panel`. Across the parent's split axis the
+  // two share `split_panel`'s space (new: `new_pct`); along it, the new panel
+  // gets an equal share (same as raddbg). Does not focus it.
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *window = rad_window_cfg_from_cfg(split_panel);
+  CFG_PanelTree panel_tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+  Axis2 split_axis = axis2_from_dir2(split_dir);
+  Side split_side = side_from_dir2(split_dir);
+  CFG_Node *new_panel_cfg = &cfg_nil_node;
+  CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, split_panel);
+  CFG_PanelNode *parent = panel->parent;
+
+  // rad: splitting on same axis as parent -> insert new sibling on same axis, adjust sizes
+  if(parent != &cfg_nil_panel_node && parent->split_axis == split_axis)
+  {
+    CFG_Node *parent_cfg = parent->cfg;
+    CFG_Node *new_cfg = cfg_node_alloc(rad_state->cfg);
+    cfg_node_insert_child(rad_state->cfg, parent_cfg, split_side == Side_Max ? split_panel : split_panel->prev, new_cfg);
+    cfg_node_equip_stringf(rad_state->cfg, new_cfg, "%f", 1.f/(parent->child_count+1));
+    for(CFG_PanelNode *child = parent->first; child != &cfg_nil_panel_node; child = child->next)
+    {
+      F32 old_pct = child->pct_of_parent;
+      F32 new_pct = old_pct * ((F32)(parent->child_count) / (parent->child_count+1));
+      cfg_node_equip_stringf(rad_state->cfg, child->cfg, "%f", new_pct);
+    }
+    new_panel_cfg = new_cfg;
+  }
+
+  // rad: splitting on opposite axis as parent - need to create new replacement node, + new sibling
+  else
+  {
+    CFG_Node *split_panel_prev = panel->prev->cfg;
+    CFG_Node *new_parent = cfg_node_alloc(rad_state->cfg);
+    CFG_Node *new_sibling = cfg_node_alloc(rad_state->cfg);
+    if(panel == panel_tree.zoom_root)
+    {
+      CFG_Node *zoom_panel = cfg_node_child_from_string_or_alloc(rad_state->cfg, split_panel, str8_lit("zoom_root"));
+      cfg_node_insert_child(rad_state->cfg, new_parent, &cfg_nil_node, zoom_panel);
+    }
+    cfg_node_equip_string(rad_state->cfg, new_parent, split_panel->string);
+    cfg_node_equip_stringf(rad_state->cfg, split_panel, "%f", 1.f-new_pct);
+    cfg_node_equip_stringf(rad_state->cfg, new_sibling, "%f", new_pct);
+    if(parent->cfg != &cfg_nil_node)
+    {
+      cfg_node_unhook(rad_state->cfg, parent->cfg, split_panel);
+      cfg_node_insert_child(rad_state->cfg, parent->cfg, split_panel_prev, new_parent);
+    }
+    else
+    {
+      cfg_node_equip_string(rad_state->cfg, new_parent, str8_lit("panels"));
+      cfg_node_insert_child(rad_state->cfg, window, window->last, new_parent);
+      if(split_axis == Axis2_X)
+      {
+        cfg_node_child_from_string_or_alloc(rad_state->cfg, window, str8_lit("split_x"));
+      }
+      else
+      {
+        cfg_node_release(rad_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
+      }
+    }
+    CFG_Node *min = split_panel;
+    CFG_Node *max = new_sibling;
+    if(split_side == Side_Min)
+    {
+      Swap(CFG_Node *, min, max);
+    }
+    cfg_node_insert_child(rad_state->cfg, new_parent, new_parent->last, min);
+    cfg_node_insert_child(rad_state->cfg, new_parent, new_parent->last, max);
+    new_panel_cfg = new_sibling;
+  }
+  scratch_end(scratch);
+  return new_panel_cfg;
+}
+
+internal B32
+rad_tab_is_tool(CFG_Node *tab)
+{
+  // NOTE(rad): tabs that files never open next to: Open File / Go To Location
+  // aimed at their panel go to the editor panel instead
+  B32 result = (str8_match(tab->string, str8_lit("explorer"), 0) ||
+                str8_match(tab->string, str8_lit("output"), 0) ||
+                str8_match(tab->string, str8_lit("problems"), 0));
+  return result;
+}
+
+internal B32
+rad_tab_has_code_view(CFG_Node *tab)
+{
+  // NOTE(rad): tabs showing text in a code view (Go To Line, Find)
+  B32 result = (str8_match(tab->string, str8_lit("text"), 0) ||
+                str8_match(tab->string, str8_lit("output"), 0));
+  return result;
+}
+
+internal CFG_Node *
+rad_tab_from_window_kind(CFG_Node *window, String8 kind)
+{
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *result = &cfg_nil_node;
+  CFG_PanelTree tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+  for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node && result == &cfg_nil_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+  {
+    for(CFG_NodePtrNode *n = p->tabs.first; n != 0; n = n->next)
+    {
+      if(str8_match(n->v->string, kind, 0))
+      {
+        result = n->v;
+        break;
+      }
+    }
+  }
+  scratch_end(scratch);
+  return result;
+}
+
+internal CFG_Node *
+rad_editor_panel_from_window(CFG_Node *window)
+{
+  // NOTE(rad): where files open: the last focused panel not showing a tool
+  // tab, if it is still a leaf of this window; else the first such leaf
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *result = &cfg_nil_node;
+  CFG_Node *first_other = &cfg_nil_node;
+  CFG_Node *last_editor = cfg_node_from_id(rad_state->last_editor_panel);
+  CFG_PanelTree tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+  for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+  {
+    if(p->first == &cfg_nil_panel_node && !rad_tab_is_tool(p->selected_tab))
+    {
+      if(p->cfg == last_editor)
+      {
+        result = p->cfg;
+      }
+      if(first_other == &cfg_nil_node)
+      {
+        first_other = p->cfg;
+      }
+    }
+  }
+  if(result == &cfg_nil_node)
+  {
+    result = first_other;
+  }
+  scratch_end(scratch);
+  return result;
+}
+
+internal void
+rad_output_tab_reveal(CFG_Node *window)
+{
+  // NOTE(rad): select the Output tab (its panel keeps or loses the keyboard
+  // as before). None -> one next to the Problems tab; neither -> a new panel
+  // under the editor panel (30%) with Output and Problems.
+  CFG_Node *output_tab = rad_tab_from_window_kind(window, str8_lit("output"));
+  if(output_tab == &cfg_nil_node)
+  {
+    CFG_Node *problems_tab = rad_tab_from_window_kind(window, str8_lit("problems"));
+    if(problems_tab != &cfg_nil_node)
+    {
+      output_tab = cfg_node_alloc(rad_state->cfg);
+      cfg_node_equip_string(rad_state->cfg, output_tab, str8_lit("output"));
+      cfg_node_insert_child(rad_state->cfg, problems_tab->parent, problems_tab->prev, output_tab);
+    }
+    else
+    {
+      CFG_Node *editor_panel = rad_editor_panel_from_window(window);
+      if(editor_panel != &cfg_nil_node)
+      {
+        CFG_Node *bottom_panel = rad_panel_split(editor_panel, Dir2_Down, 0.3f);
+        output_tab = cfg_node_new(rad_state->cfg, bottom_panel, str8_lit("output"));
+        cfg_node_new(rad_state->cfg, bottom_panel, str8_lit("problems"));
+      }
+    }
+  }
+  if(output_tab != &cfg_nil_node)
+  {
+    rad_focus_tab(output_tab);
+  }
 }
 
 internal RAD_CmdKind
@@ -504,6 +689,16 @@ rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab)
       name = (folder.size != 0 ? folder : str8_lit("Explorer"));
     }
   }
+  else if(str8_match(tab->string, str8_lit("output"), 0))
+  {
+    icon_kind = RAD_IconKind_List;
+    name = str8_lit("Output");
+  }
+  else if(str8_match(tab->string, str8_lit("problems"), 0))
+  {
+    icon_kind = RAD_IconKind_WarningSmall;
+    name = str8_lit("Problems");
+  }
   else
   {
     name = tab->string;
@@ -532,6 +727,10 @@ rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab)
   }
 
   dr_fstrs_push_new(arena, &result, &params, name);
+  if(str8_match(tab->string, str8_lit("problems"), 0) && rad_cargo->diags_count != 0)
+  {
+    dr_fstrs_push_new(arena, &result, &params, push_str8f(arena, " %I64u", rad_cargo->diags_count), .color = rgba_secondary);
+  }
   if(rad_tab_is_dirty(tab))
   {
     dr_fstrs_push_new(arena, &result, &params, str8_lit(" "));
@@ -944,6 +1143,18 @@ rad_view_ui(CFG_Node *tab, Rng2F32 rect)
     {
       rad_explorer_view_ui(tab, rect);
     }
+
+    //////////////////////////////
+    //- rad: cargo output, problems
+    //
+    else if(str8_match(tab->string, str8_lit("output"), 0))
+    {
+      rad_output_view_ui(tab, rect);
+    }
+    else if(str8_match(tab->string, str8_lit("problems"), 0))
+    {
+      rad_problems_view_ui(tab, rect);
+    }
   }
 
   //////////////////////////////
@@ -1328,6 +1539,44 @@ rad_window_frame(RAD_Window *ws)
                   rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
                 }
 
+                // rad: build menu (cargo)
+                UI_Key build_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_build_menu_key_"));
+                UI_CtxMenu(build_menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+                {
+                  RAD_CmdKind cmds[] =
+                  {
+                    RAD_CmdKind_CargoBuild,
+                    RAD_CmdKind_CargoCheck,
+                    RAD_CmdKind_CargoRun,
+                    RAD_CmdKind_CargoTest,
+                    RAD_CmdKind_CargoStop,
+                    RAD_CmdKind_Null,//-
+                    RAD_CmdKind_NextError,
+                    RAD_CmdKind_PrevError,
+                    RAD_CmdKind_Null,//-
+                    RAD_CmdKind_ShowOutput,
+                    RAD_CmdKind_ShowProblems,
+                    RAD_CmdKind_ClearOutput,
+                  };
+                  U32 codepoints[] =
+                  {
+                    'b',
+                    'c',
+                    'r',
+                    't',
+                    's',
+                    0,//-
+                    'n',
+                    'p',
+                    0,//-
+                    'o',
+                    'm',
+                    'l',
+                  };
+                  StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
+                  rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
+                }
+
                 // rad: help menu
                 UI_Key help_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_help_menu_key_"));
                 UI_CtxMenu(help_menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
@@ -1368,6 +1617,7 @@ rad_window_frame(RAD_Window *ws)
                     {str8_lit("Window"),   'w', WM_Key_W, window_menu_key},
                     {str8_lit("Panel"),    'p', WM_Key_P, panel_menu_key},
                     {str8_lit("Tab"),      'b', WM_Key_V, tab_menu_key},
+                    {str8_lit("Build"),    'u', WM_Key_U, build_menu_key},
                     {str8_lit("Help"),     'h', WM_Key_H, help_menu_key},
                   };
 
@@ -1506,16 +1756,37 @@ rad_window_frame(RAD_Window *ws)
     ////////////////////////////
     //- rad: bottom bar
     //
-    // NOTE(rad): raddbg colors this bar by debugger state; with no debugger
-    // running, it uses "good_pop" - kept as the IDE's idle state.
+    // NOTE(rad): raddbg colors this bar by debugger state: "pop" with
+    // "Running..." while the target runs, "good_pop" when it is stopped or
+    // finished, "bad_pop" for an exception or a user error. A cargo command
+    // takes the target's place: running -> "pop"; it failed (exit code != 0,
+    // or cargo could not start) -> "bad_pop" until the next command;
+    // otherwise (nothing ran, success, stopped) -> "good_pop".
     //
     ProfScope("build bottom bar")
     {
       String8 tag = str8_lit("good_pop");
       B32 show_error = (rad_state->error_t >= 0.01f && rad_state->error_string_size != 0);
-      if(show_error)
+      RAD_CargoState *cargo = rad_cargo;
+      B32 cargo_running = rad_cargo_is_running();
+      B32 cargo_ran = (cargo->run != 0 && !cargo_running);
+      B32 cargo_stopped = 0;
+      B32 cargo_launch_failed = 0;
+      U64 cargo_exit_code = 0;
+      MutexScope(cargo->mutex)
+      {
+        cargo_stopped = cargo->stop_requested;
+        cargo_launch_failed = cargo->launch_failed;
+        cargo_exit_code = cargo->exit_code;
+      }
+      B32 cargo_failed = (cargo_ran && !cargo_stopped && (cargo_launch_failed || cargo_exit_code != 0));
+      if(show_error || cargo_failed)
       {
         tag = str8_lit("bad_pop");
+      }
+      else if(cargo_running)
+      {
+        tag = str8_lit("pop");
       }
 
       //- rad: compute fstrs for status explanation
@@ -1529,6 +1800,50 @@ rad_window_frame(RAD_Window *ws)
                           .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons));
         dr_fstrs_push_new(scratch.arena, &status_fstrs, &params, str8_lit("  "));
         dr_fstrs_push_new(scratch.arena, &status_fstrs, &params, error_string);
+      }
+      else if(cargo_running || cargo_ran)
+      {
+        // rad: same layout as raddbg's "Running..." (icon, two spaces, text)
+        DR_FStrParams params = {ui_top_font(), ui_top_text_raster_flags(), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+        String8 cmd_name = rad_cargo_cmd_display_name(cargo->run->kind);
+        RAD_IconKind icon = RAD_IconKind_Play;
+        String8 text = {0};
+        String8 counts = {0};
+        if(cargo->error_count != 0 || cargo->warning_count != 0)
+        {
+          counts = push_str8f(scratch.arena, "%I64u error%s, %I64u warning%s",
+                              cargo->error_count, cargo->error_count == 1 ? "" : "s",
+                              cargo->warning_count, cargo->warning_count == 1 ? "" : "s");
+        }
+        if(cargo_running)
+        {
+          text = push_str8f(scratch.arena, "Running %S...", cmd_name);
+        }
+        else if(cargo_stopped)
+        {
+          icon = RAD_IconKind_Stop;
+          text = push_str8f(scratch.arena, "%S stopped", cmd_name);
+        }
+        else if(cargo_launch_failed)
+        {
+          icon = RAD_IconKind_WarningBig;
+          text = str8_lit("Could not start cargo (is it on the PATH?)");
+        }
+        else if(cargo_exit_code != 0)
+        {
+          icon = RAD_IconKind_WarningBig;
+          text = push_str8f(scratch.arena, "%S failed (exit code %I64u)%s%S", cmd_name, cargo_exit_code, counts.size ? ": " : "", counts);
+        }
+        else
+        {
+          icon = RAD_IconKind_Check;
+          text = push_str8f(scratch.arena, "%S finished%s%S", cmd_name, counts.size ? ": " : "", counts);
+        }
+        dr_fstrs_push_new(scratch.arena, &status_fstrs, &params, rad_icon_kind_text_table[icon],
+                          .font = rad_font_from_slot(RAD_FontSlot_Icons),
+                          .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons));
+        dr_fstrs_push_new(scratch.arena, &status_fstrs, &params, str8_lit("  "));
+        dr_fstrs_push_new(scratch.arena, &status_fstrs, &params, text);
       }
       else
       {
@@ -2852,7 +3167,7 @@ rad_exec_cmd(RAD_Cmd *cmd)
                        (cmd_kind_info->query.slot == RAD_QuerySlot_String && cmd->params.string.size == 0)));
   if(query_needed)
   {
-    if(str8_match(tab_cfg->string, str8_lit("text"), 0))
+    if(rad_tab_has_code_view(tab_cfg))
     {
       rad_tab_query_open(tab_cfg, cmd->kind);
     }
@@ -2863,7 +3178,7 @@ rad_exec_cmd(RAD_Cmd *cmd)
 
     //- rad: code navigation (port of raddbg's code view commands)
     case RAD_CmdKind_GoToLine:
-    if(str8_match(tab_cfg->string, str8_lit("text"), 0))
+    if(rad_tab_has_code_view(tab_cfg))
     {
       rad_view_state_from_cfg(tab_cfg)->cv.goto_line_num = cmd->params.line_num;
     }break;
@@ -2871,7 +3186,7 @@ rad_exec_cmd(RAD_Cmd *cmd)
     case RAD_CmdKind_SearchBackwards:
     case RAD_CmdKind_FindNext:
     case RAD_CmdKind_FindPrev:
-    if(str8_match(tab_cfg->string, str8_lit("text"), 0))
+    if(rad_tab_has_code_view(tab_cfg))
     {
       String8 needle = cmd->params.string;
       if(cmd->kind == RAD_CmdKind_FindNext || cmd->kind == RAD_CmdKind_FindPrev)
@@ -2903,6 +3218,14 @@ rad_exec_cmd(RAD_Cmd *cmd)
         {
           panel_cfg = rad_panel_alloc_at_window_edge(rad_window_cfg_from_cfg(explorer_tab), Side_Max, 0.8f);
         }
+      }
+
+      // rad: nor into a panel showing Output or Problems: into the editor
+      // panel; none -> a new one above this panel
+      else if(file_path.size != 0 && rad_tab_is_tool(cfg_panel_node_from_tree_cfg(panel_tree.root, panel_cfg)->selected_tab))
+      {
+        CFG_Node *editor_panel = rad_editor_panel_from_window(window);
+        panel_cfg = (editor_panel != &cfg_nil_node ? editor_panel : rad_panel_split(panel_cfg, Dir2_Up, 0.7f));
       }
 
       if(file_path.size != 0 && panel_cfg != &cfg_nil_node)
@@ -3126,75 +3449,7 @@ rad_exec_cmd(RAD_Cmd *cmd)
     split:;
     if(split_dir != Dir2_Invalid && panel_cfg != &cfg_nil_node)
     {
-      // NOTE(rad): port of raddbg's RD_CmdKind_NewPanel*/SplitPanel (without
-      // tab drag/drop handling)
-      CFG_Node *split_panel = panel_cfg;
-      Axis2 split_axis = axis2_from_dir2(split_dir);
-      Side split_side = side_from_dir2(split_dir);
-      CFG_Node *new_panel_cfg = &cfg_nil_node;
-      CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, split_panel);
-      CFG_PanelNode *parent = panel->parent;
-
-      // rad: splitting on same axis as parent -> insert new sibling on same axis, adjust sizes
-      if(parent != &cfg_nil_panel_node && parent->split_axis == split_axis)
-      {
-        CFG_Node *parent_cfg = parent->cfg;
-        CFG_Node *new_cfg = cfg_node_alloc(rad_state->cfg);
-        cfg_node_insert_child(rad_state->cfg, parent_cfg, split_side == Side_Max ? split_panel : split_panel->prev, new_cfg);
-        cfg_node_equip_stringf(rad_state->cfg, new_cfg, "%f", 1.f/(parent->child_count+1));
-        for(CFG_PanelNode *child = parent->first; child != &cfg_nil_panel_node; child = child->next)
-        {
-          F32 old_pct = child->pct_of_parent;
-          F32 new_pct = old_pct * ((F32)(parent->child_count) / (parent->child_count+1));
-          cfg_node_equip_stringf(rad_state->cfg, child->cfg, "%f", new_pct);
-        }
-        new_panel_cfg = new_cfg;
-      }
-
-      // rad: splitting on opposite axis as parent - need to create new replacement node, + new sibling
-      else
-      {
-        CFG_Node *split_panel_prev = panel->prev->cfg;
-        CFG_Node *new_parent = cfg_node_alloc(rad_state->cfg);
-        CFG_Node *new_sibling = cfg_node_alloc(rad_state->cfg);
-        if(panel == panel_tree.zoom_root)
-        {
-          CFG_Node *zoom_panel = cfg_node_child_from_string_or_alloc(rad_state->cfg, split_panel, str8_lit("zoom_root"));
-          cfg_node_insert_child(rad_state->cfg, new_parent, &cfg_nil_node, zoom_panel);
-        }
-        cfg_node_equip_string(rad_state->cfg, new_parent, split_panel->string);
-        cfg_node_equip_string(rad_state->cfg, split_panel, str8_lit("0.5"));
-        cfg_node_equip_string(rad_state->cfg, new_sibling, str8_lit("0.5"));
-        if(parent->cfg != &cfg_nil_node)
-        {
-          cfg_node_unhook(rad_state->cfg, parent->cfg, split_panel);
-          cfg_node_insert_child(rad_state->cfg, parent->cfg, split_panel_prev, new_parent);
-        }
-        else
-        {
-          cfg_node_equip_string(rad_state->cfg, new_parent, str8_lit("panels"));
-          cfg_node_insert_child(rad_state->cfg, window, window->last, new_parent);
-          if(split_axis == Axis2_X)
-          {
-            cfg_node_child_from_string_or_alloc(rad_state->cfg, window, str8_lit("split_x"));
-          }
-          else
-          {
-            cfg_node_release(rad_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
-          }
-        }
-        CFG_Node *min = split_panel;
-        CFG_Node *max = new_sibling;
-        if(split_side == Side_Min)
-        {
-          Swap(CFG_Node *, min, max);
-        }
-        cfg_node_insert_child(rad_state->cfg, new_parent, new_parent->last, min);
-        cfg_node_insert_child(rad_state->cfg, new_parent, new_parent->last, max);
-        new_panel_cfg = new_sibling;
-      }
-
-      // rad: focus new panel
+      CFG_Node *new_panel_cfg = rad_panel_split(panel_cfg, split_dir, 0.5f);
       if(new_panel_cfg != &cfg_nil_node)
       {
         rad_focus_panel(new_panel_cfg);
@@ -3417,6 +3672,114 @@ rad_exec_cmd(RAD_Cmd *cmd)
       {
         rad_focus_tab(next_selected_tab);
       }
+    }break;
+
+    //- rad: cargo
+    case RAD_CmdKind_CargoBuild:
+    case RAD_CmdKind_CargoCheck:
+    case RAD_CmdKind_CargoRun:
+    case RAD_CmdKind_CargoTest:
+    if(window != &cfg_nil_node)
+    {
+      rad_cargo_start(rad_cargo_cmd_kind_from_rad_cmd_kind(cmd->kind), window);
+    }break;
+    case RAD_CmdKind_CargoStop:
+    {
+      rad_cargo_stop();
+    }break;
+    case RAD_CmdKind_ClearOutput:
+    {
+      rad_cargo_clear_output();
+    }break;
+    case RAD_CmdKind_ShowOutput:
+    case RAD_CmdKind_ShowProblems:
+    if(window != &cfg_nil_node)
+    {
+      // rad: like the run commands do it (a panel under the editor if there is
+      // none), then select and focus the asked one
+      rad_output_tab_reveal(window);
+      String8 kind = (cmd->kind == RAD_CmdKind_ShowOutput ? str8_lit("output") : str8_lit("problems"));
+      CFG_Node *tab = rad_tab_from_window_kind(window, kind);
+      CFG_Node *output_tab = rad_tab_from_window_kind(window, str8_lit("output"));
+      if(tab == &cfg_nil_node && output_tab != &cfg_nil_node)
+      {
+        tab = cfg_node_new(rad_state->cfg, output_tab->parent, kind);
+      }
+      if(tab != &cfg_nil_node)
+      {
+        rad_focus_tab(tab);
+        rad_focus_panel(tab->parent);
+      }
+    }break;
+    case RAD_CmdKind_NextError:
+    case RAD_CmdKind_PrevError:
+    if(window != &cfg_nil_node && rad_cargo->diags_count != 0)
+    {
+      U64 count = rad_cargo->diags_count;
+      U64 current = Min(rad_cargo->diag_cursor, count);
+      U64 next = 0;
+      if(cmd->kind == RAD_CmdKind_NextError)
+      {
+        next = (current >= count ? 1 : current+1);
+      }
+      else
+      {
+        next = (current <= 1 ? count : current-1);
+      }
+      rad_goto_diagnostic(window, next);
+    }break;
+
+    //- rad: locations (problems, output, Next/Previous Error)
+    case RAD_CmdKind_GoToLocation:
+    if(cmd->params.file_path.size != 0 && window != &cfg_nil_node)
+    {
+      String8 file_path = path_normalized_from_string(scratch.arena, cmd->params.file_path);
+
+      // rad: a tab showing the file (the selected one of its panel first)
+      CFG_Node *tab = &cfg_nil_node;
+      CFG_Node *selected_tab = &cfg_nil_node;
+      for(CFG_PanelNode *p = panel_tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
+      {
+        for(CFG_NodePtrNode *n = p->tabs.first; n != 0; n = n->next)
+        {
+          if(str8_match(rad_file_path_from_tab(n->v), file_path, StringMatchFlag_CaseInsensitive|StringMatchFlag_SlashInsensitive))
+          {
+            if(tab == &cfg_nil_node)
+            {
+              tab = n->v;
+            }
+            if(selected_tab == &cfg_nil_node && n->v == p->selected_tab)
+            {
+              selected_tab = n->v;
+            }
+          }
+        }
+      }
+      if(selected_tab != &cfg_nil_node)
+      {
+        tab = selected_tab;
+      }
+
+      // rad: none -> a new tab in the editor panel
+      if(tab == &cfg_nil_node)
+      {
+        CFG_Node *editor_panel = rad_editor_panel_from_window(window);
+        if(editor_panel == &cfg_nil_node)
+        {
+          editor_panel = rad_panel_alloc_at_window_edge(window, Side_Max, 0.8f);
+        }
+        tab = cfg_node_new(rad_state->cfg, editor_panel, str8_lit("text"));
+        CFG_Node *path = cfg_node_new(rad_state->cfg, tab, str8_lit("path"));
+        cfg_node_new(rad_state->cfg, path, file_path);
+      }
+
+      // rad: focus it; its code view goes to the line and column once the
+      // text is loaded
+      rad_focus_tab(tab);
+      rad_focus_panel(tab->parent);
+      RAD_CodeViewState *cv = &rad_view_state_from_cfg(tab)->cv;
+      cv->goto_line_num = Max(1, cmd->params.line_num);
+      cv->goto_column_num = cmd->params.column_num;
     }break;
   }
   scratch_end(scratch);
@@ -3690,6 +4053,9 @@ rad_init(CmdLine *cmdln)
     rad_state->view_state_slots_count = 256;
     rad_state->view_state_slots = push_array(rad_state->arena, RAD_ViewStateSlot, rad_state->view_state_slots_count);
   }
+
+  //- rad: cargo integration (output, diagnostics, runner thread)
+  rad_cargo_init();
 
   //- rad: user data file (session; port of raddbg's user file): --user:<path>,
   // else %APPDATA%/rad/default.rad_user; scripted tests use none unless given
@@ -4326,6 +4692,12 @@ rad_frame(void)
   rad_documents_tick();
 
   //////////////////////////////
+  //- rad: cargo: take the runner's output and diagnostics, start a waiting
+  // command, keep the Output tab's text current
+  //
+  rad_cargo_tick();
+
+  //////////////////////////////
   //- rad: compute all ambiguous paths from view titles (port of raddbg's)
   //
   {
@@ -4465,6 +4837,14 @@ rad_frame(void)
       String8List error_log_lines = str8_split(scratch.arena, log.strings[LogMsgKind_UserError], (U8 *)"\n", 1, 0);
       rad_set_error(str8_list_join(scratch.arena, &error_log_lines, &(StringJoin){.sep = str8_lit(" ")}));
     }
+  }
+
+  //////////////////////////////
+  //- rad: exiting -> stop a running cargo command (and what it started)
+  //
+  if(rad_state->quit)
+  {
+    rad_cargo_shutdown();
   }
 
   //////////////////////////////

@@ -98,7 +98,7 @@ rad_view_state_animate(void)
         vs->loading_t_target = 0;
       }
 
-      UI_ScrollPt2 *scroll_pts[] = {&vs->cv.scroll_pos, &vs->ex.scroll_pos};
+      UI_ScrollPt2 *scroll_pts[] = {&vs->cv.scroll_pos, &vs->ex.scroll_pos, &vs->pr.scroll_pos};
       for EachElement(idx, scroll_pts)
       {
         UI_ScrollPt2 *scroll_pos = scroll_pts[idx];
@@ -191,6 +191,8 @@ rad_document_from_path(String8 path)
     }
     MemoryZeroStruct(doc);
     doc->arena = arena_alloc();
+    rad_state->document_id_gen += 1;
+    doc->id = rad_state->document_id_gen;
     doc->path = push_str8_copy(doc->arena, path);
     doc->lang = txt_lang_kind_from_extension(str8_skip_last_dot(path));
     doc->buffer = tb_buffer_alloc(doc->lang);
@@ -935,10 +937,19 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
   if(cv->goto_line_num != 0 && text_is_ready)
   {
     S64 line_num = cv->goto_line_num;
+    S64 column_num = cv->goto_column_num;
     cv->goto_line_num = 0;
+    cv->goto_column_num = 0;
     line_num = Clamp(1, line_num, (S64)text_patched.line_map.total_line_count);
     Rng1U64 range = txt_range_from_line_num(&text_patched.line_map, line_num);
     cv->cursor = cv->mark = range.min;
+
+    // rad: not in raddbg: a column too (Go To Location: 1-based, characters)
+    if(column_num > 1)
+    {
+      cv->cursor = cv->mark = rad_offset_from_line_column(&text_patched, line_num, column_num);
+      cv->preferred_column = (S64)(cv->cursor - range.min);
+    }
     cv->center_cursor = !cv->force_contain_only && (!cv->contain_cursor || (line_num < target_visible_line_num_range.min+4 || target_visible_line_num_range.max-4 < line_num));
   }
 
@@ -956,6 +967,14 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     UI_Focus(UI_FocusKind_On)
     {
       sig = rad_code_slicef(&code_slice_params, &cv->cursor, &cv->mark, &cv->preferred_column, "code_slice");
+    }
+
+    //- rad: double-click -> remember where (the Output view goes to the
+    // location written there)
+    if(ui_double_clicked(sig.base))
+    {
+      cv->double_clicked = 1;
+      cv->double_clicked_off = sig.mouse_off;
     }
 
     //- rad: record layout (for scripted input)
@@ -1849,6 +1868,354 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
   if(open_path.size != 0)
   {
     rad_cmd(RAD_CmdKind_OpenFile, .panel = rad_explorer_target_panel_from_tab(tab)->id, .file_path = open_path);
+  }
+
+  scratch_end(scratch);
+}
+
+////////////////////////////////
+//~ rad: Output + Problems
+
+internal void
+rad_output_view_ui(CFG_Node *tab, Rng2F32 rect)
+{
+  // NOTE(rad): the cargo output in a read-only code view (raddbg's Output tab
+  // is a text view on its output log, too). A cursor at the end of the text
+  // follows new output, like a terminal; clicking elsewhere stops that,
+  // Ctrl+End follows again. A double-click on a line with a
+  // `<path>:<line>:<column>`, or on the first line of a compiler message,
+  // goes there.
+  RAD_ViewState *vs = rad_view_state_from_cfg(tab);
+  RAD_CodeViewState *cv = &vs->cv;
+  Temp scratch = scratch_begin(0, 0);
+  Access *access = access_open();
+  TB_Buffer *buffer = rad_cargo->output_buffer;
+  rad_code_view_init(cv);
+  cv->editable = 0;
+
+  //////////////////////////////
+  //- rad: text
+  //
+  TB_Text text = tb_text_from_buffer(scratch.arena, access, buffer);
+  TXT_TextInfo info = text.base_info;
+  String8 data = text.base_data;
+  B32 has_text = (info.lines_count != 0 && text.patched.size != 0);
+
+  //////////////////////////////
+  //- rad: new text -> a cursor at the end of the old text moves to the new end
+  //
+  if(cv->buffer_version != buffer->version)
+  {
+    if(cv->cursor == cv->mark && cv->cursor >= cv->last_text_size)
+    {
+      cv->cursor = cv->mark = text.patched.size;
+      cv->contain_cursor = 1;
+    }
+    cv->cursor = Min(cv->cursor, text.patched.size);
+    cv->mark = Min(cv->mark, text.patched.size);
+    cv->buffer_version = buffer->version;
+  }
+
+  //////////////////////////////
+  //- rad: build (empty: same layout as the explorer's "No folder open.")
+  //
+  if(!has_text)
+  {
+    UI_WidthFill UI_HeightFill UI_Column UI_Padding(ui_pct(1, 0))
+    {
+      UI_PrefWidth(ui_children_sum(1)) UI_PrefHeight(ui_em(3, 1))
+        UI_Row UI_Padding(ui_pct(1, 0))
+        UI_PrefWidth(ui_text_dim(1, 1))
+        UI_TagF("weak")
+      {
+        ui_labelf("No output yet.");
+      }
+    }
+  }
+  else
+  {
+    rad_code_view_build(scratch.arena, tab, cv, buffer, rect, TXT_LangKind_Null, &info, data);
+    cv->buffer_version = buffer->version;
+  }
+  cv->last_text_size = text.patched.size;
+
+  //////////////////////////////
+  //- rad: double-click -> the location on that line (from a message's first
+  // line: on the lines below it, up to a blank line)
+  //
+  if(cv->double_clicked)
+  {
+    cv->double_clicked = 0;
+    if(has_text)
+    {
+      String8 root = rad_cargo_workspace_root(scratch.arena);
+      U64 line_count = text.patched.line_map.total_line_count;
+      U64 line_num = txt_line_num_from_off(&text.patched.line_map, cv->double_clicked_off);
+      for(U64 scan = line_num; 1 <= scan && scan <= line_count && scan < line_num+4; scan += 1)
+      {
+        Rng1U64 range = txt_range_from_line_num(&text.patched.line_map, scan);
+        String8 line = memory_map_data_from_range(scratch.arena, &text.patched.memory_map, range);
+        String8 path = {0};
+        S64 loc_line = 0;
+        S64 loc_column = 0;
+        if(rad_location_from_text_line(scratch.arena, line, root, &path, &loc_line, &loc_column))
+        {
+          rad_cmd(RAD_CmdKind_GoToLocation, .file_path = path, .line_num = loc_line, .column_num = loc_column);
+          break;
+        }
+        if(str8_skip_chop_whitespace(line).size == 0)
+        {
+          break;
+        }
+      }
+    }
+  }
+
+  access_close(access);
+  scratch_end(scratch);
+}
+
+internal void
+rad_goto_diagnostic(CFG_Node *window, U64 diag_num)
+{
+  // NOTE(rad): selects the diagnostic (Problems view, Next/Previous Error) and
+  // goes to it. In an open document it is where it moved with the edits made
+  // since the build; otherwise at the reported line and column.
+  RAD_CargoState *c = rad_cargo;
+  if(1 <= diag_num && diag_num <= c->diags_count)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    RAD_Diagnostic *diag = c->diags[diag_num-1];
+    S64 line = diag->line;
+    S64 column = diag->column;
+    RAD_Document *doc = rad_document_lookup(diag->path);
+    if(doc != 0 && tb_buffer_is_loaded(doc->buffer))
+    {
+      Access *access = access_open();
+      TB_Text text = tb_text_from_buffer(scratch.arena, access, doc->buffer);
+      if(text.base_info.lines_count != 0)
+      {
+        Rng1U64 range = rad_diagnostic_range_from_document(diag, doc, &text.patched);
+        rad_line_column_from_offset(&text.patched, range.min, &line, &column);
+      }
+      access_close(access);
+    }
+    c->diag_cursor = diag_num;
+    rad_cmd(RAD_CmdKind_GoToLocation, .window = window->id, .file_path = diag->path, .line_num = line, .column_num = column);
+    scratch_end(scratch);
+  }
+}
+
+internal void
+rad_problems_view_ui(CFG_Node *tab, Rng2F32 rect)
+{
+  // NOTE(rad): rows built like the explorer's (raddbg's watch-table rows);
+  // the selection is the shared Next/Previous Error position
+  Temp scratch = scratch_begin(0, 0);
+  RAD_ViewState *vs = rad_view_state_from_cfg(tab);
+  RAD_ProblemsState *pr = &vs->pr;
+  RAD_CargoState *c = rad_cargo;
+  S64 rows_count = (S64)c->diags_count;
+  String8 root = rad_cargo_workspace_root(scratch.arena);
+  U64 goto_num = 0;
+
+  //////////////////////////////
+  //- rad: unpack
+  //
+  F32 row_height_px = ui_top_px_height();
+  Vec2F32 rect_dim = dim_2f32(rect);
+  F32 contents_width_px = (rect_dim.x - floor_f32(ui_bottom_font_size()*1.5f));
+  pr->layout_rect = rect;
+  pr->layout_row_height = row_height_px;
+
+  //////////////////////////////
+  //- rad: selection = the shared position; moved from outside (F8, a new
+  // run) -> scroll it into view
+  //
+  {
+    S64 shared = (S64)Min(c->diag_cursor, (U64)rows_count);
+    B32 moved_outside = (pr->cursor.y != shared || pr->diags_gen_seen != c->diags_gen);
+    pr->diags_gen_seen = c->diags_gen;
+    pr->cursor = pr->mark = v2s64(0, shared);
+    if(moved_outside && shared != 0)
+    {
+      S64 visible_rows = Max(1, (S64)(rect_dim.y / row_height_px));
+      S64 row_idx = shared-1;
+      if(row_idx < pr->scroll_pos.y.idx || row_idx >= pr->scroll_pos.y.idx + visible_rows - 1)
+      {
+        S64 new_idx = Clamp(0, row_idx - visible_rows/2, Max(0, rows_count-1));
+        ui_scroll_pt_target_idx(&pr->scroll_pos.y, new_idx);
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: empty -> say so
+  //
+  if(rows_count == 0)
+  {
+    UI_WidthFill UI_HeightFill UI_Column UI_Padding(ui_pct(1, 0))
+    {
+      UI_PrefWidth(ui_children_sum(1)) UI_PrefHeight(ui_em(3, 1))
+        UI_Row UI_Padding(ui_pct(1, 0))
+        UI_PrefWidth(ui_text_dim(1, 1))
+        UI_TagF("weak")
+      {
+        ui_labelf("%s", rad_cargo_is_running() ? "No problems so far." : "No problems.");
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: keyboard: Enter goes to the selected problem
+  //
+  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && rows_count != 0)
+  {
+    for(UI_Event *evt = 0; ui_next_event(&evt);)
+    {
+      if(evt->kind == UI_EventKind_Press && evt->key == WM_Key_Return && evt->modifiers == 0 && pr->cursor.y >= 1)
+      {
+        goto_num = (U64)pr->cursor.y;
+        ui_eat_event(evt);
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: table (same scroll list, rows and cells as the explorer)
+  //
+  if(rows_count != 0)
+  {
+    UI_ScrollListParams scroll_list_params = {0};
+    {
+      scroll_list_params.flags         = UI_ScrollListFlag_All;
+      scroll_list_params.row_height_px = row_height_px;
+      scroll_list_params.dim_px        = rect_dim;
+      scroll_list_params.cursor_range  = r2s64(v2s64(0, 0), v2s64(0, rows_count));
+      scroll_list_params.item_range    = r1s64(0, rows_count);
+      scroll_list_params.cursor_min_is_empty_selection[Axis2_Y] = 1;
+    }
+    Rng1S64 visible_row_rng = {0};
+    UI_ScrollListSignal scroll_list_sig = {0};
+    UI_Focus(UI_FocusKind_On)
+      UI_ScrollList(&scroll_list_params, &pr->scroll_pos.y, &pr->cursor, &pr->mark, &visible_row_rng, &scroll_list_sig)
+      UI_Focus(UI_FocusKind_Null)
+    {
+      ui_set_next_pref_height(ui_children_sum(1));
+      ui_set_next_child_layout_axis(Axis2_Y);
+      UI_Box *table = ui_build_box_from_string(0, str8_lit("table"));
+      UI_Parent(table)
+        for(S64 row_idx = visible_row_rng.min; row_idx <= visible_row_rng.max && row_idx < rows_count; row_idx += 1)
+      {
+        RAD_Diagnostic *diag = c->diags[row_idx];
+        B32 row_selected = (pr->cursor.y == row_idx+1);
+
+        //- rad: row text: [icon]  message  code  path:line:column
+        DR_FStrList fstrs = {0};
+        {
+          RAD_IconKind icon_kind = (diag->kind == RAD_DiagnosticKind_Error   ? RAD_IconKind_WarningBig :
+                                    diag->kind == RAD_DiagnosticKind_Warning ? RAD_IconKind_WarningSmall :
+                                    RAD_IconKind_Info);
+          Vec4F32 text_color = ui_color_from_name(str8_lit("text"));
+          Vec4F32 weak_color = text_color;
+          Vec4F32 icon_color = text_color;
+          UI_TagF("weak")
+          {
+            weak_color = ui_color_from_name(str8_lit("text"));
+          }
+          if(diag->kind == RAD_DiagnosticKind_Error)
+          {
+            UI_TagF("bad") icon_color = ui_color_from_name(str8_lit("text"));
+          }
+          else if(diag->kind != RAD_DiagnosticKind_Warning)
+          {
+            icon_color = weak_color;
+          }
+          String8 path = diag->path;
+          if(root.size != 0 && path.size > root.size+1 &&
+             str8_match(str8_prefix(path, root.size), root, StringMatchFlag_CaseInsensitive|StringMatchFlag_SlashInsensitive))
+          {
+            path = str8_skip(path, root.size+1);
+          }
+          DR_FStrParams params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), text_color, ui_top_font_size()};
+          dr_fstrs_push_new(scratch.arena, &fstrs, &params, rad_icon_kind_text_table[icon_kind],
+                            .font = rad_font_from_slot(RAD_FontSlot_Icons),
+                            .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons),
+                            .color = icon_color);
+          dr_fstrs_push_new(scratch.arena, &fstrs, &params, str8_lit("  "));
+          dr_fstrs_push_new(scratch.arena, &fstrs, &params, diag->message);
+          if(diag->code.size != 0)
+          {
+            dr_fstrs_push_new(scratch.arena, &fstrs, &params, push_str8f(scratch.arena, "  %S", diag->code), .color = weak_color);
+          }
+          dr_fstrs_push_new(scratch.arena, &fstrs, &params, push_str8f(scratch.arena, "  %S:%I64d:%I64d", path, diag->line, diag->column), .color = weak_color);
+        }
+
+        //- rad: build row box
+        UI_BoxFlags row_flags = UI_BoxFlag_DisableFocusOverlay;
+        if(row_idx & 1)
+        {
+          ui_set_next_tag(str8_lit("alt"));
+          row_flags |= UI_BoxFlag_DrawBackground;
+        }
+        ui_set_next_pref_width(ui_px(contents_width_px, 1.f));
+        ui_set_next_pref_height(ui_px(row_height_px, 1.f));
+        ui_set_next_focus_hot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off);
+        UI_Box *row_box = ui_build_box_from_stringf(row_flags|((row_idx+1 == rows_count)*UI_BoxFlag_DrawSideBottom)|UI_BoxFlag_Clickable, "row_%I64x", row_idx);
+
+        //- rad: record layout (for scripted input)
+        if(row_idx == visible_row_rng.min)
+        {
+          pr->layout_first_row      = row_idx;
+          pr->layout_first_row_rect = row_box->rect;
+        }
+
+        //- rad: build cell
+        UI_Signal sig = {0};
+        UI_Parent(row_box)
+        {
+          UI_Box *cell_box = &ui_nil_box;
+          UI_PrefWidth(ui_px(contents_width_px, 1.f))
+          {
+            ui_set_next_fixed_height(floor_f32(row_height_px));
+            cell_box = ui_build_box_from_stringf(UI_BoxFlag_DrawSideLeft, "cell_%I64x", row_idx);
+          }
+          RAD_CellParams cell_params = {0};
+          cell_params.flags       = (RAD_CellFlag_KeyboardClickable|RAD_CellFlag_NoBackground);
+          cell_params.value_fstrs = fstrs;
+          UI_Parent(cell_box)
+            UI_FocusHot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off)
+            UI_FocusActive(UI_FocusKind_Off)
+            RAD_Font(RAD_FontSlot_Code)
+            UI_TagF("weak")
+          {
+            sig = rad_cellf(&cell_params, "###cell_%I64x", row_idx);
+          }
+        }
+        UI_Signal row_sig = ui_signal_from_box(row_box);
+
+        //- rad: interactions: press selects; double-click goes there
+        if(ui_pressed(sig) || ui_pressed(row_sig))
+        {
+          pr->cursor = pr->mark = v2s64(0, row_idx+1);
+          rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
+        }
+        if(ui_double_clicked(sig) || ui_double_clicked(row_sig))
+        {
+          goto_num = (U64)row_idx+1;
+        }
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: selection -> the shared position; deferred go-to
+  //
+  c->diag_cursor = (U64)Clamp(0, pr->cursor.y, rows_count);
+  if(goto_num != 0)
+  {
+    rad_goto_diagnostic(cfg_window_from_cfg(tab), goto_num);
+    pr->cursor = pr->mark = v2s64(0, (S64)goto_num);
   }
 
   scratch_end(scratch);

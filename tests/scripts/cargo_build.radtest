@@ -1,0 +1,83 @@
+# Cargo Build on a project with one error and one warning: the Output and
+# Problems panel, diagnostics, the bottom bar state, Next/Previous Error,
+# going to a problem from the Problems tab and from the Output text, and a
+# build after fixing the error (Build saves first).
+
+open_folder ../fixtures/cargo_errors
+wait_idle
+open ../fixtures/cargo_errors/src/main.rs
+wait_idle
+expect panel_count == 2
+expect cargo_status == "none"
+
+# build: output + problems panel appears under the editor; keyboard stays
+cmd cargo_build
+wait_cargo
+wait_idle
+expect cargo_status == "failed"
+expect cargo_exit_code == 101
+expect panel_count == 3
+expect panel == "text"
+expect tab == "main.rs"
+expect diag_count == 2
+expect diag_errors == 1
+expect diag_warnings == 1
+expect diag 1 == "error src/main.rs:8:29 cannot find value `reslt` in this scope"
+expect diag 2 == "warning src/main.rs:2:9 unused variable: `unused`"
+expect output_has "Compiling cargo_errors v0.1.0" == 1
+expect output_has "error[E0425]: cannot find value `reslt` in this scope" == 1
+expect output_has "[exit code 101," == 1
+print output_line 1
+print output_line 2
+print output_line 3
+print output_line 4
+print output_lines
+print output_line_count
+print output_cursor_line
+
+# Next / Previous Error: through both, around the ends
+key f8
+wait_idle
+expect diag_selected == 1
+expect cursor_line == 8
+expect cursor_col == 29
+key f8
+wait_idle
+expect diag_selected == 2
+expect cursor_line == 2
+expect cursor_col == 9
+key f8
+wait_idle
+expect diag_selected == 1
+expect cursor_line == 8
+key shift+f8
+wait_idle
+expect diag_selected == 2
+expect cursor_line == 2
+
+# Problems tab: double-click a row -> there, keyboard to the editor
+cmd show_problems
+wait_idle
+expect panel == "problems"
+double_click problem 1
+wait_idle
+expect panel == "text"
+expect cursor_line == 8
+expect cursor_col == 29
+
+# fix the error (cursor is at `reslt`), build again: saved, one warning left
+key delete 5
+text "result"
+wait_idle
+expect line 8 == "    println!(\"result = {}\", result);"
+expect dirty == 1
+cmd cargo_build
+wait_cargo
+wait_idle
+expect dirty == 0
+expect cargo_status == "finished"
+expect cargo_exit_code == 0
+expect diag_count == 1
+expect diag 1 == "warning src/main.rs:2:9 unused variable: `unused`"
+expect panel_count == 3
+quit

@@ -9,6 +9,7 @@
 //
 //   base -> mdesk -> window_manager, shell -> config
 //        -> content, file_stream, artifact_cache -> text, mutable_text
+//        -> json
 //        -> font_provider -> render -> font_cache -> draw -> ui -> rad
 //
 // No debugger layer (demon, dbg_engine, eval, dbg_info, rdi, pdb, ...) is
@@ -45,6 +46,7 @@
 #include "text/text.h"
 #include "text_buffer/text_buffer.h"
 #include "mutable_text/mutable_text.h"
+#include "json/json.h"
 #include "font_provider/font_provider_inc.h"
 #include "render/render_inc.h"
 #include "font_cache/font_cache.h"
@@ -66,6 +68,7 @@
 #include "text/text.c"
 #include "text_buffer/text_buffer.c"
 #include "mutable_text/mutable_text.c"
+#include "json/json.c"
 #include "font_provider/font_provider_inc.c"
 #include "render/render_inc.c"
 #include "font_cache/font_cache.c"
