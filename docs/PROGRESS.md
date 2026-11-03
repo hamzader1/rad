@@ -6,15 +6,23 @@ on top). CLAUDE.md holds the goals and decisions; this file holds where we are.
 
 ## Status (2026-11-03)
 
-Windows only for now; macOS is milestones 9-10, at the very end (decided 2026-11-03).
+Windows only for now; macOS is milestones 11-12, at the very end (decided 2026-11-03).
+Plan revised 2026-11-03 (see CLAUDE.md section 6). Builds: unoptimized day to day; an
+optimized build in `build\release\rad.exe` at the end of every milestone.
 
 | Milestone (CLAUDE.md section 6)      | State |
 |--------------------------------------|-------|
 | 1. Build and read                    | Done. `build rad` works; notes in `docs/notes/`; option B chosen. |
 | 2. Editor view without a debugger    | Done. |
-| 3. Editable text core                | Mostly done, see below. |
+| 3. Editable text core                | Mostly done, see below (rest folds into 6). |
 | 4. File explorer                     | Done (keyboard, mouse, Open Folder checked). "+" in its panel = Open Folder. |
-| 5 to 11                              | Not started. |
+| 5. Test and measure                  | In progress. |
+| 6. Editor essentials                 | Not started. |
+| 7. Rust syntax highlighting          | Not started. |
+| 8. Cargo integration                 | Not started. |
+| 9. LSP client                        | Not started. |
+| 10. Remove debugger, rebrand         | Not started. |
+| 11-13. Mac foundation, Mac UI, debugging | Not started. |
 
 Milestone 3 details:
 - The buffer is the `text_buffer` layer (`TB_`), used by the code view.
@@ -59,17 +67,15 @@ Milestone 4 details:
 
 ## Next steps
 
-1. User check: wheel/scroll-bar scrolling in a long file and a long
-   explorer list (fixed 2026-11-03, verified by log, not by eye); the
-   explorer "+" button; use a release build (`build rad release`).
-2. Explorer as a "special panel" beyond "+": user to decide (tab not
-   closable? fixed-width sidebar? other tabs kept out of it?).
-3. Editor speed: user to say what feels slow (typing delay, scrolling,
-   opening files, startup). Measured so far: see the 2026-11-03 (scroll fix)
-   journal entry.
-4. Milestone 5, Rust syntax highlighting: a Rust lexer in `text`, in the
-   style of the existing C lexer (`txt_lang_kind_from_extension` -> `.rs`).
-5. For milestone 9 (Mac, at the end), already known: `base_core.h:276-277`
+1. Milestone 5, test and measure: `--script:<file>` mode in rad (input
+   injection without focus, state checks, frame/latency timing, results
+   file) and a runner in `tests/`. Then scripts for scroll, typing,
+   undo/redo, save, explorer.
+2. Open questions for the user: explorer as a "special panel" beyond "+"
+   (tab not closable? fixed-width sidebar? other tabs kept out of it?);
+   what exactly feels slow (typing delay, scrolling, opening, startup).
+3. Milestone 6 then 7 (Rust lexer in `text`, C lexer style, `.rs`).
+4. For milestone 11 (Mac, at the end), already known: `base_core.h:276-277`
    and `base_core.c:667` need ARM64 guards; drop `-mcx16` on ARM64.
 
 ## Known limits
@@ -140,6 +146,12 @@ Milestone 4 details:
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (plan revised)
+- Agreed with the user: new milestones 5 (test and measure) and 6 (editor
+  essentials) before language work; Cargo (8) before LSP (9); removing the
+  debugger (10) last on Windows. Debug builds by default, an optimized
+  build at the end of every milestone. No Linux build/CI for now.
 
 ### 2026-11-03 (scroll fix)
 - Bug (user): wheel/scroll bar moved the bar but not the text. Cause: the

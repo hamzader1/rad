@@ -124,6 +124,12 @@ offsets; negotiate UTF-8 if the server supports it).
 ## 6. Plan (milestones, each with a "done when")
 
 Updated 2026-11-03: Windows first, macOS at the very end (renumbered).
+Revised 2026-11-03 (agreed with the user): added milestones 5 (test and measure) and
+6 (editor essentials) before any language work; Cargo now comes before LSP (it builds
+the shared plumbing: process with pipes, JSON, diagnostics in the editor); removing the
+debugger is the last Windows step (raddbg.exe stays the visual reference until then).
+Old numbers: syntax 5 -> 7, LSP 6 -> 9, Cargo 7 -> 8, remove debugger 8 -> 10,
+Mac 9/10 -> 11/12, debugging 11 -> 13.
 
 1. **Build and read (week 1).** Build with `build.bat`, run it (done: `build rad`).
    Read in order: `base`, `ui`, `draw`, then the code-view part of `raddbg`.
@@ -136,22 +142,42 @@ Updated 2026-11-03: Windows first, macOS at the very end (renumbered).
    Done when: I can edit and save a file, with undo/redo, no corruption on large files.
 4. **File explorer.** Left panel tree built with the existing UI building blocks.
    Done when: it looks like it belongs in the debugger.
-5. **Syntax highlighting.** The existing code lexes C; write a Rust lexer in the same style.
-6. **LSP client.** Diagnostics first, then hover, go-to-definition, then completion popup.
-7. **Cargo integration.** Build/run, output panel, clickable error locations.
-8. **Remove the debugger and rebrand.** Debugger-only layers out of the shipped IDE.
-   Keep the MIT notice.
-9. **Mac foundation, compile-only (done from Windows).** Make `base` compile on
+5. **Test and measure.** A script mode in `rad` (`--script:<file>`): it injects keys,
+   text, wheel and mouse input as if they came from the OS, without needing the
+   window to have focus, runs checks on editor state (visible lines, cursor, text,
+   tabs, explorer rows) and measures frame time and input-to-frame latency, all
+   written to a results file. A runner in `tests/` runs every script.
+   Done when: scroll, typing, undo/redo, save and explorer checks run as scripts
+   while the user keeps working, and report pass/fail plus timings.
+6. **Editor essentials.** One buffer per file (tabs share it; LSP needs per-document
+   versions), Find (Ctrl+F) and Go to Line ported from raddbg's `Search`/`FindNext`/
+   `GoToLine`, session memory (folder, open tabs, layout, window) in raddbg's user-file
+   format, Save All, file watching instead of polling, and an audit of the port
+   against raddbg for other dropped per-frame steps (like the scroll bug).
+   Done when: each item has a passing script, and restarting rad restores the session.
+7. **Syntax highlighting.** The existing code lexes C; write a Rust lexer in the same style.
+8. **Cargo integration.** Build/run/test, output panel, `cargo check
+   --message-format=json` errors listed and shown in the editor, clickable locations.
+   Builds the plumbing LSP reuses: process with pipes (`base`), JSON, diagnostics UI.
+9. **LSP client.** Diagnostics first, then hover, go-to-definition, then completion popup.
+10. **Remove the debugger and rebrand.** Debugger-only layers out of the repo/build.
+   Keep the MIT notice. Last Windows step: raddbg.exe is the visual reference until then.
+11. **Mac foundation, compile-only (done from Windows).** Make `base` compile on
    macOS ARM64 (x86-only intrinsics, see section 7), add `src/mac/base` adapted from
    `src/linux/base`, add a macOS GitHub Actions workflow.
    Done when: a small console test program on `base` builds and runs on the macOS
    runner, green on every push.
-10. **Mac UI, on the Mac.** `window_manager` (Cocoa), `render` (OpenGL 3.3 core first,
+12. **Mac UI, on the Mac.** `window_manager` (Cocoa), `render` (OpenGL 3.3 core first,
     Metal if needed), `font_provider` (FreeType first). Needs Claude Code running on
     the Mac. Biggest single risk of the port.
     Done when: `rad` runs on the Mac and matches the Windows screenshots (glyph
     rasterization aside).
-11. **Debugging (later, optional).** Proposed: LLDB via `lldb-dap`. Decide then.
+13. **Debugging (later, optional).** Proposed: LLDB via `lldb-dap`. Decide then.
+
+Builds: day to day, build unoptimized (`build rad`, fast to compile). At the end of
+every milestone, also build an optimized one for the user to test: `build rad release`,
+then copy `build\rad.exe` to `build\release\rad.exe` (the next debug build overwrites
+`build\rad.exe`). No Linux build/CI for now (decided 2026-11-03).
 
 ## 7. Portability rules (follow from day one, even while the work is Windows-only)
 
