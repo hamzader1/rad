@@ -147,9 +147,12 @@ Milestone 6 details (each item with its script):
     from the per-frame "ambiguous paths" table.
   - a selection on one line becomes the search text while the query bar
     is closed (F3 / Ctrl+F search for the selected text).
-  Still missing: panel zoom (button at the right of the focused panel's
-  tab bar, Zoom/Unzoom/Toggle commands, hoist animation), the loading
-  overlay for slow views, tab drag/drop.
+  - panel zoom (script `zoom`, 12 checks): the button at the right end of
+    the focused panel's tab bar, Zoom/Unzoom/Toggle Panel Zoom (Panel
+    menu), the hoist animation, splits and panel cycling inside a zoom.
+    Deviation: the second panel pass skips the zoomed panel's whole
+    subtree (raddbg would build a zoomed split's children twice).
+  Still missing: the loading overlay for slow views, tab drag/drop.
   Not needed: debugger steps (debug info, ctrl, eval, hover eval, run to
   line, find thread), key rebinding, bitmap cache, developer menu/lag
   simulation, window titles (rad's never changes), raddbg's dead code
@@ -258,6 +261,10 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-03 (audit, panel zoom)
+- Ported raddbg's panel zoom; checked by screenshot (zoomed panel fills
+  the window, restore icon at the tab bar's right end). 13 scripts pass.
 
 ### 2026-11-03 (audit, part 1)
 - Error border, tab title qualifiers, selection -> search text; see the

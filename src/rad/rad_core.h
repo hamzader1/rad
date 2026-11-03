@@ -208,6 +208,7 @@ struct RAD_Window
   U64 frames_alive;
   Rng2F32 last_window_rect;
   B32 window_layout_reset;
+  CFG_ID panel_hoist_cfg_id;
 
   //- rad: menu bar state
   B32 menu_bar_focused;

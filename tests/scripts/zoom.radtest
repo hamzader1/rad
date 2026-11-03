@@ -1,0 +1,38 @@
+# Panel zoom (port of raddbg's): Toggle Panel Zoom makes the focused panel
+# fill the window; panel cycling stays inside the zoomed panel; splitting a
+# zoomed panel keeps the zoom on the new split; toggling again unzooms.
+
+open ../fixtures/edit.txt
+wait_idle
+expect panel_count == 2
+expect zoomed == 0
+cmd toggle_zoom_panel
+wait_idle
+expect zoomed == 1
+expect tab == "edit.txt"
+# only one panel in the zoom: cycling stays on it
+cmd next_panel
+wait_frames 2
+expect tab == "edit.txt"
+# split inside the zoom: both halves are in it, the explorer is not
+cmd new_panel_down
+wait_idle
+expect zoomed == 1
+expect panel_count == 3
+open ../fixtures/lines_3000.txt
+wait_idle
+cmd next_panel
+wait_frames 2
+expect tab == "edit.txt"
+cmd next_panel
+wait_frames 2
+expect tab == "lines_3000.txt"
+cmd toggle_zoom_panel
+wait_idle
+expect zoomed == 0
+cmd zoom_panel
+wait_frames 2
+expect zoomed == 1
+cmd unzoom_panel
+wait_idle
+expect zoomed == 0

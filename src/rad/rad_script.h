@@ -74,6 +74,7 @@
 //   tab_title                   its title as shown, minus icons ("<src> main.rs")
 //   tab_count                   number of tabs in the focused panel
 //   panel_count                 number of leaf panels in the window
+//   zoomed                      1 if a panel is zoomed (Toggle Panel Zoom)
 //   explorer_panel_tabs         number of tabs in the explorer's panel
 //   cursor_line cursor_col mark_line mark_col     editor cursor/mark (1-based)
 //   visible_first visible_last  editor's visible line range

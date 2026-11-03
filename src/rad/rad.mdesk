@@ -1052,6 +1052,9 @@ RAD_CmdTable:
   {ClosePanel             close_panel          "Close Panel"          ClosePanel        P          ctrl   shift  alt    Null     0         0           0         0 }
   {NextPanel              next_panel           "Next Panel"           RightArrow        Comma      ctrl   0      0      Null     0         0           0         0 }
   {PrevPanel              prev_panel           "Previous Panel"       LeftArrow         Comma      ctrl   shift  0      Null     0         0           0         0 }
+  {ZoomPanel              zoom_panel           "Zoom Panel"           Window            Null       0      0      0      Null     0         0           0         0 }
+  {UnzoomPanel            unzoom_panel         "Unzoom Panel"         Window            Null       0      0      0      Null     0         0           0         0 }
+  {ToggleZoomPanel        toggle_zoom_panel    "Toggle Panel Zoom"    Window            Null       0      0      0      Null     0         0           0         0 }
   
   //- rad: focus (internal; no default bindings)
   {FocusPanel             focus_panel          "Focus Panel"          Null              Null       0      0      0      Null     0         0           0         0 }

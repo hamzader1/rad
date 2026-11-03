@@ -1282,6 +1282,10 @@ rad_window_frame(RAD_Window *ws)
                     RAD_CmdKind_Null,//-
                     RAD_CmdKind_NextPanel,
                     RAD_CmdKind_PrevPanel,
+                    RAD_CmdKind_Null,//-
+                    RAD_CmdKind_ZoomPanel,
+                    RAD_CmdKind_UnzoomPanel,
+                    RAD_CmdKind_ToggleZoomPanel,
                   };
                   U32 codepoints[] =
                   {
@@ -1291,6 +1295,10 @@ rad_window_frame(RAD_Window *ws)
                     0,//-
                     'n',
                     'p',
+                    0,//-
+                    'z',
+                    'm',
+                    't',
                   };
                   StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
                   rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
@@ -1703,17 +1711,48 @@ rad_window_frame(RAD_Window *ws)
     //
     if(content_rect.x1 > content_rect.x0 && content_rect.y1 > content_rect.y0)
     {
-      ProfScope("leaf panel UI")
-        for(CFG_PanelNode *panel = panel_tree.root;
-            panel != &cfg_nil_panel_node;
-            panel = cfg_panel_node_rec__depth_first_pre(panel_tree.root, panel).next)
+      // NOTE(rad): as raddbg: the hoisted panel (zoomed, or last zoomed while
+      // it animates back) is built first, in front; the others fade out by
+      // panel_zoom_t while a panel is zoomed
+      if(ws->panel_hoist_cfg_id != panel_tree.zoom_root->cfg->id && panel_tree.zoom_root->cfg->id != 0)
       {
+        ws->panel_hoist_cfg_id = panel_tree.zoom_root->cfg->id;
+      }
+      CFG_PanelNode *front_panel = cfg_panel_node_from_tree_cfg(panel_tree.root, cfg_node_from_id(ws->panel_hoist_cfg_id));
+      CFG_PanelNode *panel_trees[] = {front_panel, panel_tree.root};
+      F32 panel_zoom_t = ui_anim(ui_key_from_stringf(ui_key_zero(), "panel_zoom_t"), (F32)(panel_tree.zoom_root != &cfg_nil_panel_node), .initial = (F32)(panel_tree.zoom_root != &cfg_nil_panel_node));
+      ProfScope("leaf panel UI")
+        for EachElement(panel_tree_idx, panel_trees)
+        for(CFG_PanelNode *panel = panel_trees[panel_tree_idx];
+            panel != &cfg_nil_panel_node;
+            panel = cfg_panel_node_rec__depth_first_pre(panel_trees[panel_tree_idx], panel).next)
+      {
+        // rad: the second pass skips the front panel's whole subtree (raddbg
+        // skips only the front panel itself, so the children of a zoomed
+        // split would be built twice)
+        if(panel_trees[panel_tree_idx] != front_panel && front_panel != &cfg_nil_panel_node)
+        {
+          B32 in_front_panel = 0;
+          for(CFG_PanelNode *p = panel; p != &cfg_nil_panel_node; p = p->parent)
+          {
+            if(p == front_panel)
+            {
+              in_front_panel = 1;
+              break;
+            }
+          }
+          if(in_front_panel)
+          {
+            continue;
+          }
+        }
         B32 panel_is_focused = (window_is_focused &&
                                 !ws->menu_bar_focused &&
                                 !ui_any_ctx_menu_is_open() &&
                                 panel_tree.focused == panel);
         CFG_Node *selected_tab = panel->selected_tab;
         UI_Focus(panel_is_focused ? UI_FocusKind_Null : UI_FocusKind_Off)
+          UI_Transparency(panel_trees[panel_tree_idx] != front_panel ? panel_zoom_t : 0)
         {
           //////////////////////////
           //- rad: calculate UI rectangles
@@ -1785,6 +1824,16 @@ rad_window_frame(RAD_Window *ws)
           }
 
           //////////////////////////
+          //- rad: determine how much this panel is occluding others
+          //
+          B32 is_occluding = 0;
+          if(panel_trees[panel_tree_idx] == front_panel)
+          {
+            is_occluding = (abs_f32(panel_rect.x0 - target_rect_px.x0) > 2 ||
+                            abs_f32(panel_rect.y0 - target_rect_px.y0) > 2);
+          }
+
+          //////////////////////////
           //- rad: build panel container box
           //
           UI_Box *panel_box = &ui_nil_box;
@@ -1795,6 +1844,7 @@ rad_window_frame(RAD_Window *ws)
                                               UI_BoxFlag_Clip|
                                               UI_BoxFlag_DrawBorder|
                                               UI_BoxFlag_DisableFocusOverlay|
+                                              (is_occluding*UI_BoxFlag_DrawBackground)|
                                               ((panel_tree.focused != panel)*UI_BoxFlag_DisableFocusBorder),
                                               panel_key);
           }
@@ -1855,6 +1905,70 @@ rad_window_frame(RAD_Window *ws)
             if(ui_pressed(panel_sig))
             {
               rad_cmd(RAD_CmdKind_FocusPanel, .panel = panel->cfg->id);
+            }
+          }
+
+          //////////////////////////
+          //- rad: build zoom button (same as raddbg)
+          //
+          if(panel_is_focused)
+          {
+            UI_TextAlignment(UI_TextAlign_Center)
+              UI_TagF(".")
+            {
+              ui_set_next_child_layout_axis(Axis2_Y);
+              UI_Box *container = &ui_nil_box;
+              UI_Rect(r2f32p(tab_bar_rect.x1 - tab_bar_vheight, tab_bar_rect.y0, tab_bar_rect.x1, tab_bar_rect.y1))
+              {
+                container = ui_build_box_from_stringf(0, "###zoom_panel");
+              }
+              UI_Parent(container)
+              {
+                if(panel->tab_side == Side_Max)
+                {
+                  ui_spacer(ui_px(tab_bar_rv_diff-1.f, 1.f));
+                }
+                else
+                {
+                  ui_spacer(ui_px(1.f, 1.f));
+                }
+                {
+                  UI_Box *zoom_box = &ui_nil_box;
+                  RAD_Font(RAD_FontSlot_Icons)
+                    UI_CornerRadius((tab_bar_vheight - tab_bar_vheight/4.f) / 3.f)
+                    UI_VisualMargin(tab_bar_vheight/5.f)
+                    UI_TagF("implicit")
+                    UI_FontSize(ui_top_font_size()*0.65f)
+                  {
+                    zoom_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|
+                                                         UI_BoxFlag_DrawBorder|
+                                                         UI_BoxFlag_DrawBackground|
+                                                         UI_BoxFlag_DrawHotEffects|
+                                                         UI_BoxFlag_DrawActiveEffects|
+                                                         UI_BoxFlag_Clickable|
+                                                         UI_BoxFlag_DisableTextTrunc,
+                                                         "%S##zoom_panel_button_%p",
+                                                         rad_icon_kind_text_table[panel_tree.zoom_root == panel ? RAD_IconKind_WindowRestore : RAD_IconKind_Window],
+                                                         panel->cfg);
+                  }
+                  UI_Signal sig = ui_signal_from_box(zoom_box);
+                  if(ui_pressed(sig))
+                  {
+                    rad_cmd(RAD_CmdKind_ToggleZoomPanel, .panel = panel->cfg->id);
+                  }
+                  if(ui_hovering(sig)) UI_Tooltip
+                  {
+                    // NOTE(rad): raddbg adds the command's binding buttons;
+                    // the command has no default binding, so there are none
+                    ui_state->tooltip_anchor_key = zoom_box->key;
+                    ui_set_next_pref_width(ui_children_sum(1));
+                    UI_Row
+                    {
+                      ui_labelf("Toggle Zoom Panel");
+                    }
+                  }
+                }
+              }
             }
           }
 
@@ -2920,6 +3034,32 @@ rad_exec_cmd(RAD_Cmd *cmd)
     {
       rad_focus_panel(panel_cfg);
     }break;
+
+    //- rad: panel zooming (port of raddbg's)
+    case RAD_CmdKind_ToggleZoomPanel:
+    case RAD_CmdKind_ZoomPanel:
+    case RAD_CmdKind_UnzoomPanel:
+    if(ws != 0 && panel_cfg != &cfg_nil_node)
+    {
+      ws->panel_hoist_cfg_id = panel_cfg->id;
+
+      // rad: remove existing zoom
+      B32 already_zoomed = 0;
+      {
+        CFG_PanelNode *zoom_root = panel_tree.zoom_root;
+        if(zoom_root->cfg != &cfg_nil_node)
+        {
+          already_zoomed = 1;
+          cfg_node_release(rad_state->cfg, cfg_node_child_from_string(zoom_root->cfg, str8_lit("zoom_root")));
+        }
+      }
+
+      // rad: not already zoomed? -> zoom
+      if(!already_zoomed || cmd->kind == RAD_CmdKind_ZoomPanel)
+      {
+        cfg_node_child_from_string_or_alloc(rad_state->cfg, panel_cfg, str8_lit("zoom_root"));
+      }
+    }break;
     case RAD_CmdKind_NextPanel: panel_sib_off = OffsetOf(CFG_PanelNode, next); panel_child_off = OffsetOf(CFG_PanelNode, first); goto cycle;
     case RAD_CmdKind_PrevPanel: panel_sib_off = OffsetOf(CFG_PanelNode, prev); panel_child_off = OffsetOf(CFG_PanelNode, last); goto cycle;
     cycle:;
@@ -2993,6 +3133,11 @@ rad_exec_cmd(RAD_Cmd *cmd)
         CFG_Node *split_panel_prev = panel->prev->cfg;
         CFG_Node *new_parent = cfg_node_alloc(rad_state->cfg);
         CFG_Node *new_sibling = cfg_node_alloc(rad_state->cfg);
+        if(panel == panel_tree.zoom_root)
+        {
+          CFG_Node *zoom_panel = cfg_node_child_from_string_or_alloc(rad_state->cfg, split_panel, str8_lit("zoom_root"));
+          cfg_node_insert_child(rad_state->cfg, new_parent, &cfg_nil_node, zoom_panel);
+        }
         cfg_node_equip_string(rad_state->cfg, new_parent, split_panel->string);
         cfg_node_equip_string(rad_state->cfg, split_panel, str8_lit("0.5"));
         cfg_node_equip_string(rad_state->cfg, new_sibling, str8_lit("0.5"));

@@ -284,6 +284,11 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     str8_list_push(arena, &parts, rad_script_tab_name(tab));
     value = str8_list_join(arena, &parts, 0);
   }
+  else if(str8_match(name, str8_lit("zoomed"), 0))
+  {
+    // rad: 1 if a panel is zoomed (fills the window)
+    value = push_str8f(arena, "%i", (int)(tree.zoom_root != &cfg_nil_panel_node));
+  }
   else if(str8_match(name, str8_lit("tab_count"), 0))
   {
     value = push_str8f(arena, "%I64u", tree.focused->tabs.count);
