@@ -16,8 +16,8 @@ Required features, in priority order:
 3. Rust support through LSP (rust-analyzer): diagnostics, hover, go-to-definition,
    completion-as-you-type.
 4. Cargo build/run integration with an output panel and clickable error locations.
-5. **macOS is a first-class target from now on** (decided 2026-11-02), not a port at
-   the end. The Mac is the machine the IDE is for.
+5. **macOS at the very end** (decided 2026-11-03, replacing "macOS from day one" of
+   2026-11-02). Work on Windows only until the IDE is done, then port to the Mac.
 6. Debugging Rust programs: later, and NOT with the RAD Debugger engine (it gets
    removed, see section 2). Proposed (not decided): LLDB through `lldb-dap`, which is
    the native debugger on macOS.
@@ -27,10 +27,11 @@ Required features, in priority order:
 - **Language: C**, same as the RAD Debugger codebase, so the UI stays identical.
 - **The RAD Debugger engine gets removed** (decided 2026-11-02). We build an IDE, not
   a debugger. The debugger-only layers (section 3) must not end up in the shipped IDE.
-- **macOS from day one** (decided 2026-11-02). New code must compile on macOS ARM64
-  from the start; every push gets compile-checked on a macOS GitHub Actions runner
-  (repo is public, so macOS runners are free). The Mac window/render/font backends
-  get written and visually tested on the Mac itself; they cannot be tested from Windows.
+- **Windows first, macOS at the very end** (decided 2026-11-03; replaces "macOS from
+  day one" of 2026-11-02). No Mac CI and no `src/mac/` work until the Windows IDE is
+  done. New code still follows the portability rules (section 7): they cost little now
+  and keep the final port possible. The Mac window/render/font backends will be
+  written and visually tested on the Mac itself; they cannot be tested from Windows.
 - **UI chrome: option B** (decided 2026-11-02). The IDE frontend is its own layer,
   `src/rad/` (`RAD_`), built directly on `ui`, `draw`, `render`, `font_*`, `text`,
   `window_manager`, `shell`, `config`. Visual pieces of `raddbg` (window frame, top
@@ -118,43 +119,43 @@ offsets; negotiate UTF-8 if the server supports it).
 
 ## 6. Plan (milestones, each with a "done when")
 
-Updated 2026-11-02 for "macOS from day one" and "remove the debugger".
+Updated 2026-11-03: Windows first, macOS at the very end (renumbered).
 
 1. **Build and read (week 1).** Build with `build.bat`, run it (done: `build rad`).
    Read in order: `base`, `ui`, `draw`, then the code-view part of `raddbg`.
    Write notes in `docs/notes/` on: how a frame is built, how the code view draws text.
    Answer the feasibility spike (section 7) and the open question (section 2).
    Done when: the build runs, the notes exist, option A or B is chosen with evidence.
-2. **Mac foundation, compile-only (done from Windows).** Make `base` compile on
+2. **Editor view without a debugger.** Open a file with no debugger panels visible.
+   Done when: I can browse a Rust project as a plain viewer.
+3. **Editable text core.** Buffer, cursor, selection, undo, save, version counter.
+   Done when: I can edit and save a file, with undo/redo, no corruption on large files.
+4. **File explorer.** Left panel tree built with the existing UI building blocks.
+   Done when: it looks like it belongs in the debugger.
+5. **Syntax highlighting.** The existing code lexes C; write a Rust lexer in the same style.
+6. **LSP client.** Diagnostics first, then hover, go-to-definition, then completion popup.
+7. **Cargo integration.** Build/run, output panel, clickable error locations.
+8. **Remove the debugger and rebrand.** Debugger-only layers out of the shipped IDE.
+   Keep the MIT notice.
+9. **Mac foundation, compile-only (done from Windows).** Make `base` compile on
    macOS ARM64 (x86-only intrinsics, see section 7), add `src/mac/base` adapted from
    `src/linux/base`, add a macOS GitHub Actions workflow.
    Done when: a small console test program on `base` builds and runs on the macOS
    runner, green on every push.
-3. **Editor view without a debugger.** Open a file with no debugger panels visible.
-   Done when: I can browse a Rust project as a plain viewer.
-4. **Editable text core.** Buffer, cursor, selection, undo, save, version counter.
-   Done when: I can edit and save a file, with undo/redo, no corruption on large files.
-   (Moved before the explorer: v1 is "open a file, edit it, save it".)
-5. **Mac UI, on the Mac.** `window_manager` (Cocoa), `render` (OpenGL 3.3 core first,
-   Metal if needed), `font_provider` (FreeType first). Needs Claude Code running on
-   the Mac. Do it as early as possible: it is the biggest risk to the whole project.
-   Done when: `rad` runs on the Mac and matches the Windows screenshots (glyph
-   rasterization aside).
-6. **File explorer.** Left panel tree built with the existing UI building blocks.
-   Done when: it looks like it belongs in the debugger.
-7. **Syntax highlighting.** The existing code lexes C; write a Rust lexer in the same style.
-8. **LSP client.** Diagnostics first, then hover, go-to-definition, then completion popup.
-9. **Cargo integration.** Build/run, output panel, clickable error locations.
-10. **Remove the debugger and rebrand.** Debugger-only layers out of the shipped IDE.
-    Keep the MIT notice.
+10. **Mac UI, on the Mac.** `window_manager` (Cocoa), `render` (OpenGL 3.3 core first,
+    Metal if needed), `font_provider` (FreeType first). Needs Claude Code running on
+    the Mac. Biggest single risk of the port.
+    Done when: `rad` runs on the Mac and matches the Windows screenshots (glyph
+    rasterization aside).
 11. **Debugging (later, optional).** Proposed: LLDB via `lldb-dap`. Decide then.
 
-## 7. Portability rules (follow from day one)
+## 7. Portability rules (follow from day one, even while the work is Windows-only)
 
 1. Never call Win32 directly from new code. Everything touching the OS (spawning
    rust-analyzer with pipes, clipboard, file watching, file dialogs) goes through
    the `base` OS API, `window_manager` or `shell`, adding new functions to those APIs
-   when needed (with `src/win32/`, `src/linux/` and `src/mac/` implementations).
+   when needed (with a `src/win32/` implementation now, `src/linux/` when cheap, and
+   `src/mac/` at the end).
 2. Keep new editor code out of the debugger layers. Buffer, LSP client and explorer
    depend only on `base`, `ui`, `draw`, `text` (and `window_manager`/`shell` through their APIs).
 3. Avoid x64-only assumptions in new code (Apple Silicon is ARM64).

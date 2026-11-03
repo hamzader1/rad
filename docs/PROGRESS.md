@@ -4,17 +4,18 @@ Read this first when starting a session. Update it in the same commit as the
 work: change "Status" and "Next steps", and add a dated journal entry (newest
 on top). CLAUDE.md holds the goals and decisions; this file holds where we are.
 
-## Status (2026-11-02)
+## Status (2026-11-03)
+
+Windows only for now; macOS is milestones 9-10, at the very end (decided 2026-11-03).
 
 | Milestone (CLAUDE.md section 6)      | State |
 |--------------------------------------|-------|
 | 1. Build and read                    | Done. `build rad` works; notes in `docs/notes/`; option B chosen. |
-| 2. Mac foundation (compile-only, CI) | Not started. Done out of order: milestones 3 and 4 came first. |
-| 3. Editor view without a debugger    | Done. |
-| 4. Editable text core                | Mostly done, see below. |
-| 5 to 11                              | Not started. |
+| 2. Editor view without a debugger    | Done. |
+| 3. Editable text core                | Mostly done, see below. |
+| 4 to 11                              | Not started. |
 
-Milestone 4 details:
+Milestone 3 details:
 - Checked in the running app: typing, Enter (keeps indent), Backspace,
   Ctrl+S save (file on disk updated, no temp file left, dirty dot cleared).
 - Checked by `rad_tests` (46,316,762 checks, 0 failures): patched text, line
@@ -29,9 +30,9 @@ Milestone 4 details:
    `rad_views.c` into UI-independent code, and test undo/redo/rebase in
    `rad_tests`.
 2. Check the untested items above in the app.
-3. Milestone 2: ARM64 guards for `base_core.h:276-277` and `base_core.c:667`,
-   no `-mcx16` on ARM64, `src/mac/base` adapted from `src/linux/base`, macOS
-   GitHub Actions workflow that builds a `base` console test.
+3. Milestone 4: file explorer panel.
+4. For milestone 9 (Mac, at the end), already known: `base_core.h:276-277`
+   and `base_core.c:667` need ARM64 guards; drop `-mcx16` on ARM64.
 
 ## Known limits
 
@@ -81,6 +82,10 @@ Milestone 4 details:
 - `tests/rad_tests.c`: console tests on base/content/text.
 
 ## Journal
+
+### 2026-11-03
+- Decided: Windows only until the IDE is done; macOS at the very end.
+  Milestones renumbered in CLAUDE.md (Mac is now 9 and 10).
 
 ### 2026-11-02
 - Built raddbg; read base, ui, draw and the raddbg code view; wrote
