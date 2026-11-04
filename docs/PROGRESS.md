@@ -344,6 +344,18 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (milestone 9, step 3: hover)
+- Hover (Quick Info): the mouse resting 500 ms on a token (the code slice
+  now reports the character under the mouse, not the nearest boundary)
+  sends textDocument/hover (pending edits are sent first); the answer shows
+  in a tooltip while the mouse stays on that token. Markdown: fenced code
+  in the code font, colored by the editor's lexers; paragraphs joined and
+  wrapped at 45 em; links/backticks/bold dropped; at most 24 lines.
+- Found: `txt_token_array_from_string__rust` is compiled out (`#if 0`);
+  `rad_fstrs_from_code_string_lang` uses `txt_token_array_from_data__rust`.
+  Equipped fstrs must live in the UI build arena (not scratch).
+- Script `lsp_hover` (7); fields hover_text, hover_has. 20 scripts pass.
+
 ### 2026-11-04 (milestone 9, steps 1-2: lsp layer, rust-analyzer diagnostics)
 - Installed rust-analyzer (`rustup component add rust-analyzer`; the
   toolchain is aarch64-pc-windows-msvc). Probed it from Python first: it

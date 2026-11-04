@@ -1056,6 +1056,19 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       sig = rad_code_slicef(&code_slice_params, &cv->cursor, &cv->mark, &cv->preferred_column, "code_slice");
     }
 
+    //- rad: not in raddbg: hover (Quick Info): the mouse rests on a token
+    // -> the file's language server -> its answer in a tooltip
+    {
+      RAD_Document *hover_doc = rad_document_from_tab(tab);
+      B32 mouse_on_token = (hover_doc != 0 && text_is_ready && sig.mouse_over_text &&
+                            ui_hovering(sig.base) && !ui_dragging(sig.base) && !ui_any_ctx_menu_is_open());
+      String8 hover_text = (mouse_on_token ? rad_lsp_hover_from_mouse(hover_doc, sig.mouse_token_range, sig.mouse_char_off) : str8_zero());
+      if(hover_text.size != 0) UI_Tooltip
+      {
+        rad_markdown_ui(hover_text, ui_top_font_size()*45.f, 24);
+      }
+    }
+
     //- rad: double-click -> remember where (the Output view goes to the
     // location written there)
     if(ui_double_clicked(sig.base))

@@ -119,6 +119,8 @@
 //                               ready, ended (none also when rust-analyzer is missing)
 //   lsp_busy                    1 while it reports progress or is not quiescent
 //   lsp_status                  its bottom bar text ("" when idle)
+//   hover_text                  the hover tooltip's text (markdown; "" when none)
+//   hover_has "<text>"          1 if it contains the text
 //   diag_count diag_errors diag_warnings   problems: the last cargo command's
 //                               diagnostics and the language servers', merged
 //   diag <n>                    "<kind> <path>:<line>:<col> <message>" (path

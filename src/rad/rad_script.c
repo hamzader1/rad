@@ -586,6 +586,17 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     }
   }
 
+  //- rad: hover tooltip
+  else if(str8_match(name, str8_lit("hover_text"), 0))
+  {
+    value = (rad_lsp->hover.answered ? rad_lsp->hover.text : str8_zero());
+  }
+  else if(str8_match(name, str8_lit("hover_has"), 0))
+  {
+    String8 hover = (rad_lsp->hover.answered ? rad_lsp->hover.text : str8_zero());
+    value = ((args_count >= 2 && str8_find_needle(hover, 0, args[1], 0) < hover.size) ? str8_lit("1") : str8_lit("0"));
+  }
+
   //- rad: the editor file's language server
   else if(str8_match(name, str8_lit("lsp_state"), 0) || str8_match(name, str8_lit("lsp_busy"), 0) ||
           str8_match(name, str8_lit("lsp_status"), 0))

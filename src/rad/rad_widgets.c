@@ -694,14 +694,23 @@ rad_rgba_from_code_color_slot(RAD_CodeColorSlot slot)
 internal DR_FStrList
 rad_fstrs_from_code_string(Arena *arena, F32 alpha, Vec4F32 base_color, String8 string)
 {
+  return rad_fstrs_from_code_string_lang(arena, alpha, base_color, TXT_LangKind_C, string);
+}
+
+internal DR_FStrList
+rad_fstrs_from_code_string_lang(Arena *arena, F32 alpha, Vec4F32 base_color, TXT_LangKind lang, String8 string)
+{
   // NOTE(rad): port of raddbg's rd_fstrs_from_code_string, minus the
   // debug-info identifier lookup (identifiers keep their token color, as in
   // raddbg with no debug info loaded) and the indirection size change (off
-  // in raddbg too)
+  // in raddbg too); the language is a parameter (raddbg: always C)
   ProfBeginFunction();
   Temp scratch = scratch_begin(&arena, 1);
   DR_FStrList fstrs = {0};
-  TXT_TokenArray tokens = txt_token_array_from_string__c_cpp(scratch.arena, 0, string);
+  // NOTE(rad): Rust: the editor's lexer (txt_token_array_from_string__rust
+  // is compiled out), from the top-level state
+  TXT_TokenArray tokens = (lang == TXT_LangKind_Rust ? txt_token_array_from_data__rust(scratch.arena, (TXT_TokenPt){0}, string, 0) :
+                           txt_token_array_from_string__c_cpp(scratch.arena, 0, string));
   TXT_Token *tokens_opl = tokens.v+tokens.count;
   for(TXT_Token *token = tokens.v; token < tokens_opl; token += 1)
   {
@@ -948,6 +957,41 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
       }
     }
     mouse_line_rng = line_range;
+  }
+
+  //////////////////////////////
+  //- rad: not in raddbg: the character under the mouse (not the nearest
+  // boundary) and its token, if not whitespace (language server hover)
+  //
+  {
+    Vec2F32 mouse = ui_mouse();
+    S64 line_count = dim_1s64(params->line_num_range);
+    S64 raw_line_idx = (S64)floor_f32((mouse.y - text_container_box->rect.y0) / params->line_height_px);
+    if(contains_2f32(text_container_box->rect, mouse) && 0 <= raw_line_idx && raw_line_idx < line_count)
+    {
+      String8 line_string = params->line_text[raw_line_idx];
+      F32 x = mouse.x - text_container_box->rect.x0 - params->line_num_width_px - line_num_padding_px;
+      U64 boundary = fnt_char_pos_from_tag_size_string_p(params->font, params->font_size, 0, params->tab_size, line_string, x);
+      F32 boundary_x = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, str8_prefix(line_string, boundary)).x;
+      U64 char_idx = ((boundary_x > x && boundary > 0) ? boundary-1 : boundary);
+      if(x >= 0 && char_idx < line_string.size)
+      {
+        Rng1U64 line_range = params->line_ranges[raw_line_idx];
+        U64 char_off = line_range.min + char_idx;
+        TXT_TokenArray *line_tokens = &params->line_tokens[raw_line_idx];
+        for EachIndex(token_idx, line_tokens->count)
+        {
+          TXT_Token *token = &line_tokens->v[token_idx];
+          if(token->range.min <= char_off && char_off < token->range.max && token->kind != TXT_TokenKind_Whitespace)
+          {
+            result.mouse_over_text = 1;
+            result.mouse_char_off = char_off;
+            result.mouse_token_range = intersect_1u64(token->range, line_range);
+            break;
+          }
+        }
+      }
+    }
   }
 
   //////////////////////////////
@@ -1499,4 +1543,202 @@ rad_code_slicef(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *prefer
   va_end(args);
   scratch_end(scratch);
   return sig;
+}
+
+////////////////////////////////
+//~ rad: Markdown (not in raddbg: language server hover text)
+
+internal String8
+rad_markdown_inline_plain(Arena *arena, String8 line)
+{
+  // NOTE(rad): inline markup dropped: [text](url) and [text] -> text,
+  // `code` -> code, **bold** -> bold, \x -> x
+  U8 *out = push_array_no_zero(arena, U8, line.size + 1);
+  U64 size = 0;
+  for(U64 idx = 0; idx < line.size; idx += 1)
+  {
+    U8 c = line.str[idx];
+    U8 next = (idx+1 < line.size ? line.str[idx+1] : 0);
+    B32 next_is_punctuation = (0x21 <= next && next <= 0x7e && !char_is_alpha(next) && !char_is_digit(next, 10));
+    if(c == '\\' && next_is_punctuation)
+    {
+      out[size++] = next;
+      idx += 1;
+    }
+    else if(c == '*' && next == '*')
+    {
+      idx += 1;
+    }
+    else if(c == ']' && next == '(')
+    {
+      U64 close = str8_find_needle(line, idx+2, str8_lit(")"), 0);
+      idx = (close < line.size ? close : line.size);
+    }
+    else if(c == '`' || c == '[' || c == ']')
+    {
+      // rad: dropped
+    }
+    else
+    {
+      out[size++] = c;
+    }
+  }
+  out[size] = 0;
+  return str8(out, size);
+}
+
+internal U64
+rad_markdown_wrapped_labels(String8 text, F32 max_width_px, U64 max_lines)
+{
+  // NOTE(rad): labels for `text` broken at spaces to fit max_width_px (a
+  // word wider than that gets a line of its own); returns the line count
+  FNT_Tag font = ui_top_font();
+  F32 font_size = ui_top_font_size();
+  U64 lines = 0;
+  for(U64 off = 0; off < text.size && lines < max_lines;)
+  {
+    U64 end = off;
+    for(U64 next = off; next <= text.size;)
+    {
+      U64 space = str8_find_needle(text, next, str8_lit(" "), 0);
+      F32 width = fnt_dim_from_tag_size_string(font, font_size, 0, 0, str8_substr(text, r1u64(off, space))).x;
+      if(width > max_width_px && end > off)
+      {
+        break;
+      }
+      end = space;
+      next = space + 1;
+    }
+    UI_PrefWidth(ui_text_dim(1, 1.f)) ui_label(str8_substr(text, r1u64(off, end)));
+    lines += 1;
+    off = end + 1;
+  }
+  return lines;
+}
+
+internal void
+rad_markdown_ui(String8 markdown, F32 max_width_px, U64 max_lines)
+{
+  // NOTE(rad): builds a column of labels (e.g. in a tooltip): fenced code
+  // blocks in the code font, colored by the editor's lexer (Rust, or C for
+  // c/cpp blocks); paragraphs (consecutive text lines) joined and wrapped at
+  // max_width_px; `---` a divider; headings and list items start a new
+  // paragraph; reference-link definitions dropped. At most max_lines lines.
+  Temp scratch = scratch_begin(0, 0);
+  B32 in_code = 0;
+  TXT_LangKind code_lang = TXT_LangKind_Rust;
+  U64 lines_shown = 0;
+  B32 gap_pending = 0;
+  B32 any_shown = 0;
+  String8List paragraph = {0};
+  Vec4F32 text_color = ui_color_from_name(str8_lit("text"));
+  for(U64 line_start = 0; line_start <= markdown.size && lines_shown < max_lines;)
+  {
+    U64 line_end = str8_find_needle(markdown, line_start, str8_lit("\n"), 0);
+    B32 at_end = (line_end >= markdown.size);
+    String8 line = str8_substr(markdown, r1u64(line_start, line_end));
+    line_start = line_end + 1;
+    if(line.size != 0 && line.str[line.size-1] == '\r')
+    {
+      line.size -= 1;
+    }
+    String8 trimmed = str8_skip_chop_whitespace(line);
+    B32 is_fence = str8_match(str8_prefix(trimmed, 3), str8_lit("```"), 0);
+    B32 is_rule = (!in_code && (str8_match(trimmed, str8_lit("---"), 0) || str8_match(trimmed, str8_lit("***"), 0)));
+    B32 is_blank = (!in_code && trimmed.size == 0);
+    B32 is_heading = (!in_code && trimmed.size != 0 && trimmed.str[0] == '#');
+    B32 is_item = (!in_code && (str8_match(str8_prefix(trimmed, 2), str8_lit("- "), 0) || str8_match(str8_prefix(trimmed, 2), str8_lit("* "), 0)));
+    B32 is_ref_def = (!in_code && trimmed.size != 0 && trimmed.str[0] == '[' && str8_find_needle(trimmed, 0, str8_lit("]: "), 0) < trimmed.size);
+    B32 is_text = (!in_code && !is_fence && !is_rule && !is_blank && !is_ref_def);
+
+    //- rad: a paragraph ends at anything but a plain text line
+    if(paragraph.node_count != 0 && (!is_text || is_heading || is_item))
+    {
+      if(gap_pending)
+      {
+        ui_spacer(ui_em(0.5f, 1.f));
+        gap_pending = 0;
+      }
+      String8 text = str8_list_join(scratch.arena, &paragraph, &(StringJoin){.sep = str8_lit(" ")});
+      lines_shown += rad_markdown_wrapped_labels(rad_markdown_inline_plain(scratch.arena, text), max_width_px, max_lines - lines_shown);
+      any_shown = 1;
+      MemoryZeroStruct(&paragraph);
+    }
+
+    //- rad: fences
+    if(is_fence)
+    {
+      in_code = !in_code;
+      if(in_code)
+      {
+        String8 lang = str8_skip(trimmed, 3);
+        code_lang = (str8_match(lang, str8_lit("c"), 0) || str8_match(lang, str8_lit("cpp"), 0) ? TXT_LangKind_C : TXT_LangKind_Rust);
+      }
+    }
+
+    //- rad: gaps (collapsed; none before the first line)
+    else if(is_blank || is_ref_def)
+    {
+      gap_pending = (any_shown || paragraph.node_count != 0);
+    }
+
+    //- rad: code line
+    else if(in_code && lines_shown < max_lines)
+    {
+      if(gap_pending)
+      {
+        ui_spacer(ui_em(0.5f, 1.f));
+        gap_pending = 0;
+      }
+      RAD_Font(RAD_FontSlot_Code) UI_PrefWidth(ui_text_dim(1, 1.f))
+      {
+        // NOTE(rad): the box keeps the fstrs until the frame is drawn: they
+        // go in the UI build arena
+        DR_FStrList fstrs = rad_fstrs_from_code_string_lang(ui_build_arena(), 1.f, text_color, code_lang, line);
+        UI_Box *box = ui_build_box_from_key(UI_BoxFlag_DrawText|UI_BoxFlag_DisableTextTrunc, ui_key_zero());
+        ui_box_equip_display_fstrs(box, &fstrs);
+      }
+      lines_shown += 1;
+      any_shown = 1;
+    }
+
+    //- rad: rule
+    else if(is_rule)
+    {
+      UI_TagF("floating") ui_divider(ui_em(1.f, 1.f));
+      gap_pending = 0;
+    }
+
+    //- rad: text: into the paragraph (headings without their #s)
+    else if(is_text)
+    {
+      if(is_heading)
+      {
+        U64 space = str8_find_needle(trimmed, 0, str8_lit(" "), 0);
+        trimmed = str8_skip_chop_whitespace(str8_skip(trimmed, space));
+        gap_pending = any_shown;
+      }
+      str8_list_push(scratch.arena, &paragraph, trimmed);
+    }
+    if(at_end)
+    {
+      break;
+    }
+  }
+
+  //- rad: the last paragraph
+  if(paragraph.node_count != 0 && lines_shown < max_lines)
+  {
+    if(gap_pending)
+    {
+      ui_spacer(ui_em(0.5f, 1.f));
+    }
+    String8 text = str8_list_join(scratch.arena, &paragraph, &(StringJoin){.sep = str8_lit(" ")});
+    lines_shown += rad_markdown_wrapped_labels(rad_markdown_inline_plain(scratch.arena, text), max_width_px, max_lines - lines_shown);
+  }
+  if(lines_shown >= max_lines)
+  {
+    UI_TagF("weak") UI_PrefWidth(ui_text_dim(1, 1.f)) ui_label(str8_lit("..."));
+  }
+  scratch_end(scratch);
 }

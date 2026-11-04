@@ -1,0 +1,28 @@
+#! timeout: 300
+# Hover (Quick Info): the mouse resting on a token for half a second asks
+# rust-analyzer; its answer shows in a tooltip while the mouse stays on the
+# token, and goes when the mouse leaves it.
+
+lsp on
+open_folder ../fixtures/cargo_run
+wait_idle
+open ../fixtures/cargo_run/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+
+# `add` in `add(2, 3)` (line 8): the function's signature
+mouse code 8 30
+wait_until 15000 hover_has "fn add(a: i32, b: i32) -> i32" == 1
+expect hover_has "cargo_run" == 1
+
+# `println` (line 6): a macro, with its documentation
+mouse code 6 7
+wait_until 15000 hover_has "macro_rules! println" == 1
+expect hover_has "Prints to the standard output" == 1
+
+# off the text (past the end of a line): nothing
+mouse code 4 1
+wait 1200
+expect hover_text == ""
+quit

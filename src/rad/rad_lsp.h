@@ -39,6 +39,7 @@
 #define RAD_LSP_CHANGE_DELAY_US     150000
 #define RAD_LSP_SNAPSHOT_COUNT      4
 #define RAD_LSP_SHUTDOWN_WAIT_US    1000000
+#define RAD_LSP_HOVER_DELAY_US      500000
 
 ////////////////////////////////
 //~ rad: Server Types
@@ -136,6 +137,26 @@ struct RAD_LspDocRoot
   String8 root;                 // empty: not in a Cargo project
 };
 
+// NOTE(rad): hover (Quick Info): the mouse rests on a token of a code view
+// for RAD_LSP_HOVER_DELAY_US -> textDocument/hover -> the answer (markdown)
+// in a tooltip while the mouse stays on that token
+typedef struct RAD_LspHover RAD_LspHover;
+struct RAD_LspHover
+{
+  B32 active;
+  U64 frame_seen;               // last frame a view reported the mouse on it
+  U64 doc_id;
+  U64 doc_version;
+  Rng1U64 token_range;
+  U64 rest_begin_us;
+  B32 requested;
+  RAD_LspServer *server;
+  S64 request_id;
+  B32 answered;
+  Arena *arena;
+  String8 text;                 // (arena) markdown; empty: nothing to show
+};
+
 typedef struct RAD_LspState RAD_LspState;
 struct RAD_LspState
 {
@@ -147,6 +168,7 @@ struct RAD_LspState
   B32 disabled;                 // no servers started (scripts, unless `lsp on`)
   U64 diags_gen;
   U64 servers_started;
+  RAD_LspHover hover;
 };
 
 ////////////////////////////////
@@ -193,6 +215,9 @@ internal void rad_lsp_shutdown(void);
 internal void rad_lsp_document_saved(RAD_Document *doc);
 internal RAD_LspServer *rad_lsp_server_from_path(String8 path);
 internal String8 rad_lsp_status_string(Arena *arena, B32 *busy_out);
+internal String8 rad_lsp_markdown_from_hover(Arena *arena, JSON_Value *result);
+internal String8 rad_lsp_position_params(Arena *arena, RAD_Document *doc, U64 off, RAD_LspServer **server_out);
+internal String8 rad_lsp_hover_from_mouse(RAD_Document *doc, Rng1U64 token_range, U64 char_off);
 
 ////////////////////////////////
 //~ rad: Problems Functions

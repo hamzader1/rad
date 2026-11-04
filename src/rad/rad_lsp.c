@@ -665,6 +665,13 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
           lsp_client_notify(s->client, str8_lit("initialized"), str8_lit("{}"));
           s->state = RAD_LspServerState_Ready;
         }
+      }
+      else if(rad_lsp->hover.requested && !rad_lsp->hover.answered &&
+              rad_lsp->hover.server == s && m.id == rad_lsp->hover.request_id)
+      {
+        RAD_LspHover *h = &rad_lsp->hover;
+        h->answered = 1;
+        h->text = rad_lsp_markdown_from_hover(h->arena, m.result);
       }break;
 
       //- rad: the server's requests: nothing rad needs to act on; each gets
@@ -717,6 +724,121 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
 }
 
 ////////////////////////////////
+//~ rad: Requests
+
+internal String8
+rad_lsp_markdown_from_hover(Arena *arena, JSON_Value *result)
+{
+  // NOTE(rad): contents: MarkupContent {kind, value}, or the old forms: a
+  // string, {language, value}, or an array of those
+  Temp scratch = scratch_begin(&arena, 1);
+  JSON_Value *contents = json_value_from_key(result, str8_lit("contents"));
+  String8List parts = {0};
+  JSON_Value *single[1] = {contents};
+  B32 is_array = (contents->kind == JSON_ValueKind_Array);
+  for(JSON_Value *c = (is_array ? contents->first : single[0]); c != &json_value_nil; c = (is_array ? c->next : &json_value_nil))
+  {
+    if(c->kind == JSON_ValueKind_String)
+    {
+      str8_list_push(scratch.arena, &parts, c->string);
+    }
+    else if(c->kind == JSON_ValueKind_Object)
+    {
+      String8 value = json_string_from_value(json_value_from_key(c, str8_lit("value")));
+      JSON_Value *language = json_value_from_key(c, str8_lit("language"));
+      if(language->kind == JSON_ValueKind_String)
+      {
+        str8_list_pushf(scratch.arena, &parts, "```%S\n%S\n```", language->string, value);
+      }
+      else
+      {
+        str8_list_push(scratch.arena, &parts, value);
+      }
+    }
+  }
+  String8 result_text = str8_list_join(arena, &parts, &(StringJoin){.sep = str8_lit("\n\n")});
+  result_text = str8_skip_chop_whitespace(result_text);
+  scratch_end(scratch);
+  return result_text;
+}
+
+internal String8
+rad_lsp_position_params(Arena *arena, RAD_Document *doc, U64 off, RAD_LspServer **server_out)
+{
+  // NOTE(rad): {"textDocument":{"uri":..},"position":{"line":..,"character":..}}
+  // for an offset in the document's current text, after sending the
+  // server any change it has not seen yet. Empty if no ready server has
+  // the document open.
+  String8 result = {0};
+  RAD_LspServer *s = rad_lsp_server_from_path(doc->path);
+  RAD_LspDoc *ld = (s != 0 ? rad_lsp_doc_from_id(s, doc->id) : 0);
+  if(s != 0 && s->state == RAD_LspServerState_Ready && s->client != 0 && ld != 0 && ld->opened)
+  {
+    if(ld->sent_version != doc->buffer->version)
+    {
+      rad_lsp_doc_send(s, ld, doc);
+    }
+    RAD_LspSnapshot *snap = rad_lsp_snapshot_from_version(ld, doc->buffer->version);
+    if(snap != 0)
+    {
+      S64 line = 0;
+      S64 character = 0;
+      rad_lsp_position_from_offset(snap->text, off, s->utf8_positions, &line, &character);
+      Temp scratch = scratch_begin(&arena, 1);
+      result = push_str8f(arena, "{\"textDocument\":{\"uri\":%S},\"position\":{\"line\":%I64d,\"character\":%I64d}}",
+                          json_escaped_from_str8(scratch.arena, ld->uri), line, character);
+      scratch_end(scratch);
+      if(server_out != 0)
+      {
+        *server_out = s;
+      }
+    }
+  }
+  return result;
+}
+
+internal String8
+rad_lsp_hover_from_mouse(RAD_Document *doc, Rng1U64 token_range, U64 char_off)
+{
+  // NOTE(rad): called by a code view each frame the mouse is on a token;
+  // returns the hover text to show (empty until the answer is there)
+  RAD_LspHover *h = &rad_lsp->hover;
+  U64 now_us = now_time_us();
+  if(!h->active || h->doc_id != doc->id || h->doc_version != doc->buffer->version ||
+     h->token_range.min != token_range.min || h->token_range.max != token_range.max)
+  {
+    Arena *arena = h->arena;
+    arena_clear(arena);
+    MemoryZeroStruct(h);
+    h->arena = arena;
+    h->active = 1;
+    h->doc_id = doc->id;
+    h->doc_version = doc->buffer->version;
+    h->token_range = token_range;
+    h->rest_begin_us = now_us;
+  }
+  h->frame_seen = rad_state->frame_index;
+  if(!h->requested && now_us >= h->rest_begin_us + RAD_LSP_HOVER_DELAY_US)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    RAD_LspServer *s = 0;
+    String8 params = rad_lsp_position_params(scratch.arena, doc, char_off, &s);
+    if(params.size != 0)
+    {
+      h->request_id = lsp_client_request(s->client, str8_lit("textDocument/hover"), params);
+      h->server = s;
+    }
+    h->requested = 1;
+    scratch_end(scratch);
+  }
+  else if(!h->requested)
+  {
+    rad_request_frame();
+  }
+  return (h->answered ? h->text : str8_zero());
+}
+
+////////////////////////////////
 //~ rad: Language Server Functions
 
 internal void
@@ -725,6 +847,7 @@ rad_lsp_init(void)
   Arena *arena = arena_alloc();
   rad_lsp = push_array(arena, RAD_LspState, 1);
   rad_lsp->arena = arena;
+  rad_lsp->hover.arena = arena_alloc();
   Arena *problems_arena = arena_alloc();
   rad_problems = push_array(problems_arena, RAD_Problems, 1);
   rad_problems->arena = arena_alloc();
@@ -735,6 +858,15 @@ internal void
 rad_lsp_tick(void)
 {
   U64 now_us = now_time_us();
+
+  //- rad: hover: no view had the mouse on its token last frame -> over
+  if(rad_lsp->hover.active && rad_lsp->hover.frame_seen+1 < rad_state->frame_index)
+  {
+    Arena *hover_arena = rad_lsp->hover.arena;
+    arena_clear(hover_arena);
+    MemoryZeroStruct(&rad_lsp->hover);
+    rad_lsp->hover.arena = hover_arena;
+  }
 
   //- rad: messages; servers that went away
   for(RAD_LspServer *s = rad_lsp->first_server; s != 0; s = s->next)

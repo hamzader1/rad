@@ -124,6 +124,9 @@ struct RAD_CodeSliceSignal
   U64 mouse_off;
   Rng2F32 text_rect;  // rad: text container (line numbers + text), window pixels
   F32 text_x_off;     // rad: x of column 1, relative to text_rect.x0
+  B32 mouse_over_text;      // rad: over a character that is not whitespace
+  U64 mouse_char_off;       // rad: that character
+  Rng1U64 mouse_token_range; // rad: its token
 };
 
 ////////////////////////////////
@@ -153,6 +156,9 @@ internal UI_Signal rad_cellf(RAD_CellParams *params, char *fmt, ...);
 internal RAD_CodeColorSlot rad_code_color_slot_from_txt_token_kind(TXT_TokenKind kind);
 internal Vec4F32 rad_rgba_from_code_color_slot(RAD_CodeColorSlot slot);
 internal DR_FStrList rad_fstrs_from_code_string(Arena *arena, F32 alpha, Vec4F32 base_color, String8 string);
+internal DR_FStrList rad_fstrs_from_code_string_lang(Arena *arena, F32 alpha, Vec4F32 base_color, TXT_LangKind lang, String8 string);
+internal String8 rad_markdown_inline_plain(Arena *arena, String8 line);
+internal void rad_markdown_ui(String8 markdown, F32 max_width_px, U64 max_lines);
 internal RAD_CodeSliceSignal rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferred_column, String8 string);
 internal RAD_CodeSliceSignal rad_code_slicef(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferred_column, char *fmt, ...);
 
