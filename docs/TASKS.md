@@ -143,13 +143,14 @@ them), then layout (C), tabs (D), the gutter (E), drag and drop (F).
   - Editor: show line numbers, tab width, scroll past end, cursor scope
     lines/annotations.
   - Theme preset (raddbg's presets).
-- [ ] **B3. Zoom the code font alone.** Today Ctrl+wheel zooms the whole
+- [x] **B3. Zoom the code font alone.** Today Ctrl+wheel zooms the whole
   layout (`rad_core.c`, Ctrl+Scroll -> `IncWindowFontSize`). New:
   Ctrl+wheel over an editor = code font size (when Mouse Wheel Zoom is on);
   Ctrl+Shift+Period / Ctrl+Shift+Comma (VS2022 Zoom In/Out) and a reset.
   Alt+= / Alt+- (raddbg's keys) stay the whole-window font size.
   Done when: a script zooms the code font and checks the UI font did not
   change, and the size is saved in the user file.
+  Done 2026-11-04 (script `settings`). Reset Zoom (Code) has no key yet.
 
 ## C. Layout: tool windows
 

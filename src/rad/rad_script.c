@@ -332,6 +332,34 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     CFG_Node *tab = rad_script_editor_tab();
     value = push_str8f(arena, "%.2f", (tab == &cfg_nil_node) ? 0.f : rad_view_state_from_cfg(tab)->loading_t);
   }
+  else if(str8_match(name, str8_lit("setting"), 0))
+  {
+    // rad: a setting's value as the user file stores it (enums: the option)
+    result = 0;
+    *error_out = push_str8f(arena, "setting: unknown setting \"%S\"", args_count >= 2 ? args[1] : str8_zero());
+    for EachElement(idx, rad_setting_info_table)
+    {
+      if(args_count >= 2 && str8_match(rad_setting_info_table[idx].name, args[1], 0))
+      {
+        value = rad_setting_value_string(arena, &rad_state->settings, idx);
+        *error_out = str8_zero();
+        result = 1;
+        break;
+      }
+    }
+  }
+  else if(str8_match(name, str8_lit("editor_font_size"), 0))
+  {
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    result = rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out);
+    value = push_str8f(arena, "%.0f", cv != 0 ? cv->layout_font_size : 0.f);
+  }
+  else if(str8_match(name, str8_lit("ui_font_size"), 0))
+  {
+    value = push_str8f(arena, "%.0f", floor_f32((F32)rad_state->settings.font_size*rad_state->first_window->font_scale));
+  }
   else if(str8_match(name, str8_lit("menu_bar_focused"), 0))
   {
     // rad: 1 if the menu bar has the keyboard (Alt tapped)
@@ -1527,6 +1555,21 @@ rad_script_run_line(RAD_ScriptLine *line)
       RAD_ScriptInput *input = rad_script_push_input(RAD_ScriptInputKind_Key, rad_script->mouse);
       input->modifiers = modifiers;
       input->key = key;
+    }
+  }
+  else if(str8_match(cmd, str8_lit("set_setting"), 0))
+  {
+    // rad: as the Settings view does (a number; enums by index)
+    F64 v = 0;
+    if(args_count < 2 || args[1].size == 0 || !(char_is_digit(args[1].str[0], 10) || args[1].str[0] == '-' || args[1].str[0] == '.'))
+    {
+      error = str8_lit("set_setting: needs <name> <number>");
+    }
+    else
+    {
+      v = f64_from_str8(args[1]);
+      rad_setting_set_f64(args[0], v);
+      rad_script_wait_frames(RAD_SCRIPT_SETTLE_FRAMES);
     }
   }
   else if(str8_match(cmd, str8_lit("lsp_kill"), 0))

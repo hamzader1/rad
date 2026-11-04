@@ -1049,6 +1049,9 @@ RAD_CmdTable:
   
   //- rad: windows
   {ToggleFullscreen       toggle_fullscreen    "Toggle Fullscreen"    Window            Return     ctrl   0      0      Null     0         0           0         0 }
+  {IncCodeFontSize        inc_code_font_size   "Zoom In (Code)"       Add               Period     ctrl   shift  0      Null     0         0           0         0 }
+  {DecCodeFontSize        dec_code_font_size   "Zoom Out (Code)"      Minus             Comma      ctrl   shift  0      Null     0         0           0         0 }
+  {ResetCodeFontSize      reset_code_font_size "Reset Zoom (Code)"    Null              Null       0      0      0      Null     0         0           0         0 }
   {IncWindowFontSize      inc_window_font_size "Increase Font Size"   Add               Equal      0      0      alt    Null     0         0           0         0 }
   {DecWindowFontSize      dec_window_font_size "Decrease Font Size"   Minus             Minus      0      0      alt    Null     0         0           0         0 }
   
@@ -1103,6 +1106,90 @@ RAD_CmdTable:
   `CFG_Binding default_binding`;
   `RAD_Query query`;
 };
+
+////////////////////////////////
+//~ rad: Setting Table
+//
+// NOTE(rad): every setting rad has: kind (Bool; U64/F32 with a range; Enum:
+// one of `options`, separated by |, stored by index; Theme: a theme preset),
+// default, range, and the Settings view's group, name and description.
+// Defaults and texts are raddbg's (RD_SchemaTable) where raddbg has the
+// setting. Stored in the user file under `settings:`; read every frame.
+
+@table(name kind c_type default min max group display_name description options)
+RAD_SettingTable:
+{
+  {theme_preset                 Theme U64 0   0  0  Appearance "Theme"                         "The color theme of the whole window." ""}
+  {density                      Enum  U64 0   0  1  Appearance "Density"                       "Comfortable: raddbg's sizes. Compact: shorter rows, tabs and panel headers." "Comfortable|Compact"}
+  {opaque_backgrounds           Bool  B32 0   0  1  Appearance "Opaque Backgrounds"            "Controls whether or not all floating background colors are forced to be fully opaque." ""}
+  {background_blur              Bool  B32 1   0  1  Appearance "Background Blur"               "Controls whether or not occluded regions behind floating elements are blurred." ""}
+  {drop_shadows                 Bool  B32 1   0  1  Appearance "Drop Shadows"                  "Controls whether or not drop shadows are drawn." ""}
+  {rounded_corner_amount        F32   F32 1   0  1  Appearance "Rounded Corner Amount"         "Controls the degree to which UI corners are rounded." ""}
+  {animations                   Bool  B32 1   0  1  Animations "Animations"                    "Enables animations." ""}
+  {scrolling_animations         Bool  B32 1   0  1  Animations "Smooth Scrolling"              "Enables scrolling animations: views ease to where they are scrolled." ""}
+  {tooltip_animations           Bool  B32 1   0  1  Animations "Tooltip Animations"            "Enables tooltip animations." ""}
+  {menu_animations              Bool  B32 1   0  1  Animations "Menu Animations"               "Enables menu animations." ""}
+  {cursor_trail                 Bool  B32 1   0  1  Animations "Cursor Trail"                  "Controls whether or not a movement trail animation of the cursor is drawn." ""}
+  {font_size                    U64   U64 11  6  72 Fonts      "UI Font Size"                  "The font size of menus, tabs, panels and lists (Alt+= / Alt+-)." ""}
+  {code_font_size               U64   U64 11  6  72 Fonts      "Code Font Size"                "The font size of the editor and the Output text only (Ctrl+Shift+. / Ctrl+Shift+,)." ""}
+  {mouse_wheel_zoom             Bool  B32 1   0  1  Fonts      "Mouse Wheel Zoom"              "Whether to zoom the editor font size with the mouse wheel while holding the primary modifier key (Ctrl on Windows, Cmd on macOS)." ""}
+  {smooth_ui_text               Bool  B32 1   0  1  Fonts      "Smooth UI Text"                "Controls whether or not UI text is fully anti-aliased, for a smoother appearance." ""}
+  {hint_ui_text                 Bool  B32 1   0  1  Fonts      "Hint UI Text"                  "Controls whether or not UI text is hinted, for better text readability at small sizes." ""}
+  {smooth_code_text             Bool  B32 0   0  1  Fonts      "Smooth Code Text"              "Controls whether or not code text is fully anti-aliased, for a smoother appearance." ""}
+  {hint_code_text               Bool  B32 1   0  1  Fonts      "Hint Code Text"                "Controls whether or not code text is hinted, for better text readability at small sizes." ""}
+  {show_line_numbers            Bool  B32 1   0  1  Editor     "Line Numbers"                  "Shows line numbers in text views." ""}
+  {tab_width                    U64   U64 2   1  16 Editor     "Tab Width"                     "The width of a tab character, in spaces." ""}
+  {cursor_scope_lines           Bool  B32 1   0  1  Editor     "Cursor Scope Lines"            "Controls whether or not scopes containing the cursor in text views are drawn." ""}
+  {cursor_scope_end_annotations Bool  B32 1   0  1  Editor     "Cursor Scope End Annotations"  "Controls whether or not ending annotations for scopes containing the cursor are drawn." ""}
+  {focus_menu_bar_with_alt      Bool  B32 1   0  1  Window     "Focus Menu Bar With Alt"       "Pressing and releasing Alt alone gives the keyboard to the menu bar." ""}
+}
+
+@table(name) RAD_SettingKindTable:
+{
+  {Bool}
+  {U64}
+  {F32}
+  {Enum}
+  {Theme}
+}
+
+@enum RAD_SettingKind:
+{
+  @expand(RAD_SettingKindTable a) `$(a.name)`,
+  COUNT,
+}
+
+@enum RAD_SettingCode:
+{
+  @expand(RAD_SettingTable a) `$(a.name)`,
+  COUNT,
+}
+
+@struct RAD_Settings:
+{
+  @expand(RAD_SettingTable a) `$(a.c_type) $(a.name)`;
+  `F32 row_height`;
+  `F32 tab_height`;
+};
+
+@struct RAD_SettingInfo:
+{
+  `String8 name`;
+  `RAD_SettingKind kind`;
+  `U64 offset`;
+  `F64 default_value`;
+  `F64 min`;
+  `F64 max`;
+  `String8 group`;
+  `String8 display_name`;
+  `String8 description`;
+  `String8 options`;
+};
+
+@data(RAD_SettingInfo) @c_file rad_setting_info_table:
+{
+  @expand(RAD_SettingTable a) ```{str8_lit_comp("$(a.name)"), RAD_SettingKind_$(a.kind), OffsetOf(RAD_Settings, $(a.name)), $(a.default), $(a.min), $(a.max), str8_lit_comp("$(a.group)"), str8_lit_comp("$(a.display_name)"), str8_lit_comp("$(a.description)"), str8_lit_comp("$(a.options)")}```;
+}
 
 @enum RAD_CmdKind:
 {

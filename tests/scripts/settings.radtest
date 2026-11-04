@@ -1,0 +1,66 @@
+# Settings (rad.mdesk RAD_SettingTable, stored in the user file under
+# `settings:`): defaults; the code font size alone (Ctrl+Shift+. / Ctrl+Shift+,,
+# Ctrl+wheel when Mouse Wheel Zoom is on, Reset); the UI font size alone
+# (Alt+= / Alt+-); enums by option.
+
+open ../fixtures/edit.txt
+wait_idle
+expect setting code_font_size == 11
+expect setting font_size == 11
+expect setting mouse_wheel_zoom == 1
+expect setting density == "Comfortable"
+expect editor_font_size == 11
+expect ui_font_size == 11
+
+# zoom the code only
+key ctrl+shift+period
+wait_idle
+expect setting code_font_size == 12
+expect editor_font_size == 12
+expect ui_font_size == 11
+key ctrl+shift+comma 3
+wait_idle
+expect setting code_font_size == 9
+expect editor_font_size == 9
+cmd reset_code_font_size
+wait_idle
+expect editor_font_size == 11
+
+# Ctrl+wheel over the editor: the code font (wheel up = larger)
+key_down ctrl
+wheel -2 code 1 1
+key_up ctrl
+wait_idle
+expect setting code_font_size == 13
+expect ui_font_size == 11
+key_down ctrl
+wheel 2 code 1 1
+key_up ctrl
+wait_idle
+expect setting code_font_size == 11
+
+# Mouse Wheel Zoom off: Ctrl+wheel does not zoom
+set_setting mouse_wheel_zoom 0
+key_down ctrl
+wheel -2 code 1 1
+key_up ctrl
+wait_idle
+expect setting code_font_size == 11
+
+# the UI font alone
+key alt+equal
+wait_idle
+expect ui_font_size == 12
+expect editor_font_size == 11
+key alt+minus
+wait_idle
+expect ui_font_size == 11
+
+# ranges clamp; enums by index
+set_setting code_font_size 500
+expect setting code_font_size == 72
+set_setting code_font_size 11
+set_setting density 1
+expect setting density == "Compact"
+set_setting density 0
+quit

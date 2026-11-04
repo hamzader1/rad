@@ -109,37 +109,9 @@ struct RAD_AmbiguousPathNode
 ////////////////////////////////
 //~ rad: Settings
 
-typedef struct RAD_Settings RAD_Settings;
-struct RAD_Settings
-{
-  //- rad: user settings (defaults: raddbg.mdesk @schema user)
-  B32 animations;
-  B32 scrolling_animations;
-  B32 tooltip_animations;
-  B32 menu_animations;
-  B32 opaque_backgrounds;
-  B32 background_blur;
-  B32 drop_shadows;
-  F32 rounded_corner_amount;
-  U64 tab_width;
-  B32 focus_menu_bar_with_alt;
-  B32 cursor_scope_lines;
-  B32 cursor_scope_end_annotations;
-  B32 cursor_trail;
-  RAD_ThemePreset theme_preset;
-
-  //- rad: text view settings (defaults: raddbg.mdesk @schema text)
-  B32 show_line_numbers;
-
-  //- rad: window settings (defaults: raddbg.mdesk @schema window)
-  B32 smooth_ui_text;
-  B32 hint_ui_text;
-  B32 smooth_code_text;
-  B32 hint_code_text;
-  F32 font_size;
-  F32 row_height;
-  F32 tab_height;
-};
+// NOTE(rad): RAD_Settings, RAD_SettingInfo and rad_setting_info_table are
+// generated from RAD_SettingTable (rad.mdesk). row_height and tab_height are
+// derived from `density`.
 
 ////////////////////////////////
 //~ rad: Commands
@@ -207,7 +179,7 @@ struct RAD_Window
   Vec4F32 theme_code_colors[RAD_CodeColorSlot_COUNT];
 
   //- rad: persistent state
-  F32 font_size;
+  F32 font_scale;               // DPI changes since the window opened (font sizes are settings)
   F32 last_dpi;
   U64 frames_alive;
   Rng2F32 last_window_rect;
@@ -343,6 +315,12 @@ global RAD_State *rad_state = 0;
 //~ rad: Settings Functions
 
 internal RAD_Settings rad_default_settings(void);
+internal RAD_Settings rad_settings_from_cfg(void);
+internal CFG_Node *rad_setting_cfg_node(String8 name);
+internal void rad_setting_set_f64(String8 name, F64 value);
+internal String8 rad_setting_value_string(Arena *arena, RAD_Settings *settings, U64 idx);
+internal F64 rad_setting_f64_from_settings(RAD_Settings *settings, U64 idx);
+internal F32 rad_code_font_size(RAD_Window *ws);
 
 ////////////////////////////////
 //~ rad: Main State Accessors

@@ -9,35 +9,236 @@
 ////////////////////////////////
 //~ rad: Settings Functions
 
+internal void
+rad_setting_store_f64__(RAD_Settings *s, RAD_SettingInfo *info, F64 v)
+{
+  U8 *ptr = (U8 *)s + info->offset;
+  switch(info->kind)
+  {
+    default:{}break;
+    case RAD_SettingKind_Bool:  {*(B32 *)ptr = (v != 0);}break;
+    case RAD_SettingKind_F32:   {*(F32 *)ptr = (F32)v;}break;
+    case RAD_SettingKind_U64:
+    case RAD_SettingKind_Enum:
+    case RAD_SettingKind_Theme: {*(U64 *)ptr = (U64)v;}break;
+  }
+}
+
+internal F64
+rad_setting_f64_from_settings(RAD_Settings *s, U64 idx)
+{
+  RAD_SettingInfo *info = &rad_setting_info_table[idx];
+  U8 *ptr = (U8 *)s + info->offset;
+  F64 result = 0;
+  switch(info->kind)
+  {
+    default:{}break;
+    case RAD_SettingKind_Bool:  {result = (F64)*(B32 *)ptr;}break;
+    case RAD_SettingKind_F32:   {result = (F64)*(F32 *)ptr;}break;
+    case RAD_SettingKind_U64:
+    case RAD_SettingKind_Enum:
+    case RAD_SettingKind_Theme: {result = (F64)*(U64 *)ptr;}break;
+  }
+  return result;
+}
+
+internal void
+rad_settings_derive__(RAD_Settings *s)
+{
+  // rad: density -> row and tab heights, in multiples of the font size
+  // (Comfortable: raddbg's 3 and 3)
+  s->row_height = (s->density == 1 ? 2.25f : 3.f);
+  s->tab_height = (s->density == 1 ? 2.5f : 3.f);
+}
+
 internal RAD_Settings
 rad_default_settings(void)
 {
-  // NOTE(rad): every value here is the `@default` of the setting with the same
-  // name in `raddbg/raddbg.mdesk` (RD_SchemaTable: @schema user, @schema window).
+  // NOTE(rad): the defaults of RAD_SettingTable (rad.mdesk)
   RAD_Settings s = {0};
-  s.animations              = 1;
-  s.scrolling_animations    = 1;
-  s.tooltip_animations      = 1;
-  s.menu_animations         = 1;
-  s.opaque_backgrounds      = 0;
-  s.background_blur         = 1;
-  s.drop_shadows            = 1;
-  s.rounded_corner_amount   = 1.f;
-  s.tab_width               = 2;
-  s.focus_menu_bar_with_alt = 1;
-  s.cursor_scope_lines      = 1;
-  s.cursor_scope_end_annotations = 1;
-  s.cursor_trail            = 1;
-  s.theme_preset            = RAD_ThemePreset_DefaultDark;
-  s.show_line_numbers       = 1;
-  s.smooth_ui_text          = 1;
-  s.hint_ui_text            = 1;
-  s.smooth_code_text        = 0;
-  s.hint_code_text          = 1;
-  s.font_size               = 11.f;
-  s.row_height              = 3.f;
-  s.tab_height              = 3.f;
+  for EachElement(idx, rad_setting_info_table)
+  {
+    rad_setting_store_f64__(&s, &rad_setting_info_table[idx], rad_setting_info_table[idx].default_value);
+  }
+  s.theme_preset = RAD_ThemePreset_DefaultDark;
+  rad_settings_derive__(&s);
   return s;
+}
+
+internal CFG_Node *
+rad_setting_cfg_node(String8 name)
+{
+  // NOTE(rad): user file: `settings: {<name>: <value> ...}`
+  CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+  CFG_Node *settings = cfg_node_child_from_string(user, str8_lit("settings"));
+  return cfg_node_child_from_string(settings, name);
+}
+
+internal RAD_Settings
+rad_settings_from_cfg(void)
+{
+  // NOTE(rad): defaults, then the user file's values (clamped to their
+  // range; enums by index or option name; the theme by preset name)
+  RAD_Settings s = rad_default_settings();
+  for EachElement(idx, rad_setting_info_table)
+  {
+    RAD_SettingInfo *info = &rad_setting_info_table[idx];
+    CFG_Node *node = rad_setting_cfg_node(info->name);
+    String8 value = node->first->string;
+    if(value.size == 0)
+    {
+      continue;
+    }
+    F64 v = info->default_value;
+    B32 good = 1;
+    switch(info->kind)
+    {
+      default:{good = 0;}break;
+      case RAD_SettingKind_Bool:
+      {
+        v = (str8_match(value, str8_lit("1"), 0) || str8_match(value, str8_lit("true"), StringMatchFlag_CaseInsensitive));
+      }break;
+      case RAD_SettingKind_U64:
+      case RAD_SettingKind_F32:
+      {
+        v = f64_from_str8(value);
+        v = Clamp(info->min, v, info->max);
+      }break;
+      case RAD_SettingKind_Enum:
+      {
+        good = 0;
+        U8 split = '|';
+        Temp scratch = scratch_begin(0, 0);
+        String8List options = str8_split(scratch.arena, info->options, &split, 1, 0);
+        U64 option_idx = 0;
+        for(String8Node *n = options.first; n != 0; n = n->next, option_idx += 1)
+        {
+          if(str8_match(n->string, value, StringMatchFlag_CaseInsensitive))
+          {
+            v = (F64)option_idx;
+            good = 1;
+          }
+        }
+        if(!good && char_is_digit(value.str[0], 10))
+        {
+          v = Clamp(info->min, f64_from_str8(value), info->max);
+          good = 1;
+        }
+        scratch_end(scratch);
+      }break;
+      case RAD_SettingKind_Theme:
+      {
+        good = 0;
+        for EachEnumVal(RAD_ThemePreset, preset)
+        {
+          if(str8_match(rad_theme_preset_code_string_table[preset], value, StringMatchFlag_CaseInsensitive))
+          {
+            v = (F64)preset;
+            good = 1;
+          }
+        }
+      }break;
+    }
+    if(good)
+    {
+      rad_setting_store_f64__(&s, info, v);
+    }
+  }
+  rad_settings_derive__(&s);
+  return s;
+}
+
+internal String8
+rad_setting_value_string(Arena *arena, RAD_Settings *settings, U64 idx)
+{
+  // NOTE(rad): a setting's value as the user file and the Settings view show it
+  RAD_SettingInfo *info = &rad_setting_info_table[idx];
+  F64 v = rad_setting_f64_from_settings(settings, idx);
+  String8 result = {0};
+  switch(info->kind)
+  {
+    default:{}break;
+    case RAD_SettingKind_Bool: {result = (v != 0 ? str8_lit("1") : str8_lit("0"));}break;
+    case RAD_SettingKind_U64:  {result = push_str8f(arena, "%I64u", (U64)v);}break;
+    case RAD_SettingKind_F32:  {result = push_str8f(arena, "%.2f", v);}break;
+    case RAD_SettingKind_Enum:
+    {
+      U8 split = '|';
+      String8List options = str8_split(arena, info->options, &split, 1, 0);
+      U64 option_idx = 0;
+      for(String8Node *n = options.first; n != 0; n = n->next, option_idx += 1)
+      {
+        if(option_idx == (U64)v) { result = n->string; }
+      }
+    }break;
+    case RAD_SettingKind_Theme:
+    {
+      result = rad_theme_preset_code_string_table[Min((U64)v, RAD_ThemePreset_COUNT-1)];
+    }break;
+  }
+  return result;
+}
+
+internal void
+rad_setting_set_f64(String8 name, F64 value)
+{
+  // NOTE(rad): writes the user file's value (a value equal to the default is
+  // written too: the file then says what was chosen); clamped to the range
+  for EachElement(idx, rad_setting_info_table)
+  {
+    RAD_SettingInfo *info = &rad_setting_info_table[idx];
+    if(!str8_match(info->name, name, 0))
+    {
+      continue;
+    }
+    if(info->kind == RAD_SettingKind_Theme)
+    {
+      value = Clamp(0, value, RAD_ThemePreset_COUNT-1);
+    }
+    else
+    {
+      value = Clamp(info->min, value, info->max);
+    }
+    Temp scratch = scratch_begin(0, 0);
+    RAD_Settings s = rad_state->settings;
+    rad_setting_store_f64__(&s, info, value);
+    String8 value_string = rad_setting_value_string(scratch.arena, &s, idx);
+    CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+    if(user != &cfg_nil_node)
+    {
+      CFG_Node *settings = cfg_node_child_from_string(user, str8_lit("settings"));
+      if(settings == &cfg_nil_node)
+      {
+        settings = cfg_node_new(rad_state->cfg, user, str8_lit("settings"));
+      }
+      CFG_Node *node = cfg_node_child_from_string(settings, name);
+      if(node == &cfg_nil_node)
+      {
+        node = cfg_node_new(rad_state->cfg, settings, name);
+      }
+      if(node->first == &cfg_nil_node)
+      {
+        cfg_node_new(rad_state->cfg, node, value_string);
+      }
+      else
+      {
+        cfg_node_equip_string(rad_state->cfg, node->first, value_string);
+      }
+    }
+    rad_state->settings = rad_settings_from_cfg();
+    rad_request_frame();
+    scratch_end(scratch);
+    break;
+  }
+}
+
+internal F32
+rad_code_font_size(RAD_Window *ws)
+{
+  // NOTE(rad): the code font size (editor, Output), scaled like the window's
+  // (DPI changes)
+  F32 result = Clamp(6.f, floor_f32((F32)rad_state->settings.code_font_size*ws->font_scale), 72.f);
+  return result;
 }
 
 ////////////////////////////////
@@ -770,7 +971,7 @@ rad_window_open(CFG_Node *window_cfg)
   ws->arena = arena_alloc();
   ws->cfg_id = window_cfg->id;
   ws->ui = ui_state_alloc();
-  ws->font_size = rad_state->settings.font_size;
+  ws->font_scale = 1.f;
 
   //- rad: unpack size (default: 4/5 of the primary monitor, same as raddbg)
   Vec2F32 size = {0};
@@ -1138,7 +1339,7 @@ rad_view_ui(CFG_Node *tab, Rng2F32 rect)
     //////////////////////////////
     //- rad: text view
     //
-    else if(str8_match(tab->string, str8_lit("text"), 0))
+    else if(str8_match(tab->string, str8_lit("text"), 0)) UI_FontSize(rad_code_font_size(rad_state->current_window))
     {
       rad_text_view_ui(tab, rect);
     }
@@ -1154,7 +1355,7 @@ rad_view_ui(CFG_Node *tab, Rng2F32 rect)
     //////////////////////////////
     //- rad: cargo output, problems
     //
-    else if(str8_match(tab->string, str8_lit("output"), 0))
+    else if(str8_match(tab->string, str8_lit("output"), 0)) UI_FontSize(rad_code_font_size(rad_state->current_window))
     {
       rad_output_view_ui(tab, rect);
     }
@@ -1272,14 +1473,13 @@ rad_window_frame(RAD_Window *ws)
   //- rad: DPI changes -> xform font size (same as raddbg)
   //
   {
+    // NOTE(rad): raddbg scales the window's font size; rad keeps the scale
+    // (the sizes are settings: UI and code)
     F32 dpi = wm_dpi_from_window(ws->os);
     if(dpi != ws->last_dpi)
     {
       fnt_reset();
-      F32 current_font_size = ws->font_size;
-      F32 new_font_size = current_font_size * (dpi / ws->last_dpi);
-      new_font_size = Clamp(6.f, new_font_size, 72.f);
-      ws->font_size = (F32)(U64)new_font_size;
+      ws->font_scale = ws->font_scale * (dpi / ws->last_dpi);
       ws->last_dpi = dpi;
     }
   }
@@ -1294,7 +1494,7 @@ rad_window_frame(RAD_Window *ws)
     //
     {
       // rad: get top-level font size info
-      F32 top_level_font_size = Clamp(6.f, ws->font_size, 72.f);
+      F32 top_level_font_size = Clamp(6.f, floor_f32((F32)settings->font_size*ws->font_scale), 72.f);
 
       // rad: build icon info
       UI_IconInfo icon_info = {0};
@@ -2786,20 +2986,21 @@ rad_window_frame(RAD_Window *ws)
     }
 
     ////////////////////////////
-    //- rad: top-level font size changing
+    //- rad: Ctrl+wheel: the code font size (setting "Mouse Wheel Zoom"; raddbg
+    // zooms the whole window here, rad keeps that on Alt+= / Alt+-)
     //
     for(UI_Event *evt = 0; ui_next_event(&evt);)
     {
       if(evt->kind == UI_EventKind_Scroll && evt->modifiers == WM_Modifier_Ctrl)
       {
         ui_eat_event(evt);
-        if(evt->delta_2f32.y < 0)
+        if(settings->mouse_wheel_zoom && evt->delta_2f32.y < 0)
         {
-          rad_cmd(RAD_CmdKind_IncWindowFontSize);
+          rad_cmd(RAD_CmdKind_IncCodeFontSize);
         }
-        else if(evt->delta_2f32.y > 0)
+        else if(settings->mouse_wheel_zoom && evt->delta_2f32.y > 0)
         {
-          rad_cmd(RAD_CmdKind_DecWindowFontSize);
+          rad_cmd(RAD_CmdKind_DecCodeFontSize);
         }
       }
     }
@@ -3561,16 +3762,28 @@ rad_exec_cmd(RAD_Cmd *cmd)
       wm_window_set_fullscreen(ws->os, !wm_window_is_fullscreen(ws->os));
     }break;
     case RAD_CmdKind_IncWindowFontSize:
-    if(ws != 0)
     {
       fnt_reset();
-      ws->font_size = Clamp(6.f, ws->font_size+1, 72.f);
+      rad_setting_set_f64(str8_lit("font_size"), (F64)rad_state->settings.font_size + 1);
     }break;
     case RAD_CmdKind_DecWindowFontSize:
-    if(ws != 0)
     {
       fnt_reset();
-      ws->font_size = Clamp(6.f, ws->font_size-1, 72.f);
+      rad_setting_set_f64(str8_lit("font_size"), (F64)rad_state->settings.font_size - 1);
+    }break;
+
+    //- rad: not in raddbg: the code font alone (editor, Output)
+    case RAD_CmdKind_IncCodeFontSize:
+    {
+      rad_setting_set_f64(str8_lit("code_font_size"), (F64)rad_state->settings.code_font_size + 1);
+    }break;
+    case RAD_CmdKind_DecCodeFontSize:
+    {
+      rad_setting_set_f64(str8_lit("code_font_size"), (F64)rad_state->settings.code_font_size - 1);
+    }break;
+    case RAD_CmdKind_ResetCodeFontSize:
+    {
+      rad_setting_set_f64(str8_lit("code_font_size"), rad_setting_info_table[RAD_SettingCode_code_font_size].default_value);
     }break;
 
     //- rad: panel focusing
@@ -4669,6 +4882,11 @@ rad_frame(void)
   //- rad: do per-frame resets
   //
   arena_clear(rad_frame_arena());
+
+  //////////////////////////////
+  //- rad: settings: defaults + the user file (rad.mdesk RAD_SettingTable)
+  //
+  rad_state->settings = rad_settings_from_cfg();
 
   //////////////////////////////
   //- rad: scripted tests: run the script (queues simulated input for this frame)

@@ -58,6 +58,7 @@
 //                               PASS), or FAIL at the timeout; e.g. for a
 //                               language server: wait_until 90000 diag_count == 2
 //   lsp_kill                    kill the editor file's language server process (a crash)
+//   set_setting <name> <number> set a setting (rad.mdesk RAD_SettingTable; enums: index)
 //   lsp on|off                  language servers (rust-analyzer): off by default in
 //                               scripts (slow to start; a script that does not test
 //                               them stays deterministic)
@@ -105,6 +106,9 @@
 //   panel_count                 number of leaf panels in the window
 //   zoomed                      1 if a panel is zoomed (Toggle Panel Zoom)
 //   menu_bar_focused            1 if the menu bar has the keyboard (Alt tapped)
+//   setting <name>              a setting's value as stored (enums: the option's name)
+//   editor_font_size            the editor view's font size (code font setting)
+//   ui_font_size                the window's font size (UI font setting)
 //   explorer_panel_tabs         number of tabs in the explorer's panel
 //   cursor_line cursor_col mark_line mark_col     editor cursor/mark (1-based)
 //   visible_first visible_last  editor's visible line range

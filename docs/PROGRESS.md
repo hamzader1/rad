@@ -244,8 +244,8 @@ Milestone 6 details (each item with its script):
   `target/`); trees are capped at 100,000 rows.
 - Open files are still checked by file_stream's timestamp poll (async
   threads, about once a second), not by OS notifications.
-- Settings are hardcoded raddbg defaults (`rad_default_settings`). Window
-  position and panel layout are not saved between runs.
+- Settings: `RAD_SettingTable` in rad.mdesk, stored in the user file under
+  `settings:`; no Settings view yet (tasks B1).
 - Tab inserts 4 spaces. No smart indent after `{`.
 - Script mode injects input after the OS layer (as `WM_Event`s), so the
   win32 message translation (WM_KEYDOWN/WM_CHAR -> events) is not covered;
@@ -380,6 +380,22 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-04 (tasks B1 step 1, B3: settings table, code font zoom)
+- `RAD_SettingTable` (rad.mdesk) generates `RAD_Settings`,
+  `RAD_SettingCode`, `rad_setting_info_table` (kind, offset, default,
+  range, group, name, description, enum options). The hand-written struct
+  and defaults are gone. Values: the user file's `settings:` node, read
+  every frame (`rad_settings_from_cfg`), written by `rad_setting_set_f64`
+  (clamped; enums by index, themes by preset).
+- New: `density` (Comfortable/Compact -> row/tab heights 3/3 or 2.25/2.5),
+  `code_font_size`, `mouse_wheel_zoom`. Fonts: a window keeps a DPI scale;
+  UI size = font_size x scale, code size (text and Output views) =
+  code_font_size x scale. Alt+= / Alt+- change font_size; Zoom In/Out
+  (Code) Ctrl+Shift+. / Ctrl+Shift+, and Ctrl+wheel (if Mouse Wheel Zoom)
+  change code_font_size; Reset Zoom (Code).
+- Script: field `setting <name>`, `editor_font_size`, `ui_font_size`;
+  command `set_setting`; script `settings` (21).
 
 ### 2026-11-04 (tasks A10-A11: restart rust-analyzer, file_watch flake)
 - A10: `rad_lsp_server_restart` (in place: the old process goes, its
