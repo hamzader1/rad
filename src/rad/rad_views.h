@@ -109,6 +109,17 @@ struct RAD_CodeViewState
   // rad: Quick Actions (Ctrl+.) asked for (code actions menu)
   B32 quick_actions;
 
+  // rad: navigation bar (last layout; scripts): its two boxes, the items of
+  // its open list
+  U64 layout_nav_frame;
+  Rng2F32 layout_nav_rects[2];
+  String8 layout_nav_names[2];  // (layout_nav_arena)
+  Arena *layout_nav_arena;
+  U64 nav_menu_side;            // which list is open (0: items, 1: members)
+  U64 layout_nav_menu_frame;
+  Rng2F32 layout_nav_item_rects[128];
+  U64 layout_nav_item_count;
+
   // rad: a completion left the cursor before the closing bracket it inserted:
   // typing that bracket there steps over it (offsets in the text of `typeover_version`; off once
   // the cursor leaves [typeover_min, typeover_off])

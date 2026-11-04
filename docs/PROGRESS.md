@@ -382,6 +382,19 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (task G5: navigation bar)
+- rad_lsp.c "Document Symbols": `textDocument/documentSymbol` per sent
+  version (like semantic tokens); the hierarchy flattened in document
+  order (`RAD_LspSymbol`: parent index + 1, depth; explicit stack, the JSON
+  values being singly linked); `rad_lsp_symbols_from_document` carries
+  ranges and name offsets to the current version.
+- rad_views.c `rad_navigation_bar_ui` (built after the code view, over
+  `nav_bar_rect`); the text view now places the code view in a box at
+  `code_area_rect` (the code view lays out from its parent's origin).
+- Setting `navigation_bar`; script fields `nav_item`, `nav_member`,
+  `symbol_count`; targets `nav_box <item|member>`, `nav_list_item <n>`.
+- Section G done. All 39 scripts pass.
+
 ### 2026-11-04 (task G4: code actions)
 - rad_lsp.c "Code Actions": `RAD_LspCodeActions` (rest: cursor, mark,
   version, time; one request at a time; the answer is shown only for the

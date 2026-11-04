@@ -69,6 +69,19 @@ struct RAD_LspSnapshot
   U64 line_count;
 };
 
+// NOTE(rad): a document symbol (textDocument/documentSymbol), flattened in
+// document order (parents before their children)
+typedef struct RAD_LspSymbol RAD_LspSymbol;
+struct RAD_LspSymbol
+{
+  String8 name;
+  S64 kind;                     // LSP SymbolKind
+  Rng1U64 range;                // offsets in the text of its list's version
+  U64 select_off;               // where its name starts
+  U64 parent;                   // 1 + index of the parent (0: top level)
+  U64 depth;
+};
+
 typedef struct RAD_LspDoc RAD_LspDoc;
 struct RAD_LspDoc
 {
@@ -102,6 +115,21 @@ struct RAD_LspDoc
   U64 sem_mapped_count;
   U64 sem_mapped_version;
   B32 sem_mapped_valid;
+
+  //- rad: document symbols (the navigation bar), asked like semantic tokens
+  S64 sym_request_id;
+  U64 sym_request_version;
+  B32 sym_asked;
+  Arena *sym_arena;
+  RAD_LspSymbol *syms;
+  U64 sym_count;
+  U64 sym_version;
+  B32 sym_valid;
+  Arena *sym_mapped_arena;
+  RAD_LspSymbol *sym_mapped;
+  U64 sym_mapped_count;
+  U64 sym_mapped_version;
+  B32 sym_mapped_valid;
 };
 
 typedef struct RAD_LspFileDiags RAD_LspFileDiags;
@@ -504,6 +532,8 @@ internal void rad_lsp_navigate_back(CFG_Node *window);
 internal B32 rad_lsp_path_is_external(String8 path);
 internal RAD_TokenColor *rad_lsp_token_colors_from_document(RAD_Document *doc, U64 *count_out);
 internal void rad_lsp_take_semantic_legend(RAD_LspServer *s, JSON_Value *provider);
+internal RAD_LspSymbol *rad_lsp_symbols_from_document(RAD_Document *doc, U64 *count_out);
+internal B32 rad_lsp_take_document_symbols(RAD_LspServer *s, LSP_Message *m);
 internal B32 rad_lsp_take_semantic_tokens(RAD_LspServer *s, LSP_Message *m);
 
 ////////////////////////////////

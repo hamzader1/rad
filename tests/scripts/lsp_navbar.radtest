@@ -1,0 +1,49 @@
+#! timeout: 300
+# Navigation bar (task G5, VS2022's): above the code of a Rust file, the
+# top-level item around the cursor and the innermost symbol in it (from
+# textDocument/documentSymbol); each opens a list to jump from.
+
+lsp on
+open_folder ../fixtures/lsp_complete
+wait_idle
+open ../fixtures/lsp_complete/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+wait_until 30000 symbol_count > 0
+
+# inside `increment` (impl Counter), inside `main`
+click code 11 10
+wait_frames 3
+expect nav_item == "impl Counter"
+expect nav_member == "increment"
+click code 20 8
+wait_frames 3
+expect nav_item == "main"
+expect nav_member == ""
+
+# the items list: jump to `scale`
+click nav_box item
+wait_frames 3
+click nav_list_item 4
+wait_frames 3
+expect cursor_line == 26
+expect nav_item == "scale"
+
+# the members of impl Counter: jump to `total`
+click code 11 10
+wait_frames 3
+click nav_box member
+wait_frames 3
+click nav_list_item 3
+wait_frames 3
+expect cursor_line == 14
+expect nav_member == "total"
+
+# the setting turns it off
+set_setting navigation_bar 0
+wait_frames 3
+expect nav_item == "impl Counter"
+set_setting navigation_bar 1
+wait_idle
+quit

@@ -366,6 +366,7 @@ rad_lsp_server_launch(RAD_LspServer *s)
                               "\"publishDiagnostics\":{\"versionSupport\":true},"
                               "\"hover\":{\"contentFormat\":[\"markdown\",\"plaintext\"]},"
                               "\"definition\":{\"linkSupport\":false},"
+                              "\"documentSymbol\":{\"hierarchicalDocumentSymbolSupport\":true},"
                               "\"codeAction\":{\"codeActionLiteralSupport\":{\"codeActionKind\":{\"valueSet\":[\"\",\"quickfix\",\"refactor\",\"refactor.extract\","
                               "\"refactor.inline\",\"refactor.rewrite\",\"source\",\"source.organizeImports\"]}},"
                               "\"resolveSupport\":{\"properties\":[\"edit\"]},\"dataSupport\":true,\"isPreferredSupport\":true},"
@@ -540,6 +541,11 @@ rad_lsp_doc_release(RAD_LspServer *s, RAD_LspDoc *ld)
   if(ld->sem_mapped_arena != 0)
   {
     arena_release(ld->sem_mapped_arena);
+  }
+  if(ld->sym_arena != 0)
+  {
+    arena_release(ld->sym_arena);
+    arena_release(ld->sym_mapped_arena);
   }
   arena_release(ld->arena);
 }
@@ -837,6 +843,9 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
       else if(rad_lsp_take_semantic_tokens(s, &m))
       {
       }
+      else if(rad_lsp_take_document_symbols(s, &m))
+      {
+      }
       else if(rad_lsp->hover.requested && !rad_lsp->hover.answered &&
               rad_lsp->hover.server == s && m.id == rad_lsp->hover.request_id)
       {
@@ -852,10 +861,12 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
         String8 result = str8_lit("null");
         if(str8_match(m.method, str8_lit("workspace/semanticTokens/refresh"), 0))
         {
-          // rad: the server knows more now (indexing done): ask again
+          // rad: the server knows more now (indexing done): ask again (the
+          // symbols too)
           for(RAD_LspDoc *ld = s->first_doc; ld != 0; ld = ld->next)
           {
             ld->sem_asked = 0;
+            ld->sym_asked = 0;
           }
           rad_request_frame();
         }
@@ -1265,6 +1276,177 @@ rad_lsp_take_code_action_resolve(RAD_LspServer *s, LSP_Message *m)
     rad_set_error(str8_lit("The language server gave no change for this action."));
   }
   scratch_end(scratch);
+}
+
+////////////////////////////////
+//~ rad: Document Symbols (not in raddbg: the navigation bar)
+
+typedef struct RAD_LspSymbolTask RAD_LspSymbolTask;
+struct RAD_LspSymbolTask
+{
+  RAD_LspSymbolTask *next;
+  JSON_Value *v;
+  U64 parent;
+  U64 depth;
+};
+
+internal void
+rad_lsp_symbol_tasks_push__(Arena *arena, RAD_LspSymbolTask **stack, JSON_Value *array, U64 parent, U64 depth)
+{
+  // rad: an array's elements onto the stack, the first on top (document order)
+  if(array->kind == JSON_ValueKind_Array && array->child_count != 0)
+  {
+    JSON_Value **items = push_array(arena, JSON_Value *, array->child_count);
+    U64 n = 0;
+    for(JSON_Value *v = array->first; v != &json_value_nil && n < array->child_count; v = v->next, n += 1)
+    {
+      items[n] = v;
+    }
+    for(U64 idx = n; idx > 0; idx -= 1)
+    {
+      RAD_LspSymbolTask *t = push_array(arena, RAD_LspSymbolTask, 1);
+      t->v = items[idx-1];
+      t->parent = parent;
+      t->depth = depth;
+      SLLStackPush(*stack, t);
+    }
+  }
+}
+
+internal B32
+rad_lsp_take_document_symbols(RAD_LspServer *s, LSP_Message *m)
+{
+  // NOTE(rad): DocumentSymbol[] {name, kind, range, selectionRange,
+  // children} (asked for), or SymbolInformation[] {name, kind, location}
+  RAD_LspDoc *ld = 0;
+  for(RAD_LspDoc *d = s->first_doc; d != 0; d = d->next)
+  {
+    if(d->sym_request_id != 0 && d->sym_request_id == m->id)
+    {
+      ld = d;
+      break;
+    }
+  }
+  if(ld != 0)
+  {
+    ld->sym_request_id = 0;
+    RAD_LspSnapshot *snap = rad_lsp_snapshot_from_version(ld, ld->sym_request_version);
+    if(!json_value_is_nil(m->error) && json_s64_from_value(json_value_from_key(m->error, str8_lit("code"))) == -32801)
+    {
+      ld->sym_asked = 0;
+    }
+    else if(snap != 0 && m->result->kind == JSON_ValueKind_Array)
+    {
+      Temp scratch = scratch_begin(0, 0);
+      if(ld->sym_arena == 0)
+      {
+        ld->sym_arena = arena_alloc();
+        ld->sym_mapped_arena = arena_alloc();
+      }
+      arena_clear(ld->sym_arena);
+
+      //- rad: count, then fill depth-first (an explicit stack)
+      typedef RAD_LspSymbolTask Task;
+      U64 cap = 0;
+      {
+        Task *stack = 0;
+        rad_lsp_symbol_tasks_push__(scratch.arena, &stack, m->result, 0, 0);
+        for(;stack != 0;)
+        {
+          Task *t = stack;
+          SLLStackPop(stack);
+          cap += 1;
+          rad_lsp_symbol_tasks_push__(scratch.arena, &stack, json_value_from_key(t->v, str8_lit("children")), 0, 0);
+        }
+      }
+      ld->syms = push_array(ld->sym_arena, RAD_LspSymbol, cap+1);
+      U64 count = 0;
+      {
+        Task *stack = 0;
+        rad_lsp_symbol_tasks_push__(scratch.arena, &stack, m->result, 0, 0);
+        for(;stack != 0 && count < cap;)
+        {
+          Task *t = stack;
+          SLLStackPop(stack);
+          JSON_Value *range = json_value_from_key(t->v, str8_lit("range"));
+          if(range->kind != JSON_ValueKind_Object)
+          {
+            range = json_value_from_key(json_value_from_key(t->v, str8_lit("location")), str8_lit("range"));
+          }
+          JSON_Value *select = json_value_from_key(t->v, str8_lit("selectionRange"));
+          if(select->kind != JSON_ValueKind_Object)
+          {
+            select = range;
+          }
+          JSON_Value *start = json_value_from_key(range, str8_lit("start"));
+          JSON_Value *end = json_value_from_key(range, str8_lit("end"));
+          JSON_Value *sel_start = json_value_from_key(select, str8_lit("start"));
+          RAD_LspSymbol *sym = &ld->syms[count];
+          sym->name = push_str8_copy(ld->sym_arena, json_string_from_value(json_value_from_key(t->v, str8_lit("name"))));
+          sym->kind = json_s64_from_value(json_value_from_key(t->v, str8_lit("kind")));
+          sym->range.min = rad_lsp_offset_from_position(snap->text, snap->line_starts, snap->line_count,
+                                                        json_s64_from_value(json_value_from_key(start, str8_lit("line"))),
+                                                        json_s64_from_value(json_value_from_key(start, str8_lit("character"))), s->utf8_positions);
+          sym->range.max = rad_lsp_offset_from_position(snap->text, snap->line_starts, snap->line_count,
+                                                        json_s64_from_value(json_value_from_key(end, str8_lit("line"))),
+                                                        json_s64_from_value(json_value_from_key(end, str8_lit("character"))), s->utf8_positions);
+          sym->select_off = rad_lsp_offset_from_position(snap->text, snap->line_starts, snap->line_count,
+                                                         json_s64_from_value(json_value_from_key(sel_start, str8_lit("line"))),
+                                                         json_s64_from_value(json_value_from_key(sel_start, str8_lit("character"))), s->utf8_positions);
+          sym->parent = t->parent;
+          sym->depth = t->depth;
+          count += 1;
+          rad_lsp_symbol_tasks_push__(scratch.arena, &stack, json_value_from_key(t->v, str8_lit("children")), count, t->depth + 1);
+        }
+      }
+      ld->sym_count = count;
+      ld->sym_version = ld->sym_request_version;
+      ld->sym_valid = 1;
+      ld->sym_mapped_valid = 0;
+      rad_request_frame();
+      scratch_end(scratch);
+    }
+  }
+  return (ld != 0);
+}
+
+internal RAD_LspSymbol *
+rad_lsp_symbols_from_document(RAD_Document *doc, U64 *count_out)
+{
+  // NOTE(rad): the document's symbols in its current text, carried once per
+  // buffer version (as rad_lsp_token_colors_from_document)
+  RAD_LspSymbol *result = 0;
+  U64 count = 0;
+  RAD_LspServer *s = (doc != 0 ? rad_lsp_server_from_path(doc->path) : 0);
+  RAD_LspDoc *ld = (s != 0 ? rad_lsp_doc_from_id(s, doc->id) : 0);
+  if(ld != 0 && ld->sym_valid)
+  {
+    U64 version = doc->buffer->version;
+    if(!ld->sym_mapped_valid || ld->sym_mapped_version != version)
+    {
+      arena_clear(ld->sym_mapped_arena);
+      ld->sym_mapped = push_array_no_zero(ld->sym_mapped_arena, RAD_LspSymbol, ld->sym_count+1);
+      B32 good = 1;
+      for(U64 idx = 0; idx < ld->sym_count && good; idx += 1)
+      {
+        RAD_LspSymbol sym = ld->syms[idx];
+        if(ld->sym_version != version)
+        {
+          good = (tb_buffer_map_offset(doc->buffer, ld->sym_version, &sym.range.min) &&
+                  tb_buffer_map_offset_side(doc->buffer, ld->sym_version, &sym.range.max, Side_Min) &&
+                  tb_buffer_map_offset(doc->buffer, ld->sym_version, &sym.select_off));
+        }
+        ld->sym_mapped[idx] = sym;
+      }
+      ld->sym_mapped_count = (good ? ld->sym_count : 0);
+      ld->sym_mapped_version = version;
+      ld->sym_mapped_valid = 1;
+    }
+    result = ld->sym_mapped;
+    count = ld->sym_mapped_count;
+  }
+  *count_out = count;
+  return result;
 }
 
 ////////////////////////////////
@@ -2301,6 +2483,17 @@ rad_lsp_tick(void)
                                                 push_str8f(scratch.arena, "{\"textDocument\":{\"uri\":%S}}", json_escaped_from_str8(scratch.arena, ld->uri)));
         ld->sem_request_version = ld->sent_version;
         ld->sem_asked = 1;
+        scratch_end(scratch);
+      }
+      if(!changed && ld->opened && ld->sym_request_id == 0 &&
+         (!ld->sym_asked || ld->sym_request_version != ld->sent_version))
+      {
+        // rad: document symbols for the text the server has
+        Temp scratch = scratch_begin(0, 0);
+        ld->sym_request_id = lsp_client_request(s->client, str8_lit("textDocument/documentSymbol"),
+                                                push_str8f(scratch.arena, "{\"textDocument\":{\"uri\":%S}}", json_escaped_from_str8(scratch.arena, ld->uri)));
+        ld->sym_request_version = ld->sent_version;
+        ld->sym_asked = 1;
         scratch_end(scratch);
       }
       if(!changed && ld->saved_pending)

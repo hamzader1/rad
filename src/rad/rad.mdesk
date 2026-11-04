@@ -1254,6 +1254,7 @@ RAD_SettingTable:
   {hint_code_text               Bool  B32 1   0  1  Fonts      "Hint Code Text"                "Controls whether or not code text is hinted, for better text readability at small sizes." ""}
   {show_line_numbers            Bool  B32 1   0  1  Editor     "Line Numbers"                  "Shows line numbers in text views." ""}
   {tab_width                    U64   U64 2   1  16 Editor     "Tab Width"                     "The width of a tab character, in spaces." ""}
+  {navigation_bar               Bool  B32 1   0  1  Editor     "Navigation Bar"                "Shows the item and member around the cursor above the code, each a list to jump from (VS2022's navigation bar; Rust files)." ""}
   {scroll_past_end              Bool  B32 1   0  1  Editor     "Scroll Past End"               "Lets text views scroll until their last line is at the top (raddbg's); off: the last line stops at the bottom." ""}
   {cursor_scope_lines           Bool  B32 1   0  1  Editor     "Cursor Scope Lines"            "Controls whether or not scopes containing the cursor in text views are drawn." ""}
   {cursor_scope_end_annotations Bool  B32 1   0  1  Editor     "Cursor Scope End Annotations"  "Controls whether or not ending annotations for scopes containing the cursor are drawn." ""}

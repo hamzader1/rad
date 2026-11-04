@@ -379,6 +379,26 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       result = 1;
     }
   }
+  else if(str8_match(name, str8_lit("nav_item"), 0) || str8_match(name, str8_lit("nav_member"), 0) ||
+          str8_match(name, str8_lit("symbol_count"), 0))
+  {
+    // rad: the navigation bar: the item and member around the cursor (last
+    // layout); the editor document's symbols
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    result = rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out);
+    if(result && str8_match(name, str8_lit("symbol_count"), 0))
+    {
+      U64 count = 0;
+      rad_lsp_symbols_from_document(doc, &count);
+      value = push_str8f(arena, "%I64u", count);
+    }
+    else if(result)
+    {
+      value = push_str8_copy(arena, cv->layout_nav_names[str8_match(name, str8_lit("nav_member"), 0) ? 1 : 0]);
+    }
+  }
   else if(str8_match(name, str8_lit("code_actions_count"), 0) || str8_match(name, str8_lit("code_action"), 0) ||
           str8_match(name, str8_lit("code_actions_shown"), 0))
   {
@@ -1341,6 +1361,43 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
         args_used = 3;
         result = 1;
       }
+    }
+  }
+
+  //- rad: the navigation bar's boxes (item, member); entry n (1-based) of
+  // its open list
+  else if(str8_match(kind, str8_lit("nav_box"), 0) || str8_match(kind, str8_lit("nav_list_item"), 0))
+  {
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    S64 n = 0;
+    Rng2F32 rect = {0};
+    if(!rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out))
+    {
+    }
+    else if(args_count < 2)
+    {
+      *error_out = str8_lit("nav_box: needs item|member; nav_list_item: needs <n>");
+    }
+    else if(str8_match(kind, str8_lit("nav_box"), 0) && cv->layout_nav_frame+1 >= rad_state->frame_index)
+    {
+      rect = cv->layout_nav_rects[str8_match(args[1], str8_lit("member"), 0) ? 1 : 0];
+    }
+    else if(str8_match(kind, str8_lit("nav_list_item"), 0) && try_s64_from_str8_c_rules(args[1], &n) && 1 <= n &&
+            (U64)n <= cv->layout_nav_item_count && cv->layout_nav_menu_frame+1 >= rad_state->frame_index)
+    {
+      rect = cv->layout_nav_item_rects[n-1];
+    }
+    if(error_out->size == 0 && rect.x1 <= rect.x0)
+    {
+      *error_out = push_str8f(arena, "%S: not visible", kind);
+    }
+    else if(error_out->size == 0)
+    {
+      pos = center_2f32(rect);
+      args_used = 2;
+      result = 1;
     }
   }
 

@@ -788,6 +788,202 @@ rad_icon_from_lsp_completion_kind(S64 kind, RAD_IconKind *icon_out, RAD_CodeColo
 }
 
 internal void
+rad_icon_from_lsp_symbol_kind(S64 kind, RAD_IconKind *icon_out, RAD_CodeColorSlot *color_out)
+{
+  // NOTE(rad): LSP SymbolKind -> the completion list's icons (rust-analyzer:
+  // impl blocks are Object, traits Interface)
+  RAD_IconKind icon = RAD_IconKind_Dot;
+  RAD_CodeColorSlot color = RAD_CodeColorSlot_CodeDefault;
+  switch(kind)
+  {
+    default:{}break;
+    case 6: case 9: case 12:          {icon = RAD_IconKind_SymbolMethod;     color = RAD_CodeColorSlot_CodeSymbol;}break;   // method, constructor, function
+    case 7: case 8:                   {icon = RAD_IconKind_SymbolField;      color = RAD_CodeColorSlot_CodeProperty;}break; // property, field
+    case 13:                          {icon = RAD_IconKind_SymbolVariable;   color = RAD_CodeColorSlot_CodeLocal;}break;    // variable
+    case 5: case 11: case 19: case 23:{icon = RAD_IconKind_SymbolClass;      color = RAD_CodeColorSlot_CodeType;}break;     // class, interface, object (impl), struct
+    case 10:                          {icon = RAD_IconKind_SymbolEnum;       color = RAD_CodeColorSlot_CodeType;}break;     // enum
+    case 22:                          {icon = RAD_IconKind_SymbolEnumMember; color = RAD_CodeColorSlot_CodeType;}break;     // enum member
+    case 14:                          {icon = RAD_IconKind_SymbolConstant;   color = RAD_CodeColorSlot_CodeRegister;}break; // constant
+    case 26:                          {icon = RAD_IconKind_SymbolParameter;  color = RAD_CodeColorSlot_CodeTypeParameter;}break; // type parameter
+    case 2: case 3: case 4:           {icon = RAD_IconKind_Module;           color = RAD_CodeColorSlot_CodeDefault;}break;  // module, namespace, package
+  }
+  *icon_out = icon;
+  *color_out = color;
+}
+
+internal DR_FStrList
+rad_fstrs_from_lsp_symbol(Arena *arena, RAD_LspSymbol *sym, String8 indent)
+{
+  // rad: [kind icon] name, for the navigation bar and its lists
+  DR_FStrList fstrs = {0};
+  RAD_IconKind icon = RAD_IconKind_Dot;
+  RAD_CodeColorSlot color = RAD_CodeColorSlot_CodeDefault;
+  rad_icon_from_lsp_symbol_kind(sym->kind, &icon, &color);
+  DR_FStrParams text_params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+  DR_FStrParams icon_params = {rad_font_from_slot(RAD_FontSlot_Icons), rad_raster_flags_from_slot(RAD_FontSlot_Icons), rad_rgba_from_code_color_slot(color), ui_top_font_size()};
+  if(indent.size != 0)
+  {
+    dr_fstrs_push_new(arena, &fstrs, &text_params, indent);
+  }
+  dr_fstrs_push_new(arena, &fstrs, &icon_params, rad_icon_kind_text_table[icon]);
+  dr_fstrs_push_new(arena, &fstrs, &text_params, str8_lit("  "));
+  dr_fstrs_push_new(arena, &fstrs, &text_params, sym->name);
+  return fstrs;
+}
+
+internal void
+rad_navigation_bar_ui(CFG_Node *tab, RAD_CodeViewState *cv, RAD_Document *doc, Rng2F32 bar_rect, Rng2F32 view_rect)
+{
+  // NOTE(rad): not in raddbg (VS2022's navigation bar): two boxes in the
+  // query bar's look: the top-level item around the cursor, the innermost
+  // symbol inside it; each opens a list (raddbg's context menu) to jump to
+  Temp scratch = scratch_begin(0, 0);
+  U64 sym_count = 0;
+  RAD_LspSymbol *syms = rad_lsp_symbols_from_document(doc, &sym_count);
+
+  //- rad: the symbols around the cursor (the innermost wins)
+  U64 top_idx = max_U64;
+  U64 member_idx = max_U64;
+  for EachIndex(idx, sym_count)
+  {
+    if(syms[idx].range.min <= cv->cursor && cv->cursor <= syms[idx].range.max)
+    {
+      if(syms[idx].parent == 0)
+      {
+        top_idx = idx;
+        member_idx = max_U64;
+      }
+      else if(top_idx != max_U64)
+      {
+        member_idx = idx;
+      }
+    }
+  }
+
+  //- rad: boxes
+  if(cv->layout_nav_arena == 0)
+  {
+    cv->layout_nav_arena = arena_alloc();
+  }
+  arena_clear(cv->layout_nav_arena);
+  cv->layout_nav_frame = rad_state->frame_index;
+  UI_Key menu_key = ui_key_from_stringf(ui_key_zero(), "_nav_menu_%p", tab);
+  F32 half_width = floor_f32(dim_2f32(bar_rect).x/2);
+  for(U64 side = 0; side < 2; side += 1)
+  {
+    Rng2F32 r = bar_rect;
+    if(side == 0) { r.x1 = r.x0 + half_width; } else { r.x0 = r.x0 + half_width; }
+    RAD_LspSymbol *sym = (side == 0 ? (top_idx != max_U64 ? &syms[top_idx] : 0) : (member_idx != max_U64 ? &syms[member_idx] : 0));
+    DR_FStrList fstrs = {0};
+    if(sym != 0)
+    {
+      fstrs = rad_fstrs_from_lsp_symbol(scratch.arena, sym, str8_zero());
+    }
+    else if(side == 0)
+    {
+      Vec4F32 weak_color = {0};
+      UI_TagF("weak") weak_color = ui_color_from_name(str8_lit("text"));
+      DR_FStrParams params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), weak_color, ui_top_font_size()};
+      dr_fstrs_push_new(scratch.arena, &fstrs, &params, str8_skip_last_slash(doc->path));
+    }
+    cv->layout_nav_names[side] = (sym != 0 ? push_str8_copy(cv->layout_nav_arena, sym->name) : str8_zero());
+    UI_Box *box = &ui_nil_box;
+    ui_set_next_rect(shift_2f32(r, scale_2f32(view_rect.p0, -1.f)));
+    ui_set_next_child_layout_axis(Axis2_X);
+    UI_Focus(UI_FocusKind_Off) UI_CornerRadius(0)
+    {
+      box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|
+                                      UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
+                                      "###nav_bar_%I64u", side);
+    }
+    UI_Parent(box) UI_HeightFill UI_Focus(UI_FocusKind_Off)
+    {
+      ui_spacer(ui_em(0.75f, 1.f));
+      UI_PrefWidth(ui_pct(1, 0))
+      {
+        UI_Box *label = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
+        ui_box_equip_display_fstrs(label, &fstrs);
+      }
+      RAD_Font(RAD_FontSlot_Icons) UI_FontSize(ui_top_font_size()*0.8f) UI_PrefWidth(ui_em(2.5f, 1.f)) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
+        ui_label(rad_icon_kind_text_table[RAD_IconKind_DownCaret]);
+    }
+    cv->layout_nav_rects[side] = box->rect;
+    if(ui_pressed(ui_signal_from_box(box)) && (side == 0 ? sym_count != 0 : top_idx != max_U64))
+    {
+      cv->nav_menu_side = side;
+      ui_ctx_menu_open(menu_key, box->key, v2f32(0, dim_2f32(box->rect).y));
+    }
+  }
+
+  //- rad: the list: top-level items, or the members of the item around the
+  // cursor (indented by depth); the current one checked
+  UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(34.f, 1.f)) UI_TagF("implicit")
+  {
+    cv->layout_nav_menu_frame = rad_state->frame_index;
+    cv->layout_nav_item_count = 0;
+    U64 current = (cv->nav_menu_side == 0 ? top_idx : member_idx);
+    for EachIndex(idx, sym_count)
+    {
+      RAD_LspSymbol *sym = &syms[idx];
+      B32 listed = (cv->nav_menu_side == 0 ? sym->parent == 0 : 0);
+      if(cv->nav_menu_side == 1 && top_idx != max_U64)
+      {
+        for(U64 p = sym->parent; p != 0 && !listed; p = syms[p-1].parent)
+        {
+          listed = (p-1 == top_idx);
+        }
+      }
+      if(!listed)
+      {
+        continue;
+      }
+      U64 rel_depth = (cv->nav_menu_side == 0 ? 0 : sym->depth - syms[top_idx].depth - 1);
+      String8 indent = {0};
+      if(rel_depth != 0)
+      {
+        indent = push_str8f(scratch.arena, "%.*s", (int)Min(rel_depth*4, 32), "                                ");
+      }
+      DR_FStrList fstrs = rad_fstrs_from_lsp_symbol(scratch.arena, sym, indent);
+      ui_set_next_child_layout_axis(Axis2_X);
+      UI_Box *item = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|
+                                               UI_BoxFlag_DrawBackground|
+                                               UI_BoxFlag_DrawHotEffects|
+                                               UI_BoxFlag_DrawActiveEffects|
+                                               UI_BoxFlag_Clickable,
+                                               "###nav_item_%I64u", idx);
+      UI_Parent(item) UI_HeightFill UI_Padding(ui_em(1.f, 1.f))
+      {
+        RAD_Font(RAD_FontSlot_Icons)
+          UI_PrefWidth(ui_em(2.f, 1.f))
+          UI_TextAlignment(UI_TextAlign_Center)
+          UI_TagF("weak")
+          ui_label(idx == current ? rad_icon_kind_text_table[RAD_IconKind_Check] : str8_lit(""));
+        UI_PrefWidth(ui_text_dim(10, 1.f))
+        {
+          UI_Box *label = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
+          ui_box_equip_display_fstrs(label, &fstrs);
+        }
+      }
+      if(cv->layout_nav_item_count < ArrayCount(cv->layout_nav_item_rects))
+      {
+        cv->layout_nav_item_rects[cv->layout_nav_item_count] = item->rect;
+        cv->layout_nav_item_count += 1;
+      }
+      if(ui_clicked(ui_signal_from_box(item)))
+      {
+        // rad: jump: the cursor to its name, shown (centered if off screen)
+        cv->cursor = cv->mark = sym->select_off;
+        cv->contain_cursor = 1;
+        ui_ctx_menu_close();
+        rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
+        rad_request_frame();
+      }
+    }
+  }
+  scratch_end(scratch);
+}
+
+internal void
 rad_signature_popup_ui(RAD_Window *ws, CFG_Node *window)
 {
   // NOTE(rad): not in raddbg: signature help (VS2022's Parameter Info),
@@ -2874,6 +3070,17 @@ rad_text_view_ui(CFG_Node *tab, Rng2F32 rect)
   Rng2F32 code_area_rect = r2f32p(rect.x0, rect.y0, rect.x1, rect.y1 - bottom_bar_height);
   Rng2F32 bottom_bar_rect = r2f32p(rect.x0, rect.y1 - bottom_bar_height, rect.x1, rect.y1);
 
+  // rad: not in raddbg: the navigation bar, above the code (Rust files)
+  B32 do_nav_bar = (rad_state->settings.navigation_bar &&
+                    str8_match(str8_skip_last_dot(rad_file_path_from_tab(tab)), str8_lit("rs"), StringMatchFlag_CaseInsensitive));
+  Rng2F32 nav_bar_rect = {0};
+  if(do_nav_bar)
+  {
+    F32 nav_bar_height = floor_f32(main_font_size*(rad_state->settings.density == 1 ? 2.f : 2.5f));
+    nav_bar_rect = r2f32p(rect.x0, rect.y0, rect.x1, rect.y0 + nav_bar_height);
+    code_area_rect.y0 += nav_bar_height;
+  }
+
   //////////////////////////////
   //- rad: unpack parameterization info
   //
@@ -2947,8 +3154,24 @@ rad_text_view_ui(CFG_Node *tab, Rng2F32 rect)
   //
   if(!file_is_missing)
   {
-    rad_code_view_build(scratch.arena, tab, cv, buffer, code_area_rect, lang_kind, &info, data);
+    // rad: placed at code_area_rect (the code view lays out from its parent's
+    // origin; the navigation bar is above it)
+    ui_set_next_rect(shift_2f32(code_area_rect, scale_2f32(rect.p0, -1.f)));
+    ui_set_next_child_layout_axis(Axis2_X);
+    UI_Box *code_area_parent = ui_build_box_from_stringf(0, "###code_area_parent");
+    UI_Parent(code_area_parent)
+    {
+      rad_code_view_build(scratch.arena, tab, cv, buffer, code_area_rect, lang_kind, &info, data);
+    }
     cv->buffer_version = buffer->version;
+  }
+
+  //////////////////////////////
+  //- rad: not in raddbg: navigation bar
+  //
+  if(!file_is_missing && do_nav_bar && key_has_data) UI_FontSize(main_font_size) RAD_Font(RAD_FontSlot_Main)
+  {
+    rad_navigation_bar_ui(tab, cv, doc, nav_bar_rect, rect);
   }
 
   //////////////////////////////

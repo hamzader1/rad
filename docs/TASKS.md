@@ -353,8 +353,15 @@ tree, each with a header (title, X), no "+", no zoom button.
   WorkspaceEdit, one undo step per open file. Not done: edits to files
   that are not open (reported), file creates/renames, client commands
   (e.g. rust-analyzer's "Run"); VS2022's preview of the change.
-- [ ] **G5. Navigation bar** under the tabs (`TN8f33D5`: type and member
-  dropdowns) from `textDocument/documentSymbol`.
+- [x] **G5. Navigation bar** under the tabs (`TN8f33D5`: type and member
+  dropdowns) from `textDocument/documentSymbol`. Done 2026-11-04 (script
+  `lsp_navbar`): above the code of Rust files, two boxes in raddbg's box
+  look: the top-level item around the cursor (the file name when none)
+  and the innermost symbol in it, with the completion list's kind icons;
+  each opens a list (raddbg's context menu; the members indented by
+  depth, the current one checked) that moves the cursor there. Setting
+  "Navigation Bar" (Editor, on). Symbols asked after each sync, carried
+  over edits by the change log. Not done: VS2022's third (project) box.
 - [x] **G6. Semantic token colors** from rust-analyzer (functions, macros,
   types colored like VS2022). Done 2026-11-04 (script `lsp_semantic`):
   `textDocument/semanticTokens/full` after each sync and on the server's
