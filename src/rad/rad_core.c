@@ -60,7 +60,7 @@ rad_default_settings(void)
   {
     rad_setting_store_f64__(&s, &rad_setting_info_table[idx], rad_setting_info_table[idx].default_value);
   }
-  s.theme_preset = RAD_ThemePreset_DefaultDark;
+  s.theme_preset = RAD_ThemePreset_Vsa; // rad: the user's theme, first in the table (task G7)
   rad_settings_derive__(&s);
   return s;
 }

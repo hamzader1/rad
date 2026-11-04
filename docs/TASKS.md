@@ -341,8 +341,16 @@ tree, each with a header (title, X), no "+", no zoom button.
   dropdowns) from `textDocument/documentSymbol`.
 - [ ] **G6. Semantic token colors** from rust-analyzer (functions, macros,
   types colored like VS2022).
-- [ ] **G7. The user's theme** (`.dev_hints/vsa.json`, from their Zed
-  config) as a theme preset, the default.
+- [x] **G7. The user's theme** (`.dev_hints/vsa.json`, from their Zed
+  config) as a theme preset, the default. Done 2026-11-04: preset "VSA
+  (Dark)" (`vsa`), first in `RAD_ThemePresetTable` (so the default):
+  raddbg's dark palette with vsa's background (#202020), status bar
+  (#303030: the idle bottom bar's `good_pop`), cursor, selection, state
+  colors and syntax colors on raddbg's code color slots (function ->
+  code_symbol, type -> code_type, variable -> code_default/code_local,
+  attribute -> code_meta, constant -> code_register). Not taken: Zed's
+  font weights (functions at 600: raddbg draws one weight); vsa's
+  semantic rules (unsafe, typeParameter, lifetime) come with G6.
 
 ## Decisions (user, 2026-11-04)
 

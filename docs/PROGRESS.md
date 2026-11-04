@@ -382,6 +382,13 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (task G7: the user's theme)
+- `RAD_ThemePresetTable`: `Vsa` first (default index 0; settings store the
+  preset by name, so older user files keep theirs). Generated from the
+  Default (Dark) block with vsa's values substituted, tag by tag.
+- The lexer alone cannot tell functions and types from other identifiers:
+  they get vsa's orange/gold with semantic tokens (G6).
+
 ### 2026-11-04 (task G2: completion icons)
 - `icons/make_rad_icons.py` packs the 9 `symbol-*.svg` on `, / : ; = _ |
   \ `` (the last free ASCII codepoints of raddbg's icons.ttf; more
