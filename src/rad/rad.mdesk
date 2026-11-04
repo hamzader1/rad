@@ -1085,8 +1085,10 @@ RAD_CmdTable:
   {CargoRelease           cargo_release        "Release Configuration" Null             Null       0      0      0      Null     0         0           0         0 }
   {NextError              next_error           "Next Error"           DownArrow         F8         0      0      0      Null     0         0           0         0 }
   {PrevError              prev_error           "Previous Error"       UpArrow           F8         0      shift  0      Null     0         0           0         0 }
-  {ShowOutput             show_output          "Output"               List              Null       0      0      0      Null     0         0           0         0 }
+  {ShowOutput             show_output          "Output"               List              O          ctrl   0      alt    Null     0         0           0         0 }
   {ShowProblems           show_problems        "Problems"             WarningSmall      Null       0      0      0      Null     0         0           0         0 }
+  {ShowExplorer           show_explorer        "Explorer"             FolderClosedFilled L          ctrl   0      alt    Null     0         0           0         0 }
+  {CloseToolWindow        close_tool_window    "Close Tool Window"    X                 Esc        0      shift  0      Null     0         0           0         0 }
   {ClearOutput            clear_output         "Clear Output"         Trash             Null       0      0      0      Null     0         0           0         0 }
 
   //- rad: language server (Visual Studio's keys)
@@ -1122,6 +1124,7 @@ RAD_SettingTable:
 {
   {theme_preset                 Theme U64 0   0  0  Appearance "Theme"                         "The color theme of the whole window." ""}
   {density                      Enum  U64 0   0  1  Appearance "Density"                       "Comfortable: raddbg's sizes. Compact: shorter rows, tabs and panel headers." "Comfortable|Compact"}
+  {explorer_side                Enum  U64 0   0  1  Layout     "Explorer Side"                 "The side of the window the explorer is docked to." "Left|Right"}
   {opaque_backgrounds           Bool  B32 0   0  1  Appearance "Opaque Backgrounds"            "Controls whether or not all floating background colors are forced to be fully opaque." ""}
   {background_blur              Bool  B32 1   0  1  Appearance "Background Blur"               "Controls whether or not occluded regions behind floating elements are blurred." ""}
   {drop_shadows                 Bool  B32 1   0  1  Appearance "Drop Shadows"                  "Controls whether or not drop shadows are drawn." ""}

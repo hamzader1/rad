@@ -3,7 +3,7 @@
 # explorer folder, the panels and the tabs (focused panel and tab too).
 
 wait_idle
-expect panel_count == 3
+expect panel_count == 2
 expect explorer_root == "project"
 expect explorer_panel_tabs == 1
 expect panel == "text"

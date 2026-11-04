@@ -11,7 +11,7 @@ cmd new_panel_right
 wait_idle
 open ../fixtures/edit.txt
 wait_idle
-expect panel_count == 3
+expect panel_count == 2
 expect tab == "edit.txt"
 expect tab_count == 1
 expect doc_count == 1

@@ -187,10 +187,13 @@ tree, each with a header (title, X), no "+", no zoom button.
 +------------------------------------------------------------+
 ```
 
-- [ ] **C1. View menu.** New top-level menu "View": Explorer, Output,
+- [x] **C1. View menu.** New top-level menu "View": Explorer, Output,
   Problems (shows the tool window again after X). **[suggestion]** VS2022
   keys: Ctrl+Alt+L (Solution Explorer), Ctrl+Alt+O (Output), Ctrl+\, E
   (Error List) if chords are cheap; otherwise only menu items.
+  Done 2026-11-04 (script `tool_windows`): View > Explorer (Ctrl+Alt+L),
+  Output (Ctrl+Alt+O), Problems (no key: no chords yet), Close Tool Window
+  (Shift+Esc, VS2022's). The Tab menu's Alt key was V by mistake; now B.
 - [ ] **C2. Explorer as a tool window** (left, width adjustable). Header:
   folder name, X to close. No "+" next to the folder name; no Toggle Zoom.
   Open Folder stays in File and in the empty state. A search/filter box
@@ -198,12 +201,26 @@ tree, each with a header (title, X), no "+", no zoom button.
   of matches, Esc clears (**[suggestion]** Ctrl+; focuses it, as VS2022).
   Compact rows from the setting (B2). Old user files with the explorer as a
   panel tab load into the new layout.
-- [ ] **C3. Bottom tool window** (`QJK3Syr5`): docked below everything, full
+  2026-11-04, layout part done (scripts `tool_windows`, `layout_migrate`):
+  tool windows are leaf panels holding tool tabs, kept by
+  `rad_window_tool_layout_ensure` (every frame, before commands) in
+  `panels (y): [top (x): explorer | editor panels...] [bottom]`; Explorer
+  Side setting (Left/Right); hidden = size 0 (size kept in `tool_sizes`);
+  header with title + X (zoom button style), no tab bar, no "+", no zoom;
+  Close Panel / X / Shift+Esc hide; splits go to the editor panel and take
+  space only from the split panel; the last editor panel cannot close.
+  Left: the search/filter box, compact rows.
+- [x] **C3. Bottom tool window** (`QJK3Syr5`): docked below everything, full
   window width, height adjustable, compact header (title, collapse, X),
   tabs Output / Problems at the bottom as VS2022 shows them, rows and text
   smaller than the editor's (code font size of its own, from the density
   setting). X hides it; View brings it back; a cargo command shows it.
   **[suggestion]** Later: a Terminal tab here.
+  Done 2026-11-04 (scripts `tool_windows`, `cargo_build`): full width under
+  the explorer and editors, hidden until a cargo command or View shows it,
+  header (2.25 font sizes: title + X), Output / Problems tabs at the bottom
+  (raddbg's `tabs_on_bottom`). Not done: a font size of its own (it uses
+  the code font size), a collapse button.
 
 ## D. Tabs
 

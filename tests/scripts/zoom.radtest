@@ -4,7 +4,7 @@
 
 open ../fixtures/edit.txt
 wait_idle
-expect panel_count == 2
+expect panel_count == 1
 expect zoomed == 0
 cmd toggle_zoom_panel
 wait_idle
@@ -18,7 +18,7 @@ expect tab == "edit.txt"
 cmd new_panel_down
 wait_idle
 expect zoomed == 1
-expect panel_count == 3
+expect panel_count == 2
 open ../fixtures/lines_3000.txt
 wait_idle
 cmd next_panel

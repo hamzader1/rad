@@ -10,7 +10,7 @@ wait_idle
 open ../fixtures/lines_3000.txt
 wait_idle
 expect tab == "lines_3000.txt"
-expect panel_count == 3
+expect panel_count == 2
 
 # click into the other panel's code: it takes the focus
 click tab_code "edit.txt"

@@ -85,6 +85,7 @@
 //   output <line> <col>         a visible text position in the Output tab
 //   output_text "<text>"        the first Output line containing it, at its start
 //   problem <n>                 middle of visible Problems row n (1-based)
+//   tool_close <explorer|bottom> a tool window's X button
 //   setting_row <name>          middle of a visible Settings row
 //   setting_control <name>      its toggle switch or slider
 //   setting_revert <name>       its revert button (only on changed settings)
@@ -111,6 +112,9 @@
 //   panel_count                 number of leaf panels in the window
 //   zoomed                      1 if a panel is zoomed (Toggle Panel Zoom)
 //   menu_bar_focused            1 if the menu bar has the keyboard (Alt tapped)
+//   explorer_visible            1 if the explorer tool window is shown
+//   explorer_on_right           1 if the explorer is docked on the right
+//   bottom_visible              1 if the bottom tool window (Output, Problems) is shown
 //   settings_rows               rows the Settings tab shows (the filter's matches)
 //   settings_selected           the selected setting's name ("" = none)
 //   settings_filter             the Settings filter's text

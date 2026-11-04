@@ -382,6 +382,29 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (tasks C1, C3, C2 layout: tool windows)
+- Tool windows (`RAD_ToolKind`, rad_core.c "Tool Windows"): leaf panels
+  holding tool tabs (explorer; output + problems). Every frame, before
+  commands, `rad_window_tool_layout_ensure` checks the layout
+  `panels (y): [top (x): explorer | editor...] [bottom: tabs_on_bottom]`,
+  moves the explorer to its side (setting `explorer_side`), or rebuilds it
+  from any other layout (old user files: tool tabs out, emptied panels
+  closed, the rest becomes the editor area).
+- Hidden = panel size 0, size kept under `window: tool_sizes`; no drag
+  boundary next to it; Next/Prev Panel skip it. Header (title + X in the
+  zoom button's style); explorer: no tab bar; bottom: tabs at its bottom.
+  No "+", no zoom, tool tabs have no close button.
+- Commands: Show Explorer (Ctrl+Alt+L), Show Output (Ctrl+Alt+O), Show
+  Problems, Close Tool Window (Shift+Esc); View menu. Close Panel on a tool
+  window hides it; splits on one split the editor panel; a split next to
+  the explorer takes space only from the split panel; closing a panel next
+  to it gives the space to the neighbor; the last editor panel stays.
+- `ClosePanel`'s body is now `rad_panel_close` (also used by the rebuild).
+- Script: `panel_count` counts editor panels only; fields
+  `explorer_visible`, `bottom_visible`, `explorer_on_right`; target
+  `tool_close`; scripts `tool_windows` (44), `layout_migrate` (8; fixture
+  `old_layout.rad_user`); `explorer_panel` replaced.
+
 ### 2026-11-04 (tasks B1 step 2: Settings tab)
 - `rad_settings_view_ui` (rad_views.c): raddbg's User Settings lister as a
   tab (`settings` tab kind, File > Settings, one per window, opens where

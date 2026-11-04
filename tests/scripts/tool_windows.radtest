@@ -1,0 +1,116 @@
+# Tool windows (tasks C1-C3): the explorer (left, or right by setting) and
+# the bottom window (Output, Problems) sit outside the editor panels. No
+# "+", no zoom; X (or Shift+Esc, Close Panel) hides them; View (Ctrl+Alt+L,
+# Ctrl+Alt+O) shows them; their tabs cannot be closed; files never open in
+# them; splitting one splits the editor panel instead.
+
+open_folder ../fixtures/project
+wait_idle
+expect panel == "explorer"
+expect panel_count == 1
+expect explorer_panel_tabs == 1
+expect explorer_visible == 1
+expect bottom_visible == 0
+expect explorer_on_right == 0
+
+# Close Tab and Ctrl+W do nothing to it; Close Panel hides it
+cmd close_tab
+wait_idle
+expect explorer_panel_tabs == 1
+key ctrl+w
+wait_idle
+expect explorer_panel_tabs == 1
+cmd close_panel
+wait_idle
+expect explorer_visible == 0
+expect panel == "getting_started"
+cmd show_explorer
+wait_idle
+expect explorer_visible == 1
+expect panel == "explorer"
+
+# X hides it, Ctrl+Alt+L brings it back
+click tool_close explorer
+wait_idle
+expect explorer_visible == 0
+key ctrl+alt+l
+wait_idle
+expect explorer_visible == 1
+expect panel == "explorer"
+
+# Open File while the explorer is focused: into the editor panel
+open ../fixtures/edit.txt
+wait_idle
+expect panel == "text"
+expect tab == "edit.txt"
+expect explorer_panel_tabs == 1
+
+# splitting while the explorer is focused splits the editor panel
+cmd show_explorer
+wait_idle
+cmd new_panel_right
+wait_idle
+expect panel_count == 2
+expect explorer_panel_tabs == 1
+open ../fixtures/lines_3000.txt
+wait_idle
+expect tab == "lines_3000.txt"
+expect tab_count == 1
+cmd close_panel
+wait_idle
+expect panel_count == 1
+
+# the last editor panel stays
+cmd close_panel
+wait_idle
+expect panel_count == 1
+expect panel == "text"
+
+# the bottom window: Ctrl+Alt+O shows Output; its tabs stay; Shift+Esc hides it
+key ctrl+alt+o
+wait_idle
+expect bottom_visible == 1
+expect panel == "output"
+key ctrl+w
+wait_idle
+expect panel == "output"
+key shift+esc
+wait_idle
+expect bottom_visible == 0
+expect panel == "text"
+cmd show_problems
+wait_idle
+expect bottom_visible == 1
+expect panel == "problems"
+click tool_close bottom
+wait_idle
+expect bottom_visible == 0
+
+# Next Panel skips hidden tool windows
+expect panel == "text"
+key ctrl+comma
+expect panel == "explorer"
+key ctrl+comma
+expect panel == "text"
+
+# Explorer Side: Right, and back
+set_setting explorer_side 1
+wait_idle
+expect explorer_on_right == 1
+expect explorer_visible == 1
+expect panel_count == 1
+set_setting explorer_side 0
+wait_idle
+expect explorer_on_right == 0
+
+# Enter on a file in the explorer opens it in the editor panel
+cmd show_explorer
+wait_idle
+expect panel == "explorer"
+click explorer Cargo.toml
+key return
+wait_idle
+expect panel == "text"
+expect tab == "Cargo.toml"
+expect explorer_panel_tabs == 1
+quit

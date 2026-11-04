@@ -156,6 +156,28 @@ struct RAD_CmdList
 ////////////////////////////////
 //~ rad: Window State
 
+////////////////////////////////
+//~ rad: Tool Windows
+//
+// NOTE(rad): VS2022-style tool windows: leaf panels holding tool tabs (the
+// explorer's; the bottom one's Output and Problems), kept by
+// rad_window_tool_layout_ensure in a fixed layout around the editor panels:
+//
+//   panels (split y)
+//     top (split x): [explorer] [editor panels...]   (explorer last: Right)
+//     bottom: tabs_on_bottom, output, problems
+//
+// A hidden tool window has size 0; its size is kept in `tool_sizes`.
+
+typedef enum RAD_ToolKind
+{
+  RAD_ToolKind_Null,
+  RAD_ToolKind_Explorer,
+  RAD_ToolKind_Bottom,
+  RAD_ToolKind_COUNT
+}
+RAD_ToolKind;
+
 typedef struct RAD_Window RAD_Window;
 struct RAD_Window
 {
@@ -195,6 +217,7 @@ struct RAD_Window
   //- rad: last frame's top bar command buttons, by command (empty when not
   // built: scripted tests click them)
   Rng2F32 top_bar_cmd_rects[RAD_CmdKind_COUNT];
+  Rng2F32 tool_close_rects[RAD_ToolKind_COUNT];   // tool window X buttons (last layout; scripts)
 };
 
 ////////////////////////////////
@@ -319,6 +342,15 @@ internal RAD_Settings rad_settings_from_cfg(void);
 internal CFG_Node *rad_setting_cfg_node(String8 name);
 internal void rad_setting_set_f64(String8 name, F64 value);
 internal void rad_setting_revert(String8 name);
+internal RAD_ToolKind rad_tool_kind_from_panel(CFG_Node *panel);
+internal CFG_Node *rad_tool_panel_from_window(CFG_Node *window, RAD_ToolKind kind);
+internal B32 rad_tool_is_visible(CFG_Node *window, RAD_ToolKind kind);
+internal void rad_tool_set_visible(CFG_Node *window, RAD_ToolKind kind, B32 visible);
+internal U64 rad_editor_leaf_count(CFG_Node *window);
+internal void rad_panel_close(CFG_Node *window, CFG_Node *panel_cfg);
+internal void rad_window_tool_layout_ensure(CFG_Node *window);
+internal B32 rad_panel_has_tool_child__(CFG_PanelNode *parent);
+internal CFG_Node *rad_editor_panel_from_window(CFG_Node *window);
 internal String8 rad_setting_value_string(Arena *arena, RAD_Settings *settings, U64 idx);
 internal F64 rad_setting_f64_from_settings(RAD_Settings *settings, U64 idx);
 internal F32 rad_code_font_size(RAD_Window *ws);

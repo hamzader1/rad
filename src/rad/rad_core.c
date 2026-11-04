@@ -505,12 +505,22 @@ rad_panel_split(CFG_Node *split_panel, Dir2 split_dir, F32 new_pct)
     CFG_Node *parent_cfg = parent->cfg;
     CFG_Node *new_cfg = cfg_node_alloc(rad_state->cfg);
     cfg_node_insert_child(rad_state->cfg, parent_cfg, split_side == Side_Max ? split_panel : split_panel->prev, new_cfg);
-    cfg_node_equip_stringf(rad_state->cfg, new_cfg, "%f", 1.f/(parent->child_count+1));
-    for(CFG_PanelNode *child = parent->first; child != &cfg_nil_panel_node; child = child->next)
+    if(rad_panel_has_tool_child__(parent))
     {
-      F32 old_pct = child->pct_of_parent;
-      F32 new_pct = old_pct * ((F32)(parent->child_count) / (parent->child_count+1));
-      cfg_node_equip_stringf(rad_state->cfg, child->cfg, "%f", new_pct);
+      // rad: next to a tool window (the explorer's row): the split panel
+      // gives half its space; the tool window keeps its size
+      cfg_node_equip_stringf(rad_state->cfg, new_cfg, "%f", panel->pct_of_parent*0.5f);
+      cfg_node_equip_stringf(rad_state->cfg, split_panel, "%f", panel->pct_of_parent*0.5f);
+    }
+    else
+    {
+      cfg_node_equip_stringf(rad_state->cfg, new_cfg, "%f", 1.f/(parent->child_count+1));
+      for(CFG_PanelNode *child = parent->first; child != &cfg_nil_panel_node; child = child->next)
+      {
+        F32 old_pct = child->pct_of_parent;
+        F32 new_pct = old_pct * ((F32)(parent->child_count) / (parent->child_count+1));
+        cfg_node_equip_stringf(rad_state->cfg, child->cfg, "%f", new_pct);
+      }
     }
     new_panel_cfg = new_cfg;
   }
@@ -581,6 +591,517 @@ rad_tab_has_code_view(CFG_Node *tab)
   return result;
 }
 
+////////////////////////////////
+//~ rad: Tool Windows
+
+internal RAD_ToolKind
+rad_tool_kind_from_panel(CFG_Node *panel)
+{
+  // NOTE(rad): a tool window is a panel holding tool tabs (the layout keeps
+  // them apart from editor tabs)
+  RAD_ToolKind result = RAD_ToolKind_Null;
+  for(CFG_Node *child = panel->first; child != &cfg_nil_node; child = child->next)
+  {
+    if(str8_match(child->string, str8_lit("explorer"), 0))
+    {
+      result = RAD_ToolKind_Explorer;
+      break;
+    }
+    if(str8_match(child->string, str8_lit("output"), 0) || str8_match(child->string, str8_lit("problems"), 0))
+    {
+      result = RAD_ToolKind_Bottom;
+      break;
+    }
+  }
+  return result;
+}
+
+internal CFG_Node *
+rad_tool_panel_from_window(CFG_Node *window, RAD_ToolKind kind)
+{
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *result = &cfg_nil_node;
+  CFG_PanelTree tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+  for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+  {
+    if(p->first == &cfg_nil_panel_node && rad_tool_kind_from_panel(p->cfg) == kind)
+    {
+      result = p->cfg;
+      break;
+    }
+  }
+  scratch_end(scratch);
+  return result;
+}
+
+internal B32
+rad_tool_is_visible(CFG_Node *window, RAD_ToolKind kind)
+{
+  CFG_Node *panel = rad_tool_panel_from_window(window, kind);
+  B32 result = (panel != &cfg_nil_node && f64_from_str8(panel->string) > 0.001);
+  return result;
+}
+
+internal String8
+rad_tool_size_name(RAD_ToolKind kind)
+{
+  String8 result = (kind == RAD_ToolKind_Explorer ? str8_lit("explorer") : str8_lit("bottom"));
+  return result;
+}
+
+internal void
+rad_tool_set_visible(CFG_Node *window, RAD_ToolKind kind, B32 visible)
+{
+  // NOTE(rad): hide: the size goes to `tool_sizes` and to the neighbor;
+  // show: taken back from the largest sibling (panel rects animate)
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *panel_cfg = rad_tool_panel_from_window(window, kind);
+  CFG_PanelTree tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+  CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(tree.root, panel_cfg);
+  if(panel != &cfg_nil_panel_node && panel->parent != &cfg_nil_panel_node)
+  {
+    F32 pct = panel->pct_of_parent;
+    CFG_Node *size = cfg_node_child_from_string(cfg_node_child_from_string(window, str8_lit("tool_sizes")), rad_tool_size_name(kind));
+    if(!visible && pct > 0.001f)
+    {
+      CFG_Node *sizes = cfg_node_child_from_string_or_alloc(rad_state->cfg, window, str8_lit("tool_sizes"));
+      size = cfg_node_child_from_string_or_alloc(rad_state->cfg, sizes, rad_tool_size_name(kind));
+      CFG_PanelNode *neighbor = (panel->next != &cfg_nil_panel_node ? panel->next : panel->prev);
+      cfg_node_new_replacef(rad_state->cfg, size, "%f", pct);
+      cfg_node_equip_stringf(rad_state->cfg, neighbor->cfg, "%f", neighbor->pct_of_parent + pct);
+      cfg_node_equip_stringf(rad_state->cfg, panel_cfg, "%f", 0.f);
+      if(tree.focused == panel)
+      {
+        CFG_Node *editor_panel = rad_editor_panel_from_window(window);
+        if(editor_panel != &cfg_nil_node)
+        {
+          rad_focus_panel(editor_panel);
+        }
+      }
+    }
+    else if(visible && pct <= 0.001f)
+    {
+      F32 restore = (F32)f64_from_str8(size->first->string);
+      if(restore < 0.05f || restore > 0.8f)
+      {
+        restore = (kind == RAD_ToolKind_Explorer ? 0.2f : 0.25f);
+      }
+      CFG_PanelNode *largest = &cfg_nil_panel_node;
+      for(CFG_PanelNode *child = panel->parent->first; child != &cfg_nil_panel_node; child = child->next)
+      {
+        if(child != panel && (largest == &cfg_nil_panel_node || child->pct_of_parent > largest->pct_of_parent))
+        {
+          largest = child;
+        }
+      }
+      F32 take = Min(restore, largest->pct_of_parent - 0.05f);
+      if(take > 0.f)
+      {
+        cfg_node_equip_stringf(rad_state->cfg, largest->cfg, "%f", largest->pct_of_parent - take);
+        cfg_node_equip_stringf(rad_state->cfg, panel_cfg, "%f", take);
+      }
+    }
+  }
+  scratch_end(scratch);
+}
+
+internal U64
+rad_editor_leaf_count(CFG_Node *window)
+{
+  Temp scratch = scratch_begin(0, 0);
+  U64 result = 0;
+  CFG_PanelTree tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+  for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+  {
+    result += (p->first == &cfg_nil_panel_node && rad_tool_kind_from_panel(p->cfg) == RAD_ToolKind_Null);
+  }
+  scratch_end(scratch);
+  return result;
+}
+
+internal B32
+rad_panel_has_tool_child__(CFG_PanelNode *parent)
+{
+  B32 result = 0;
+  for(CFG_PanelNode *child = parent->first; child != &cfg_nil_panel_node; child = child->next)
+  {
+    if(child->first == &cfg_nil_panel_node && rad_tool_kind_from_panel(child->cfg) != RAD_ToolKind_Null)
+    {
+      result = 1;
+      break;
+    }
+  }
+  return result;
+}
+
+internal void
+rad_panel_close(CFG_Node *window, CFG_Node *panel_cfg)
+{
+  // NOTE(rad): port of raddbg's RD_CmdKind_ClosePanel (the panel and its
+  // tabs go; a parent left with one child is replaced by it)
+  Temp scratch = scratch_begin(0, 0);
+  CFG_PanelTree panel_tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+  CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, panel_cfg);
+  CFG_PanelNode *parent = panel->parent;
+  if(parent != &cfg_nil_panel_node)
+  {
+    // rad: if we're removing all but the last child of this parent, we should just remove both children.
+    if(parent->child_count == 2)
+    {
+      CFG_PanelNode *discard_child = panel;
+      CFG_PanelNode *keep_child = (panel == parent->first ? parent->last : parent->first);
+      CFG_PanelNode *grandparent = parent->parent;
+      CFG_PanelNode *parent_prev = parent->prev;
+      F32 pct_of_parent = parent->pct_of_parent;
+
+      // rad: unhook kept child
+      cfg_node_unhook(rad_state->cfg, parent->cfg, keep_child->cfg);
+
+      // rad: unhook this subtree
+      if(grandparent != &cfg_nil_panel_node)
+      {
+        cfg_node_unhook(rad_state->cfg, grandparent->cfg, parent->cfg);
+      }
+
+      // rad: release the containing tree
+      cfg_node_release(rad_state->cfg, parent->cfg);
+
+      // rad: re-hook our kept child into the overall tree
+      if(grandparent == &cfg_nil_panel_node)
+      {
+        if(keep_child->split_axis == Axis2_X)
+        {
+          cfg_node_child_from_string_or_alloc(rad_state->cfg, window, str8_lit("split_x"));
+        }
+        else
+        {
+          cfg_node_release(rad_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
+        }
+        cfg_node_equip_string(rad_state->cfg, keep_child->cfg, str8_lit("panels"));
+        cfg_node_insert_child(rad_state->cfg, window, window->last, keep_child->cfg);
+      }
+      else
+      {
+        cfg_node_insert_child(rad_state->cfg, grandparent->cfg, parent_prev->cfg, keep_child->cfg);
+        cfg_node_equip_stringf(rad_state->cfg, keep_child->cfg, "%f", pct_of_parent);
+      }
+
+      // rad: keep-child split-axis == grandparent split-axis? bubble keep-child up into grandparent's children
+      if(grandparent != &cfg_nil_panel_node && grandparent->split_axis == keep_child->split_axis && keep_child->first != &cfg_nil_panel_node)
+      {
+        cfg_node_unhook(rad_state->cfg, grandparent->cfg, keep_child->cfg);
+        CFG_Node *prev = parent_prev->cfg;
+        for(CFG_PanelNode *child = keep_child->first, *next = &cfg_nil_panel_node; child != &cfg_nil_panel_node; child = next)
+        {
+          next = child->next;
+          cfg_node_unhook(rad_state->cfg, keep_child->cfg, child->cfg);
+          cfg_node_insert_child(rad_state->cfg, grandparent->cfg, prev, child->cfg);
+          prev = child->cfg;
+          F32 old_pct = child->pct_of_parent;
+          F32 new_pct = old_pct * pct_of_parent;
+          cfg_node_equip_stringf(rad_state->cfg, child->cfg, "%f", new_pct);
+        }
+        cfg_node_release(rad_state->cfg, keep_child->cfg);
+      }
+
+      // rad: reset focus, if needed
+      if(panel_tree.focused == discard_child)
+      {
+        CFG_PanelNode *new_focused = cfg_panel_node_from_tree_cfg(panel_tree.root, keep_child->cfg);
+        for(CFG_PanelNode *grandchild = new_focused; grandchild != &cfg_nil_panel_node; grandchild = grandchild->first)
+        {
+          new_focused = grandchild;
+        }
+        if(keep_child->first == &cfg_nil_panel_node || new_focused->cfg->parent != &cfg_nil_node)
+        {
+          rad_focus_panel(new_focused->cfg);
+        }
+      }
+    }
+    // rad: otherwise we can just remove this child.
+    else
+    {
+      // rad: remove
+      CFG_PanelNode *next = &cfg_nil_panel_node;
+      F32 removed_size_pct = panel->pct_of_parent;
+      B32 has_tool_sibling = rad_panel_has_tool_child__(parent);
+      if(next == &cfg_nil_panel_node && rad_tool_kind_from_panel(panel->prev->cfg) == RAD_ToolKind_Null) { next = panel->prev; }
+      if(next == &cfg_nil_panel_node && rad_tool_kind_from_panel(panel->next->cfg) == RAD_ToolKind_Null) { next = panel->next; }
+      if(next == &cfg_nil_panel_node) { next = panel->prev; }
+      if(next == &cfg_nil_panel_node) { next = panel->next; }
+      cfg_node_unhook(rad_state->cfg, parent->cfg, panel->cfg);
+      cfg_node_release(rad_state->cfg, panel->cfg);
+
+      // rad: resize siblings to this node (rad: next to a tool window,
+      // only the neighbor grows; the tool window keeps its size)
+      if(has_tool_sibling && next != &cfg_nil_panel_node)
+      {
+        cfg_node_equip_stringf(rad_state->cfg, next->cfg, "%f", next->pct_of_parent + removed_size_pct);
+      }
+      else
+      {
+        CFG_PanelTree new_panel_tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+        CFG_PanelNode *new_parent = cfg_panel_node_from_tree_cfg(new_panel_tree.root, parent->cfg);
+        for(CFG_PanelNode *child = new_parent->first; child != &cfg_nil_panel_node; child = child->next)
+        {
+          CFG_Node *cfg = child->cfg;
+          F32 old_pct = child->pct_of_parent;
+          F32 new_pct = old_pct / (1.f-removed_size_pct);
+          cfg_node_equip_stringf(rad_state->cfg, cfg, "%f", new_pct);
+        }
+      }
+
+      // rad: reset focus, if needed
+      if(panel_tree.focused == panel)
+      {
+        CFG_PanelNode *new_focused = next;
+        for(CFG_PanelNode *grandchild = new_focused; grandchild != &cfg_nil_panel_node; grandchild = grandchild->first)
+        {
+          new_focused = grandchild;
+        }
+        rad_focus_panel(new_focused->cfg);
+      }
+    }
+  }
+  scratch_end(scratch);
+}
+
+internal void
+rad_window_tool_layout_ensure(CFG_Node *window)
+{
+  // NOTE(rad): keeps the tool window layout (see RAD_ToolKind): checks it
+  // (cheap; every frame), puts the explorer on its side (setting), and
+  // rebuilds it from any other layout (older user files, raddbg-style
+  // panels): tool tabs come out of their panels, emptied panels close, the
+  // rest becomes the editor area.
+  Temp scratch = scratch_begin(0, 0);
+  if(window == &cfg_nil_node)
+  {
+    scratch_end(scratch);
+    return;
+  }
+  B32 explorer_right = (rad_state->settings.explorer_side == 1);
+  CFG_PanelTree tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+  CFG_PanelNode *root = tree.root;
+
+  //- rad: check
+  B32 good = 0;
+  if(root != &cfg_nil_panel_node && root->child_count == 2 && root->split_axis == Axis2_Y)
+  {
+    CFG_PanelNode *top = root->first;
+    CFG_PanelNode *bottom = root->last;
+    B32 bottom_good = (bottom->first == &cfg_nil_panel_node && bottom->tab_side == Side_Max && bottom->tabs.count != 0 &&
+                       rad_tool_kind_from_panel(bottom->cfg) == RAD_ToolKind_Bottom);
+    for(CFG_NodePtrNode *n = bottom->tabs.first; n != 0; n = n->next)
+    {
+      bottom_good = bottom_good && (str8_match(n->v->string, str8_lit("output"), 0) || str8_match(n->v->string, str8_lit("problems"), 0));
+    }
+    if(bottom_good && top->child_count >= 2 && top->split_axis == Axis2_X)
+    {
+      CFG_PanelNode *ends[] = {top->first, top->last};
+      CFG_PanelNode *explorer = &cfg_nil_panel_node;
+      for EachElement(idx, ends)
+      {
+        if(ends[idx]->first == &cfg_nil_panel_node && ends[idx]->tabs.count == 1 &&
+           str8_match(ends[idx]->tabs.first->v->string, str8_lit("explorer"), 0))
+        {
+          explorer = ends[idx];
+        }
+      }
+
+      // rad: tool tabs anywhere else -> rebuild
+      U64 tool_tabs_elsewhere = 0;
+      for(CFG_PanelNode *p = root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(root, p).next)
+      {
+        if(p != explorer && p != bottom)
+        {
+          for(CFG_NodePtrNode *n = p->tabs.first; n != 0; n = n->next)
+          {
+            tool_tabs_elsewhere += rad_tab_is_tool(n->v);
+          }
+        }
+      }
+      if(explorer != &cfg_nil_panel_node && tool_tabs_elsewhere == 0)
+      {
+        good = 1;
+
+        // rad: explorer on the wrong side -> move it
+        CFG_PanelNode *want = (explorer_right ? top->last : top->first);
+        if(explorer != want)
+        {
+          cfg_node_unhook(rad_state->cfg, top->cfg, explorer->cfg);
+          CFG_Node *prev = (explorer_right ? top->cfg->last : &cfg_nil_node);
+          if(!explorer_right)
+          {
+            // rad: before the first child panel (other children are options)
+            for(CFG_Node *c = top->cfg->first; c != &cfg_nil_node; c = c->next)
+            {
+              if(c == top->first->cfg) { break; }
+              prev = c;
+            }
+          }
+          cfg_node_insert_child(rad_state->cfg, top->cfg, prev, explorer->cfg);
+        }
+      }
+    }
+  }
+
+  //- rad: rebuild
+  if(!good)
+  {
+    //- rad: take the tool tabs out (the first of each kind; others go)
+    CFG_Node *explorer_tab = &cfg_nil_node;
+    CFG_Node *output_tab = &cfg_nil_node;
+    CFG_Node *problems_tab = &cfg_nil_node;
+    B32 output_was_visible = 0;
+    CFG_NodePtrList tool_tabs = {0};
+    for(CFG_PanelNode *p = root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(root, p).next)
+    {
+      for(CFG_NodePtrNode *n = p->tabs.first; n != 0; n = n->next)
+      {
+        if(rad_tab_is_tool(n->v))
+        {
+          cfg_node_ptr_list_push(scratch.arena, &tool_tabs, n->v);
+          if(!str8_match(n->v->string, str8_lit("explorer"), 0) && p->pct_of_parent > 0.001f)
+          {
+            output_was_visible = 1;
+          }
+        }
+      }
+    }
+    for(CFG_NodePtrNode *n = tool_tabs.first; n != 0; n = n->next)
+    {
+      CFG_Node *tab = n->v;
+      CFG_Node **slot = (str8_match(tab->string, str8_lit("explorer"), 0) ? &explorer_tab :
+                         str8_match(tab->string, str8_lit("output"), 0) ? &output_tab : &problems_tab);
+      cfg_node_unhook(rad_state->cfg, tab->parent, tab);
+      if(*slot == &cfg_nil_node)
+      {
+        *slot = tab;
+      }
+      else
+      {
+        cfg_node_release(rad_state->cfg, tab);
+      }
+    }
+
+    //- rad: close the panels left empty
+    for(U64 iter = 0; iter < 256; iter += 1)
+    {
+      CFG_PanelTree t = cfg_panel_tree_from_cfg(scratch.arena, window);
+      CFG_PanelNode *empty = &cfg_nil_panel_node;
+      for(CFG_PanelNode *p = t.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(t.root, p).next)
+      {
+        if(p != t.root && p->first == &cfg_nil_panel_node && p->tabs.count == 0)
+        {
+          empty = p;
+          break;
+        }
+      }
+      if(empty == &cfg_nil_panel_node)
+      {
+        break;
+      }
+      rad_panel_close(window, empty->cfg);
+    }
+
+    //- rad: no panels at all -> one
+    CFG_Node *old_root = cfg_node_child_from_string(window, str8_lit("panels"));
+    if(old_root == &cfg_nil_node)
+    {
+      old_root = cfg_node_new(rad_state->cfg, window, str8_lit("panels"));
+    }
+    CFG_PanelTree old_tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+    B32 old_split_x = (cfg_node_child_from_string(window, str8_lit("split_x")) != &cfg_nil_node);
+    B32 old_root_is_split = (old_tree.root->first != &cfg_nil_panel_node);
+    cfg_node_unhook(rad_state->cfg, window, old_root);
+    cfg_node_release(rad_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
+
+    //- rad: new root: top (explorer + editor area), bottom
+    CFG_Node *new_root = cfg_node_new(rad_state->cfg, window, str8_lit("panels"));
+    CFG_Node *top = cfg_node_newf(rad_state->cfg, new_root, "%f", output_was_visible ? 0.75f : 1.f);
+    CFG_Node *bottom = cfg_node_newf(rad_state->cfg, new_root, "%f", output_was_visible ? 0.25f : 0.f);
+    CFG_Node *explorer = cfg_node_alloc(rad_state->cfg);
+    cfg_node_equip_stringf(rad_state->cfg, explorer, "%f", 0.2f);
+    if(!explorer_right)
+    {
+      cfg_node_insert_child(rad_state->cfg, top, top->last, explorer);
+    }
+    if(old_split_x && old_root_is_split)
+    {
+      // rad: left/right panels -> side by side with the explorer
+      for(CFG_PanelNode *child = old_tree.root->first; child != &cfg_nil_panel_node; child = child->next)
+      {
+        cfg_node_unhook(rad_state->cfg, old_root, child->cfg);
+        cfg_node_equip_stringf(rad_state->cfg, child->cfg, "%f", child->pct_of_parent*0.8f);
+        cfg_node_insert_child(rad_state->cfg, top, top->last, child->cfg);
+      }
+      cfg_node_release(rad_state->cfg, old_root);
+    }
+    else
+    {
+      // rad: one panel, or top/bottom panels -> one editor area node
+      cfg_node_equip_stringf(rad_state->cfg, old_root, "%f", 0.8f);
+      cfg_node_insert_child(rad_state->cfg, top, top->last, old_root);
+    }
+    if(explorer_right)
+    {
+      cfg_node_insert_child(rad_state->cfg, top, top->last, explorer);
+    }
+
+    //- rad: the tool tabs into their windows
+    if(explorer_tab == &cfg_nil_node)
+    {
+      explorer_tab = cfg_node_alloc(rad_state->cfg);
+      cfg_node_equip_string(rad_state->cfg, explorer_tab, str8_lit("explorer"));
+    }
+    cfg_node_insert_child(rad_state->cfg, explorer, explorer->last, explorer_tab);
+    cfg_node_new(rad_state->cfg, bottom, str8_lit("tabs_on_bottom"));
+    if(output_tab == &cfg_nil_node)
+    {
+      output_tab = cfg_node_alloc(rad_state->cfg);
+      cfg_node_equip_string(rad_state->cfg, output_tab, str8_lit("output"));
+    }
+    if(problems_tab == &cfg_nil_node)
+    {
+      problems_tab = cfg_node_alloc(rad_state->cfg);
+      cfg_node_equip_string(rad_state->cfg, problems_tab, str8_lit("problems"));
+    }
+    cfg_node_insert_child(rad_state->cfg, bottom, bottom->last, output_tab);
+    cfg_node_insert_child(rad_state->cfg, bottom, bottom->last, problems_tab);
+    if(cfg_node_child_from_string(output_tab, str8_lit("selected")) == &cfg_nil_node &&
+       cfg_node_child_from_string(problems_tab, str8_lit("selected")) == &cfg_nil_node)
+    {
+      cfg_node_new(rad_state->cfg, output_tab, str8_lit("selected"));
+    }
+    if(cfg_node_child_from_string(explorer_tab, str8_lit("selected")) == &cfg_nil_node)
+    {
+      cfg_node_new(rad_state->cfg, explorer_tab, str8_lit("selected"));
+    }
+    if(!output_was_visible)
+    {
+      CFG_Node *sizes = cfg_node_child_from_string_or_alloc(rad_state->cfg, window, str8_lit("tool_sizes"));
+      CFG_Node *size = cfg_node_child_from_string_or_alloc(rad_state->cfg, sizes, str8_lit("bottom"));
+      if(size->first == &cfg_nil_node)
+      {
+        cfg_node_new_replacef(rad_state->cfg, size, "%f", 0.25f);
+      }
+    }
+
+    //- rad: a focused panel: keep it; none -> the editor panel
+    CFG_PanelTree new_tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+    if(new_tree.focused == &cfg_nil_panel_node || new_tree.focused->first != &cfg_nil_panel_node)
+    {
+      CFG_Node *editor_panel = rad_editor_panel_from_window(window);
+      if(editor_panel != &cfg_nil_node)
+      {
+        rad_focus_panel(editor_panel);
+      }
+    }
+  }
+  scratch_end(scratch);
+}
+
 internal CFG_Node *
 rad_tab_from_window_kind(CFG_Node *window, String8 kind)
 {
@@ -637,9 +1158,9 @@ rad_editor_panel_from_window(CFG_Node *window)
 internal void
 rad_output_tab_reveal(CFG_Node *window)
 {
-  // NOTE(rad): select the Output tab (its panel keeps or loses the keyboard
-  // as before). None -> one next to the Problems tab; neither -> a new panel
-  // under the editor panel (30%) with Output and Problems.
+  // NOTE(rad): show the bottom tool window, select its Output tab (the
+  // keyboard stays where it is)
+  rad_tool_set_visible(window, RAD_ToolKind_Bottom, 1);
   CFG_Node *output_tab = rad_tab_from_window_kind(window, str8_lit("output"));
   if(output_tab == &cfg_nil_node)
   {
@@ -1764,6 +2285,30 @@ rad_window_frame(RAD_Window *ws)
                   rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
                 }
 
+                // rad: view menu (not in raddbg; VS2022's View: the tool windows)
+                UI_Key view_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_view_menu_key_"));
+                UI_CtxMenu(view_menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+                {
+                  RAD_CmdKind cmds[] =
+                  {
+                    RAD_CmdKind_ShowExplorer,
+                    RAD_CmdKind_ShowOutput,
+                    RAD_CmdKind_ShowProblems,
+                    RAD_CmdKind_Null,//-
+                    RAD_CmdKind_CloseToolWindow,
+                  };
+                  U32 codepoints[] =
+                  {
+                    'e',
+                    'o',
+                    'p',
+                    0,//-
+                    'c',
+                  };
+                  StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
+                  rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
+                }
+
                 // rad: tab menu
                 UI_Key tab_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_tab_menu_key_"));
                 UI_CtxMenu(tab_menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
@@ -1871,9 +2416,10 @@ rad_window_frame(RAD_Window *ws)
                   {
                     {str8_lit("File"),     'f', WM_Key_F, file_menu_key},
                     {str8_lit("Edit"),     'e', WM_Key_E, edit_menu_key},
+                    {str8_lit("View"),     'v', WM_Key_V, view_menu_key},
                     {str8_lit("Window"),   'w', WM_Key_W, window_menu_key},
                     {str8_lit("Panel"),    'p', WM_Key_P, panel_menu_key},
-                    {str8_lit("Tab"),      'b', WM_Key_V, tab_menu_key},
+                    {str8_lit("Tab"),      'b', WM_Key_B, tab_menu_key},
                     {str8_lit("Build"),    'u', WM_Key_U, build_menu_key},
                     {str8_lit("Help"),     'h', WM_Key_H, help_menu_key},
                   };
@@ -2345,6 +2891,11 @@ rad_window_frame(RAD_Window *ws)
         {
           CFG_PanelNode *min_child = child;
           CFG_PanelNode *max_child = min_child->next;
+          if(min_child->pct_of_parent <= 0.001f || max_child->pct_of_parent <= 0.001f)
+          {
+            // rad: a hidden tool window has no boundary
+            continue;
+          }
           Rng2F32 min_child_rect = cfg_target_rect_from_panel_node_child(panel_rect, panel, min_child);
           Rng2F32 max_child_rect = cfg_target_rect_from_panel_node_child(panel_rect, panel, max_child);
           Rng2F32 boundary_rect = {0};
@@ -2546,6 +3097,30 @@ rad_window_frame(RAD_Window *ws)
           content_rect = intersect_2f32(content_rect, panel_rect);
 
           //////////////////////////
+          //- rad: tool windows (not in raddbg): a header (title, X) on top;
+          // no tab bar for the explorer (one tab); the bottom window's tabs
+          // at its bottom (VS2022)
+          //
+          RAD_ToolKind tool_kind = (panel->first == &cfg_nil_panel_node ? rad_tool_kind_from_panel(panel->cfg) : RAD_ToolKind_Null);
+          F32 tool_header_height = 0;
+          Rng2F32 tool_header_rect = {0};
+          if(tool_kind == RAD_ToolKind_Explorer)
+          {
+            tool_header_height = tab_bar_vheight;
+            tool_header_rect = r2f32p(panel_rect.x0, panel_rect.y0, panel_rect.x1, panel_rect.y0 + tool_header_height);
+            tab_bar_rect = r2f32p(0, 0, 0, 0);
+            content_rect = r2f32p(panel_rect.x0, panel_rect.y0 + tool_header_height, panel_rect.x1, panel_rect.y1);
+          }
+          else if(tool_kind == RAD_ToolKind_Bottom)
+          {
+            tool_header_height = floor_f32(ui_top_font_size()*2.25f);
+            tool_header_rect = r2f32p(panel_rect.x0, panel_rect.y0, panel_rect.x1, panel_rect.y0 + tool_header_height);
+            content_rect.y0 = Min(content_rect.y1, tool_header_rect.y1);
+          }
+          tool_header_rect = intersect_2f32(tool_header_rect, panel_rect);
+          content_rect = intersect_2f32(content_rect, panel_rect);
+
+          //////////////////////////
           //- rad: for non-leaf panels with focus (subtree selection) -> draw border for all children
           //
           if(panel->first != &cfg_nil_panel_node && panel == panel_tree.focused) UI_Rect(pad_2f32(panel_rect, ui_top_font_size()*0.2f)) UI_Focus(UI_FocusKind_On)
@@ -2675,9 +3250,9 @@ rad_window_frame(RAD_Window *ws)
           }
 
           //////////////////////////
-          //- rad: build zoom button (same as raddbg)
+          //- rad: build zoom button (same as raddbg; not on tool windows)
           //
-          if(panel_is_focused)
+          if(panel_is_focused && tool_kind == RAD_ToolKind_Null)
           {
             UI_TextAlignment(UI_TextAlign_Center)
               UI_TagF(".")
@@ -2739,6 +3314,74 @@ rad_window_frame(RAD_Window *ws)
           }
 
           //////////////////////////
+          //- rad: build tool window header (title; X hides the window, in the
+          // zoom button's style)
+          //
+          if(build_panel && tool_kind != RAD_ToolKind_Null && tool_header_rect.y1 > tool_header_rect.y0)
+          {
+            CFG_Node *title_tab = (selected_tab != &cfg_nil_node ? selected_tab : panel->tabs.first ? panel->tabs.first->v : &cfg_nil_node);
+            DR_FStrList title_fstrs = rad_title_fstrs_from_tab(scratch.arena, title_tab);
+            UI_Box *header_box = &ui_nil_box;
+            UI_Rect(tool_header_rect) UI_ChildLayoutAxis(Axis2_X) UI_CornerRadius(0)
+            {
+              header_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable, "tool_header_%p", panel->cfg);
+            }
+            UI_Parent(header_box) UI_Focus(UI_FocusKind_Off) UI_PrefHeight(ui_pct(1, 0))
+            {
+              ui_spacer(ui_em(0.75f, 1.f));
+              UI_TagF(panel_tree.focused == panel ? "" : "weak") UI_PrefWidth(ui_text_dim(10, 1))
+              {
+                UI_Box *name_box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
+                ui_box_equip_display_fstrs(name_box, &title_fstrs);
+              }
+              ui_spacer(ui_pct(1, 0));
+              UI_PrefWidth(ui_px(tool_header_height, 1.f))
+                UI_TextAlignment(UI_TextAlign_Center)
+                UI_TagF(".")
+              {
+                UI_Box *close_box = &ui_nil_box;
+                RAD_Font(RAD_FontSlot_Icons)
+                  UI_CornerRadius((tool_header_height - tool_header_height/4.f) / 3.f)
+                  UI_VisualMargin(tool_header_height/5.f)
+                  UI_TagF("implicit")
+                  UI_FontSize(ui_top_font_size()*0.65f)
+                {
+                  close_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|
+                                                        UI_BoxFlag_DrawBorder|
+                                                        UI_BoxFlag_DrawBackground|
+                                                        UI_BoxFlag_DrawHotEffects|
+                                                        UI_BoxFlag_DrawActiveEffects|
+                                                        UI_BoxFlag_Clickable|
+                                                        UI_BoxFlag_DisableTextTrunc,
+                                                        "%S##tool_close_%p",
+                                                        rad_icon_kind_text_table[RAD_IconKind_X],
+                                                        panel->cfg);
+                }
+                ws->tool_close_rects[tool_kind] = close_box->rect;
+                UI_Signal sig = ui_signal_from_box(close_box);
+                if(ui_clicked(sig))
+                {
+                  rad_cmd(RAD_CmdKind_CloseToolWindow, .panel = panel->cfg->id);
+                }
+                if(ui_hovering(sig)) UI_Tooltip
+                {
+                  ui_state->tooltip_anchor_key = close_box->key;
+                  ui_set_next_pref_width(ui_children_sum(1));
+                  UI_Row
+                  {
+                    ui_label(rad_cmd_kind_info_table[RAD_CmdKind_CloseToolWindow].display_name);
+                    rad_cmd_binding_labels(RAD_CmdKind_CloseToolWindow);
+                  }
+                }
+              }
+            }
+            if(ui_pressed(ui_signal_from_box(header_box)))
+            {
+              rad_cmd(RAD_CmdKind_FocusPanel, .panel = panel->cfg->id);
+            }
+          }
+
+          //////////////////////////
           //- rad: compute tab build tasks
           //
           typedef struct TabTask TabTask;
@@ -2773,7 +3416,7 @@ rad_window_frame(RAD_Window *ws)
               UI_TagF(tab != panel->selected_tab ? "inactive" : "")
               {
                 DR_FStrList tab_title_fstrs = rad_title_fstrs_from_tab(scratch.arena, tab);
-                B32 tab_is_closable = !str8_match(tab->string, str8_lit("explorer"), 0);
+                B32 tab_is_closable = !rad_tab_is_tool(tab);
                 F32 tab_width_target = dr_dim_from_fstrs(ui_top_tab_size(), &tab_title_fstrs).x + tab_is_closable*tab_close_width_px + ui_top_font_size()*1.f;
                 B32 tab_is_selected = (tab == panel->selected_tab);
                 if(tab_is_selected && panel_tree.focused == panel)
@@ -2799,7 +3442,7 @@ rad_window_frame(RAD_Window *ws)
           //- rad: build tab bar container
           //
           UI_Box *tab_bar_box = &ui_nil_box;
-          if(build_panel) UI_CornerRadius(0) UI_Rect(tab_bar_rect)
+          if(build_panel && tool_kind != RAD_ToolKind_Explorer) UI_CornerRadius(0) UI_Rect(tab_bar_rect)
           {
             tab_bar_box = ui_build_box_from_stringf(UI_BoxFlag_Clip|
                                                     UI_BoxFlag_AllowOverflowY|
@@ -2820,7 +3463,7 @@ rad_window_frame(RAD_Window *ws)
           //////////////////////////
           //- rad: build tab bar contents
           //
-          if(build_panel) UI_Focus(UI_FocusKind_Off) UI_Parent(tab_bar_box) UI_Padding(ui_em(0.5f, 1.f)) UI_PrefHeight(ui_pct(1, 0)) UI_TagF("tab")
+          if(build_panel && tool_kind != RAD_ToolKind_Explorer) UI_Focus(UI_FocusKind_Off) UI_Parent(tab_bar_box) UI_Padding(ui_em(0.5f, 1.f)) UI_PrefHeight(ui_pct(1, 0)) UI_TagF("tab")
           {
             F32 corner_radius = ui_top_font_size()*0.6f;
             UI_CornerRadius00(panel->tab_side == Side_Min ? corner_radius : 0)
@@ -2875,7 +3518,7 @@ rad_window_frame(RAD_Window *ws)
                         ui_box_equip_display_fstrs(name_box, &tab_fstrs);
                       }
                     }
-                    if(!str8_match(tab->string, str8_lit("explorer"), 0))
+                    if(!rad_tab_is_tool(tab))
                       UI_PrefWidth(ui_px(tab_close_width_px, 1.f))
                       UI_TextAlignment(UI_TextAlign_Center)
                       RAD_Font(RAD_FontSlot_Icons)
@@ -2922,8 +3565,9 @@ rad_window_frame(RAD_Window *ws)
               }
             }
 
-            // rad: build add-new-tab button
-            UI_TextAlignment(UI_TextAlign_Center)
+            // rad: build add-new-tab button (not on tool windows)
+            if(tool_kind == RAD_ToolKind_Null)
+              UI_TextAlignment(UI_TextAlign_Center)
               UI_PrefWidth(ui_px(tab_bar_vheight, 1.f))
               UI_PrefHeight(ui_px(tab_bar_vheight, 1.f))
               UI_TagF(".")
@@ -3724,6 +4368,7 @@ rad_exec_cmd(RAD_Cmd *cmd)
           explorer_tab = cfg_node_new(rad_state->cfg, explorer_panel, str8_lit("explorer"));
         }
         rad_explorer_set_folder(explorer_tab, folder);
+        rad_tool_set_visible(window, RAD_ToolKind_Explorer, 1);
         rad_focus_tab(explorer_tab);
         rad_focus_panel(explorer_tab->parent);
       }
@@ -3826,7 +4471,7 @@ rad_exec_cmd(RAD_Cmd *cmd)
     case RAD_CmdKind_ToggleZoomPanel:
     case RAD_CmdKind_ZoomPanel:
     case RAD_CmdKind_UnzoomPanel:
-    if(ws != 0 && panel_cfg != &cfg_nil_node)
+    if(ws != 0 && panel_cfg != &cfg_nil_node && rad_tool_kind_from_panel(panel_cfg) == RAD_ToolKind_Null)
     {
       ws->panel_hoist_cfg_id = panel_cfg->id;
 
@@ -3858,8 +4503,9 @@ rad_exec_cmd(RAD_Cmd *cmd)
           p != &cfg_nil_panel_node;
           p = cfg_panel_node_rec__depth_first(panel_nav_root, p, panel_sib_off, panel_child_off).next)
       {
-        if(p != panel_tree.focused && p->first == &cfg_nil_panel_node)
+        if(p != panel_tree.focused && p->first == &cfg_nil_panel_node && p->pct_of_parent > 0.001f)
         {
+          // rad: (hidden tool windows are skipped)
           next_focused = p;
           break;
         }
@@ -3870,7 +4516,7 @@ rad_exec_cmd(RAD_Cmd *cmd)
             p != &cfg_nil_panel_node;
             p = cfg_panel_node_rec__depth_first(panel_nav_root, p, panel_sib_off, panel_child_off).next)
         {
-          if(p != panel_tree.focused && p->first == &cfg_nil_panel_node)
+          if(p != panel_tree.focused && p->first == &cfg_nil_panel_node && p->pct_of_parent > 0.001f)
           {
             next_focused = p;
             break;
@@ -3887,6 +4533,11 @@ rad_exec_cmd(RAD_Cmd *cmd)
     case RAD_CmdKind_NewPanelRight:{split_dir = Dir2_Right;}goto split;
     case RAD_CmdKind_NewPanelDown: {split_dir = Dir2_Down;}goto split;
     split:;
+    if(split_dir != Dir2_Invalid && panel_cfg != &cfg_nil_node && rad_tool_kind_from_panel(panel_cfg) != RAD_ToolKind_Null)
+    {
+      // rad: tool windows do not split: the editor panel does
+      panel_cfg = rad_editor_panel_from_window(window);
+    }
     if(split_dir != Dir2_Invalid && panel_cfg != &cfg_nil_node)
     {
       CFG_Node *new_panel_cfg = rad_panel_split(panel_cfg, split_dir, 0.5f);
@@ -3899,120 +4550,15 @@ rad_exec_cmd(RAD_Cmd *cmd)
     //- rad: panel removal
     case RAD_CmdKind_ClosePanel:
     {
-      // NOTE(rad): port of raddbg's RD_CmdKind_ClosePanel; the explorer's
-      // panel stays (closing it would close the explorer)
-      CFG_PanelNode *panel = cfg_panel_node_from_tree_cfg(panel_tree.root, panel_cfg);
-      CFG_PanelNode *parent = panel->parent;
-      if(parent != &cfg_nil_panel_node && rad_explorer_tab_from_panel(panel_cfg) == &cfg_nil_node)
+      // NOTE(rad): tool windows hide; the last editor panel stays
+      RAD_ToolKind tool = rad_tool_kind_from_panel(panel_cfg);
+      if(tool != RAD_ToolKind_Null)
       {
-        // rad: if we're removing all but the last child of this parent, we should just remove both children.
-        if(parent->child_count == 2)
-        {
-          CFG_PanelNode *discard_child = panel;
-          CFG_PanelNode *keep_child = (panel == parent->first ? parent->last : parent->first);
-          CFG_PanelNode *grandparent = parent->parent;
-          CFG_PanelNode *parent_prev = parent->prev;
-          F32 pct_of_parent = parent->pct_of_parent;
-
-          // rad: unhook kept child
-          cfg_node_unhook(rad_state->cfg, parent->cfg, keep_child->cfg);
-
-          // rad: unhook this subtree
-          if(grandparent != &cfg_nil_panel_node)
-          {
-            cfg_node_unhook(rad_state->cfg, grandparent->cfg, parent->cfg);
-          }
-
-          // rad: release the containing tree
-          cfg_node_release(rad_state->cfg, parent->cfg);
-
-          // rad: re-hook our kept child into the overall tree
-          if(grandparent == &cfg_nil_panel_node)
-          {
-            if(keep_child->split_axis == Axis2_X)
-            {
-              cfg_node_child_from_string_or_alloc(rad_state->cfg, window, str8_lit("split_x"));
-            }
-            else
-            {
-              cfg_node_release(rad_state->cfg, cfg_node_child_from_string(window, str8_lit("split_x")));
-            }
-            cfg_node_equip_string(rad_state->cfg, keep_child->cfg, str8_lit("panels"));
-            cfg_node_insert_child(rad_state->cfg, window, window->last, keep_child->cfg);
-          }
-          else
-          {
-            cfg_node_insert_child(rad_state->cfg, grandparent->cfg, parent_prev->cfg, keep_child->cfg);
-            cfg_node_equip_stringf(rad_state->cfg, keep_child->cfg, "%f", pct_of_parent);
-          }
-
-          // rad: keep-child split-axis == grandparent split-axis? bubble keep-child up into grandparent's children
-          if(grandparent != &cfg_nil_panel_node && grandparent->split_axis == keep_child->split_axis && keep_child->first != &cfg_nil_panel_node)
-          {
-            cfg_node_unhook(rad_state->cfg, grandparent->cfg, keep_child->cfg);
-            CFG_Node *prev = parent_prev->cfg;
-            for(CFG_PanelNode *child = keep_child->first, *next = &cfg_nil_panel_node; child != &cfg_nil_panel_node; child = next)
-            {
-              next = child->next;
-              cfg_node_unhook(rad_state->cfg, keep_child->cfg, child->cfg);
-              cfg_node_insert_child(rad_state->cfg, grandparent->cfg, prev, child->cfg);
-              prev = child->cfg;
-              F32 old_pct = child->pct_of_parent;
-              F32 new_pct = old_pct * pct_of_parent;
-              cfg_node_equip_stringf(rad_state->cfg, child->cfg, "%f", new_pct);
-            }
-            cfg_node_release(rad_state->cfg, keep_child->cfg);
-          }
-
-          // rad: reset focus, if needed
-          if(panel_tree.focused == discard_child)
-          {
-            CFG_PanelNode *new_focused = cfg_panel_node_from_tree_cfg(panel_tree.root, keep_child->cfg);
-            for(CFG_PanelNode *grandchild = new_focused; grandchild != &cfg_nil_panel_node; grandchild = grandchild->first)
-            {
-              new_focused = grandchild;
-            }
-            if(keep_child->first == &cfg_nil_panel_node || new_focused->cfg->parent != &cfg_nil_node)
-            {
-              rad_focus_panel(new_focused->cfg);
-            }
-          }
-        }
-        // rad: otherwise we can just remove this child.
-        else
-        {
-          // rad: remove
-          CFG_PanelNode *next = &cfg_nil_panel_node;
-          F32 removed_size_pct = panel->pct_of_parent;
-          if(next == &cfg_nil_panel_node) { next = panel->prev; }
-          if(next == &cfg_nil_panel_node) { next = panel->next; }
-          cfg_node_unhook(rad_state->cfg, parent->cfg, panel->cfg);
-          cfg_node_release(rad_state->cfg, panel->cfg);
-
-          // rad: resize siblings to this node
-          {
-            CFG_PanelTree new_panel_tree = cfg_panel_tree_from_cfg(scratch.arena, window);
-            CFG_PanelNode *new_parent = cfg_panel_node_from_tree_cfg(new_panel_tree.root, parent->cfg);
-            for(CFG_PanelNode *child = new_parent->first; child != &cfg_nil_panel_node; child = child->next)
-            {
-              CFG_Node *cfg = child->cfg;
-              F32 old_pct = child->pct_of_parent;
-              F32 new_pct = old_pct / (1.f-removed_size_pct);
-              cfg_node_equip_stringf(rad_state->cfg, cfg, "%f", new_pct);
-            }
-          }
-
-          // rad: reset focus, if needed
-          if(panel_tree.focused == panel)
-          {
-            CFG_PanelNode *new_focused = next;
-            for(CFG_PanelNode *grandchild = new_focused; grandchild != &cfg_nil_panel_node; grandchild = grandchild->first)
-            {
-              new_focused = grandchild;
-            }
-            rad_focus_panel(new_focused->cfg);
-          }
-        }
+        rad_tool_set_visible(window, tool, 0);
+      }
+      else if(rad_editor_leaf_count(window) > 1)
+      {
+        rad_panel_close(window, panel_cfg);
       }
     }break;
 
@@ -4069,9 +4615,9 @@ rad_exec_cmd(RAD_Cmd *cmd)
       }
     }break;
     case RAD_CmdKind_CloseTab:
-    if(str8_match(tab_cfg->string, str8_lit("explorer"), 0))
+    if(rad_tab_is_tool(tab_cfg))
     {
-      // rad: the explorer cannot be closed
+      // rad: tool tabs stay (the tool window's X hides the window)
     }
     else if(tab_cfg != &cfg_nil_node && rad_tab_is_dirty(tab_cfg) &&
             rad_document_tab_count(rad_document_from_tab(tab_cfg)) == 1 &&
@@ -4159,20 +4705,33 @@ rad_exec_cmd(RAD_Cmd *cmd)
     case RAD_CmdKind_ShowProblems:
     if(window != &cfg_nil_node)
     {
-      // rad: like the run commands do it (a panel under the editor if there is
-      // none), then select and focus the asked one
-      rad_output_tab_reveal(window);
+      // rad: show the bottom tool window, select and focus the asked tab
+      rad_tool_set_visible(window, RAD_ToolKind_Bottom, 1);
       String8 kind = (cmd->kind == RAD_CmdKind_ShowOutput ? str8_lit("output") : str8_lit("problems"));
       CFG_Node *tab = rad_tab_from_window_kind(window, kind);
-      CFG_Node *output_tab = rad_tab_from_window_kind(window, str8_lit("output"));
-      if(tab == &cfg_nil_node && output_tab != &cfg_nil_node)
-      {
-        tab = cfg_node_new(rad_state->cfg, output_tab->parent, kind);
-      }
       if(tab != &cfg_nil_node)
       {
         rad_focus_tab(tab);
         rad_focus_panel(tab->parent);
+      }
+    }break;
+    case RAD_CmdKind_ShowExplorer:
+    if(window != &cfg_nil_node)
+    {
+      rad_tool_set_visible(window, RAD_ToolKind_Explorer, 1);
+      CFG_Node *tab = rad_tab_from_window_kind(window, str8_lit("explorer"));
+      if(tab != &cfg_nil_node)
+      {
+        rad_focus_tab(tab);
+        rad_focus_panel(tab->parent);
+      }
+    }break;
+    case RAD_CmdKind_CloseToolWindow:
+    {
+      RAD_ToolKind tool = rad_tool_kind_from_panel(panel_cfg);
+      if(tool != RAD_ToolKind_Null)
+      {
+        rad_tool_set_visible(window, tool, 0);
       }
     }break;
     case RAD_CmdKind_NextError:
@@ -4936,6 +5495,17 @@ rad_frame(void)
   //- rad: settings: defaults + the user file (rad.mdesk RAD_SettingTable)
   //
   rad_state->settings = rad_settings_from_cfg();
+
+  //////////////////////////////
+  //- rad: tool window layout of every window (before commands run)
+  //
+  {
+    CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
+    for(CFG_NodePtrNode *n = windows.first; n != 0; n = n->next)
+    {
+      rad_window_tool_layout_ensure(n->v);
+    }
+  }
 
   //////////////////////////////
   //- rad: scripted tests: run the script (queues simulated input for this frame)

@@ -1,0 +1,21 @@
+// rad 0.9.29 user file (layout before tool windows: the explorer as a panel
+// tab on the left, Output and Problems split under the editor)
+
+window:
+{
+  split_x
+  panels:
+  {
+    0.200000: explorer
+    0.800000:
+    {
+      0.700000: selected getting_started: selected
+      0.300000:
+      {
+        output: selected
+        problems
+      }
+    }
+  }
+  size: 1920 1080
+}

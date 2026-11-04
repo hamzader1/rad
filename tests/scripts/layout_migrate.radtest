@@ -1,0 +1,17 @@
+#! args: --user:"{work}\layout_migrate\fixtures\old_layout.rad_user"
+# Tool windows (task C2): a user file from before them (the explorer a panel
+# tab, Output and Problems split under the editor) loads into the tool
+# window layout: one editor panel, the explorer and the bottom window shown.
+
+wait_idle
+expect panel_count == 1
+expect panel == "getting_started"
+expect explorer_visible == 1
+expect explorer_on_right == 0
+expect explorer_panel_tabs == 1
+expect bottom_visible == 1
+key ctrl+comma
+expect panel == "output"
+key ctrl+comma
+expect panel == "explorer"
+quit

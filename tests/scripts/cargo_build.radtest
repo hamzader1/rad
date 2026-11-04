@@ -7,7 +7,7 @@ open_folder ../fixtures/cargo_errors
 wait_idle
 open ../fixtures/cargo_errors/src/main.rs
 wait_idle
-expect panel_count == 2
+expect panel_count == 1
 expect cargo_status == "none"
 
 # build: output + problems panel appears under the editor; keyboard stays
@@ -16,7 +16,7 @@ wait_cargo
 wait_idle
 expect cargo_status == "failed"
 expect cargo_exit_code == 101
-expect panel_count == 3
+expect panel_count == 1
 expect panel == "text"
 expect tab == "main.rs"
 expect diag_count == 2
@@ -138,7 +138,7 @@ expect cargo_status == "finished"
 expect cargo_exit_code == 0
 expect diag_count == 1
 expect diag 1 == "warning src/main.rs:2:9 unused variable: `unused`"
-expect panel_count == 3
+expect panel_count == 1
 
 # Check (F7): same diagnostics, through `cargo check`
 key f7

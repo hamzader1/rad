@@ -407,13 +407,28 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   {
     value = push_str8f(arena, "%I64u", tree.focused->tabs.count);
   }
+  else if(str8_match(name, str8_lit("explorer_on_right"), 0))
+  {
+    // rad: 1 if the explorer is the last panel of its row
+    CFG_Node *window = cfg_node_child_from_string(cfg_node_child_from_string(cfg_node_root(), str8_lit("user")), str8_lit("window"));
+    CFG_Node *explorer = rad_tool_panel_from_window(window, RAD_ToolKind_Explorer);
+    CFG_PanelNode *node = cfg_panel_node_from_tree_cfg(tree.root, explorer);
+    value = push_str8f(arena, "%i", (int)(node != &cfg_nil_panel_node && node->next == &cfg_nil_panel_node && node->prev != &cfg_nil_panel_node));
+  }
+  else if(str8_match(name, str8_lit("explorer_visible"), 0) || str8_match(name, str8_lit("bottom_visible"), 0))
+  {
+    RAD_ToolKind kind = (str8_match(name, str8_lit("explorer_visible"), 0) ? RAD_ToolKind_Explorer : RAD_ToolKind_Bottom);
+    CFG_Node *window = cfg_node_child_from_string(cfg_node_child_from_string(cfg_node_root(), str8_lit("user")), str8_lit("window"));
+    value = push_str8f(arena, "%i", (int)!!rad_tool_is_visible(window, kind));
+  }
   else if(str8_match(name, str8_lit("panel_count"), 0) || str8_match(name, str8_lit("explorer_panel_tabs"), 0))
   {
+    // rad: panel_count: editor panels (tool windows not counted)
     U64 leaf_count = 0;
     U64 explorer_panel_tabs = 0;
     for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
     {
-      leaf_count += (p->first == &cfg_nil_panel_node);
+      leaf_count += (p->first == &cfg_nil_panel_node && rad_tool_kind_from_panel(p->cfg) == RAD_ToolKind_Null);
       if(rad_explorer_tab_from_panel(p->cfg) != &cfg_nil_node)
       {
         explorer_panel_tabs = p->tabs.count;
@@ -1333,6 +1348,28 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
         args_used = used;
         result = 1;
       }
+    }
+  }
+
+  //- rad: a tool window's X (explorer | bottom)
+  else if(str8_match(kind, str8_lit("tool_close"), 0))
+  {
+    RAD_ToolKind tool = (args_count >= 2 && str8_match(args[1], str8_lit("explorer"), 0) ? RAD_ToolKind_Explorer :
+                         args_count >= 2 && str8_match(args[1], str8_lit("bottom"), 0) ? RAD_ToolKind_Bottom : RAD_ToolKind_Null);
+    Rng2F32 rect = (rad_state->first_window != 0 ? rad_state->first_window->tool_close_rects[tool] : r2f32p(0, 0, 0, 0));
+    if(tool == RAD_ToolKind_Null)
+    {
+      *error_out = str8_lit("tool_close: needs explorer or bottom");
+    }
+    else if(rect.x1 <= rect.x0 || rect.y1 <= rect.y0)
+    {
+      *error_out = str8_lit("tool_close: not visible");
+    }
+    else
+    {
+      pos = center_2f32(rect);
+      args_used = 2;
+      result = 1;
     }
   }
 
