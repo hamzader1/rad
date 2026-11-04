@@ -33,7 +33,16 @@ expect output_has "test tests::adds ... ok" == 1
 expect output_has "test tests::fails ... FAILED" == 1
 expect output_has "panicked at src\\main.rs:23:9:" == 1
 
-# double-click the panic line -> the assertion in the editor
+# double-click the panic line -> the assertion in the editor (Find brings
+# it into view on any window size)
+cmd show_output
+wait_idle
+key ctrl+f
+text "panicked at"
+key return
+wait_idle
+key esc
+wait_idle
 double_click output_text "panicked at"
 wait_idle
 expect panel == "text"
@@ -45,6 +54,14 @@ expect cursor_col == 9
 cmd show_output
 wait_idle
 expect panel == "output"
+cmd show_output
+wait_idle
+key ctrl+f
+text "running 2 tests"
+key return
+wait_idle
+key esc
+wait_idle
 double_click output_text "running 2 tests"
 wait_idle
 expect panel == "output"

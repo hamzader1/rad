@@ -30,7 +30,7 @@ them), then layout (C), tabs (D), the gutter (E), drag and drop (F).
   list `rad_view_state_animate` eases every frame (only `cv`, `ex`, `pr`).
   Done when: a script scrolls a 100-item list by wheel and by Down to the
   last item and the visible rows follow.
-- [ ] **A3. Panel focus.** Clicking into the code of another panel must
+- [x] **A3. Panel focus.** Clicking into the code of another panel must
   focus that panel (today only a click on empty panel space does).
   Cause (verified): the panel takes focus only from fallthrough presses
   (`rad_core.c` "consume panel fallthrough interaction events"); the code
@@ -42,6 +42,12 @@ them), then layout (C), tabs (D), the gutter (E), drag and drop (F).
   Backward) or AltGr may end as a "lone Alt". Reproduce with a script first.
   Done when: scripts click between two editor panels and check the focused
   panel; Alt+Left and AltGr typing leave the menu bar unfocused.
+  Done 2026-11-04: the code view focuses its panel on press (raddbg's
+  step, dropped in the port); Alt focuses the menu bar only if nothing was
+  pressed or scrolled while it was held (raddbg cancelled only for bound
+  keys, so Alt+Up/Down, Alt+Shift+arrows, Alt+click focused it). AltGr not
+  tested (scripts cannot send it); if focus still jumps, tell what was
+  pressed just before.
 - [ ] **A4. Ctrl+click and Ctrl+hover go to definition** (`tIHhIDuW`).
   Holding Ctrl highlights the identifier under the mouse (VS2022: link
   color + underline, hand cursor); Ctrl+click goes to the definition of

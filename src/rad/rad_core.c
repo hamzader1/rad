@@ -778,6 +778,13 @@ rad_window_open(CFG_Node *window_cfg)
     CFG_Node *size_cfg = cfg_node_child_from_string(window_cfg, str8_lit("size"));
     size.x = (F32)f64_from_str8(size_cfg->first->string);
     size.y = (F32)f64_from_str8(size_cfg->first->next->string);
+    if((size.x == 0 || size.y == 0) && rad_script_is_active())
+    {
+      // rad: scripted tests get the same window on every machine and display
+      // (visible-line checks depend on it), small enough for common screens
+      // (Windows clamps a window to the screen)
+      size = v2f32(1920, 1080);
+    }
     if(size.x == 0 || size.y == 0)
     {
       WM_Monitor monitor = wm_primary_monitor();
@@ -4763,6 +4770,15 @@ rad_frame(void)
       //- rad: try menu bar operations (same as raddbg)
       if(ws != 0 && rad_state->settings.focus_menu_bar_with_alt && wm_window_is_focused(ws->os))
       {
+        // NOTE(rad): not in raddbg: as in Windows, Alt focuses the menu bar only
+        // when released with nothing pressed or scrolled while it was held.
+        // raddbg cancels only for bound hotkeys and F keys, so Alt+Up/Down,
+        // Alt+Shift+arrows or Alt+click focused the menu bar on release.
+        if(ws->menu_bar_focus_press_started &&
+           ((event->kind == WM_EventKind_Press && event->key != WM_Key_Alt) || event->kind == WM_EventKind_Scroll))
+        {
+          ws->menu_bar_focus_press_started = 0;
+        }
         if(!take && event->kind == WM_EventKind_Press && event->key == WM_Key_Alt && event->modifiers == 0 && event->is_repeat == 0)
         {
           take = 1;

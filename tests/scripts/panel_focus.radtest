@@ -1,0 +1,62 @@
+# A click into a panel's code focuses that panel (raddbg's code view does
+# this; the port had dropped it). Alt focuses the menu bar only when tapped
+# alone: a key or a click while Alt is held cancels it, as in Windows.
+
+open ../fixtures/edit.txt
+wait_idle
+expect tab == "edit.txt"
+cmd new_panel_right
+wait_idle
+open ../fixtures/lines_3000.txt
+wait_idle
+expect tab == "lines_3000.txt"
+expect panel_count == 3
+
+# click into the other panel's code: it takes the focus
+click tab_code "edit.txt"
+wait_idle
+expect tab == "edit.txt"
+expect panel == "text"
+click tab_code "lines_3000.txt"
+wait_idle
+expect tab == "lines_3000.txt"
+click tab_code "edit.txt"
+wait_idle
+expect tab == "edit.txt"
+
+# typing goes to the clicked panel
+key ctrl+home
+text "Z"
+wait_idle
+expect line 1 == "Zalpha"
+key ctrl+z
+wait_idle
+
+# a lone Alt tap focuses the menu bar; Esc gives the keyboard back
+key alt
+wait_idle
+expect menu_bar_focused == 1
+key esc
+wait_idle
+expect menu_bar_focused == 0
+
+# Alt held with other keys between press and release: no menu bar
+key_down alt
+key alt+down
+key_up alt
+wait_idle
+expect menu_bar_focused == 0
+key_down alt
+key alt+shift+right
+key_up alt
+wait_idle
+expect menu_bar_focused == 0
+
+# Alt+Left (Navigate Backward, a bound key) also leaves it alone
+key_down alt
+key alt+left
+key_up alt
+wait_idle
+expect menu_bar_focused == 0
+expect tab == "edit.txt"
+quit

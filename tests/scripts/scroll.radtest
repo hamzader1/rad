@@ -31,7 +31,7 @@ expect cursor_line == 1
 expect visible_first == 1
 key page_down 3
 wait_idle
-expect cursor_line > 100
+expect cursor_line > 60
 expect visible_first > 1
 
 # a long scroll lands where it should

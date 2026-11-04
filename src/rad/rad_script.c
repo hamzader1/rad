@@ -332,6 +332,11 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     CFG_Node *tab = rad_script_editor_tab();
     value = push_str8f(arena, "%.2f", (tab == &cfg_nil_node) ? 0.f : rad_view_state_from_cfg(tab)->loading_t);
   }
+  else if(str8_match(name, str8_lit("menu_bar_focused"), 0))
+  {
+    // rad: 1 if the menu bar has the keyboard (Alt tapped)
+    value = push_str8f(arena, "%i", (int)(rad_state->first_window != 0 && rad_state->first_window->menu_bar_focused));
+  }
   else if(str8_match(name, str8_lit("zoomed"), 0))
   {
     // rad: 1 if a panel is zoomed (fills the window)
@@ -950,6 +955,37 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
     }
   }
 
+  //- rad: the code view of a shown tab in any panel, by its name
+  else if(str8_match(kind, str8_lit("tab_code"), 0))
+  {
+    if(args_count < 2)
+    {
+      *error_out = str8_lit("tab_code: needs a tab name");
+    }
+    else
+    {
+      CFG_PanelTree tree = rad_script_panel_tree(scratch.arena);
+      for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node && !result; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+      {
+        CFG_Node *tab = p->selected_tab;
+        if(tab != &cfg_nil_node && str8_match(rad_script_tab_name(tab), args[1], 0))
+        {
+          RAD_CodeViewState *cv = &rad_view_state_from_cfg(tab)->cv;
+          if(cv->initialized && cv->layout_code_rect.x1 > cv->layout_code_rect.x0)
+          {
+            pos = center_2f32(cv->layout_code_rect);
+            args_used = 2;
+            result = 1;
+          }
+        }
+      }
+      if(!result)
+      {
+        *error_out = push_str8f(arena, "tab_code: no shown code view on a tab named \"%S\"", args[1]);
+      }
+    }
+  }
+
   //- rad: explorer targets
   else if(str8_match(kind, str8_lit("explorer"), 0) || str8_match(kind, str8_lit("explorer_expander"), 0) || str8_match(kind, str8_lit("explorer_center"), 0))
   {
@@ -1261,6 +1297,22 @@ rad_script_inject(RAD_ScriptInput *input)
       release->modifiers = input->modifiers;
     }break;
 
+    //- rad: key held down / let go (a modifier key's own event carries no
+    // modifier, as win32 sends it; while held, the modifier is down)
+    case RAD_ScriptInputKind_KeyDown:
+    case RAD_ScriptInputKind_KeyUp:
+    {
+      B32 is_down = (input->kind == RAD_ScriptInputKind_KeyDown);
+      WM_Modifiers key_modifier = (input->key == WM_Key_Alt   ? WM_Modifier_Alt :
+                                   input->key == WM_Key_Ctrl  ? WM_Modifier_Ctrl :
+                                   input->key == WM_Key_Shift ? WM_Modifier_Shift : 0);
+      WM_Event *evt = wm_sim_push_event(window, is_down ? WM_EventKind_Press : WM_EventKind_Release);
+      evt->key = input->key;
+      evt->modifiers = (input->modifiers & ~key_modifier);
+      wm_sim_set_key_is_down(input->key, is_down);
+      wm_sim_set_modifiers(is_down ? (input->modifiers | key_modifier) : (input->modifiers & ~key_modifier));
+    }break;
+
     //- rad: typed character
     case RAD_ScriptInputKind_Text:
     {
@@ -1401,6 +1453,22 @@ rad_script_run_line(RAD_ScriptLine *line)
     else for EachIndex(idx, count)
     {
       RAD_ScriptInput *input = rad_script_push_input(RAD_ScriptInputKind_Key, rad_script->mouse);
+      input->modifiers = modifiers;
+      input->key = key;
+    }
+  }
+  else if(str8_match(cmd, str8_lit("key_down"), 0) || str8_match(cmd, str8_lit("key_up"), 0))
+  {
+    WM_Modifiers modifiers = 0;
+    WM_Key key = WM_Key_Null;
+    if(args_count < 1 || !rad_script_chord_from_string(args[0], &modifiers, &key))
+    {
+      error = push_str8f(scratch.arena, "%S: bad key in \"%S\"", cmd, line->text);
+    }
+    else
+    {
+      RAD_ScriptInputKind kind = (str8_match(cmd, str8_lit("key_down"), 0) ? RAD_ScriptInputKind_KeyDown : RAD_ScriptInputKind_KeyUp);
+      RAD_ScriptInput *input = rad_script_push_input(kind, rad_script->mouse);
       input->modifiers = modifiers;
       input->key = key;
     }

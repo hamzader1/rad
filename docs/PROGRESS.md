@@ -320,7 +320,8 @@ Milestone 6 details (each item with its script):
   `build\rad_probe.exe`) and pass it to the runner with `-Exe`.
 - Screenshots: `tests\screenshot.ps1 -Script <file> -Out <png>` runs a
   script (ending in `wait <ms>` + `quit`) and captures the window with
-  `PrintWindow` after `-AfterMs`, without focus. Works because rad renders
+  `PrintWindow` after `-AfterMs`, without focus. Script windows are
+  1920x1080 px (fixed, any display). Works because rad renders
   every frame while a script runs. Use it for side-by-side UI checks.
 - Old way, avoid: driving the real window with `PostMessage`/`keybd_event`
   needs the foreground, interrupts the user, and their keystrokes then land
@@ -375,6 +376,19 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-04 (tasks A3: panel focus, Alt; fixed script window size)
+- Clicking into a panel's code now focuses that panel (raddbg's code view
+  does `FocusPanel` on press; the port had dropped it).
+- Alt focuses the menu bar only when nothing is pressed or scrolled while
+  it is held (as in Windows; raddbg cancels only for bound keys and F keys).
+- Script mode: window 1920x1080 px when the user file gives no size (was
+  4/5 of the primary monitor). The user's display changed (5120 -> 3025 px
+  wide) and the cargo scripts' Output lines fell out of view. cargo_build
+  and cargo_run now bring an Output line into view with Find before a
+  double-click; scroll's PageDown check is size-independent.
+- New script commands `key_down`/`key_up`, field `menu_bar_focused`, target
+  `tab_code "<name>"`; script `panel_focus` (14). 24 scripts pass.
 
 ### 2026-11-04 (tasks A2: completion list scrolling)
 - Bug (user): the completion list stopped scrolling after a few rows with

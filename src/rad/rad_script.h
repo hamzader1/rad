@@ -32,6 +32,8 @@
 //   cmd <code_name>             run a command by its rad.mdesk code name
 //   key <chord> [count]         press+release, e.g. `key ctrl+s`, `key page_down 3`
 //                               (key names: window_manager.mdesk cfg names)
+//   key_down <key>              press and hold a key (e.g. `key_down alt`; chords
+//   key_up <key>                in between name the held modifier: `key alt+up`)
 //   text "<string>"             type a string (one text event per character)
 //   wheel <notches> <target>    mouse wheel, positive = down, one notch per frame
 //   mouse <target>              move the mouse
@@ -82,6 +84,8 @@
 //   problem <n>                 middle of visible Problems row n (1-based)
 //   completion <n>              middle of visible completion list row n (1-based)
 //   completion_list             middle of the completion list
+//   tab_code "<name>"           middle of the code view of the shown tab with that
+//                               name, in any panel (focused or not)
 //   toolbar <name>              a top bar button: cargo_run cargo_test cargo_check
 //                               cargo_build cargo_stop, configuration (the
 //                               Debug/Release box), or its open menu's rows
@@ -96,6 +100,7 @@
 //   tab_count                   number of tabs in the focused panel
 //   panel_count                 number of leaf panels in the window
 //   zoomed                      1 if a panel is zoomed (Toggle Panel Zoom)
+//   menu_bar_focused            1 if the menu bar has the keyboard (Alt tapped)
 //   explorer_panel_tabs         number of tabs in the explorer's panel
 //   cursor_line cursor_col mark_line mark_col     editor cursor/mark (1-based)
 //   visible_first visible_last  editor's visible line range
@@ -169,6 +174,8 @@ typedef enum RAD_ScriptInputKind
 {
   RAD_ScriptInputKind_Null,
   RAD_ScriptInputKind_Key,
+  RAD_ScriptInputKind_KeyDown,
+  RAD_ScriptInputKind_KeyUp,
   RAD_ScriptInputKind_Text,
   RAD_ScriptInputKind_Wheel,
   RAD_ScriptInputKind_MouseMove,

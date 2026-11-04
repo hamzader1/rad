@@ -31,11 +31,28 @@ expect output_line 3 == "error[E0425]: cannot find value `reslt` in this scope"
 expect output_cursor_at_end == 1
 
 # Output tab: double-click a compiler message's first line -> its location
+# (the Output follows its end; Find brings a line into view on any window)
+cmd show_output
+wait_idle
+key ctrl+f
+text "error[E0425]"
+key return
+wait_idle
+key esc
+wait_idle
 double_click output_text "error[E0425]"
 wait_idle
 expect panel == "text"
 expect cursor_line == 8
 expect cursor_col == 29
+cmd show_output
+wait_idle
+key ctrl+f
+text "unused variable"
+key return
+wait_idle
+key esc
+wait_idle
 double_click output_text "unused variable"
 wait_idle
 expect panel == "text"

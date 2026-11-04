@@ -1580,6 +1580,12 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       sig = rad_code_slicef(&code_slice_params, &cv->cursor, &cv->mark, &cv->preferred_column, "code_slice");
     }
 
+    //- rad: press code slice? -> focus panel (same as raddbg)
+    if(ui_pressed(sig.base))
+    {
+      rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
+    }
+
     //- rad: not in raddbg: the mouse moved the cursor -> the completion list
     // closes; else it is placed under its word's start (next frame)
     if(cmp->active && cmp->tab == tab->id)
