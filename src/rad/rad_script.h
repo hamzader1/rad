@@ -41,6 +41,8 @@
 //   double_click <target>
 //   ctrl_click <target>         left click with Ctrl held
 //   drag <target> <target>      left press at the first, move, release at the second
+//   mouse_down <target>         left press there (no release; a held drag)
+//   mouse_up <target>           left release there
 //   write_file <path> "<text>"  write a file on disk (as another program would)
 //   delete_file <path>
 //   write_file_later <ms> <path> "<text>"  the same, from a thread, after <ms>
@@ -88,6 +90,11 @@
 //   tool_close <explorer|bottom> a tool window's X button
 //   explorer_filter             the explorer's search filter row
 //   fold <line>                 the editor's fold chevron of a visible line
+//   panel_site <n> <site>       editor panel n (tree order, tool windows skipped):
+//                               a docking compass site (center up down left
+//                               right), an edge's middle (edge_left edge_right
+//                               edge_up edge_down: boundary drop sites) or its
+//                               tab bar's free end (tabs)
 //   tab_box <name>              a tab (any panel), by its name
 //   tab_pin <name>              its pin button (pinned and selected tabs)
 //   tab_close <name>            its close button (selected and hovered tabs)
@@ -135,6 +142,8 @@
 //   settings_filter_focused     1 if the filter has the keyboard
 //   setting <name>              a setting's value as stored (enums: the option's name)
 //   editor_font_size            the editor view's font size (code font setting)
+//   panel_tabs <n>              editor panel n's tab names, space-separated
+//   drag_active                 1 while a tab or file is being dragged
 //   fold_count                  folded ranges in the editor view
 //   line_hidden <line>          1 if the line is folded away
 //   ui_font_size                the window's font size (UI font setting)

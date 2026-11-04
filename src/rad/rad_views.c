@@ -3434,6 +3434,12 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
           ex->filter_focused = 0;
           rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
         }
+        else if((ui_dragging(sig) || ui_dragging(row_sig)) && !row->is_folder && !rad_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
+        {
+          // rad: a file dragged out of the explorer opens where it is dropped
+          // (raddbg's file drag from its file system views)
+          rad_drag_begin_file(row->path);
+        }
         if(ui_double_clicked(sig) || ui_double_clicked(row_sig))
         {
           if(row->is_folder && filtering)

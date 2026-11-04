@@ -129,7 +129,31 @@ struct RAD_CmdParams
   B32 has_text_offset;      // rad: text_offset is a position in the tab's text
   U64 text_offset;
   String8 string;
+  CFG_ID dst_panel;         // rad: Move Tab / split by drag: the target panel
+  CFG_ID prev_tab;          // rad: Move Tab: goes after this tab (0: first)
+  Dir2 dir2;                // rad: split by drag: the new panel's side
+  B32 all_tabs;             // rad: Move Tab: every tab of `panel` (a dragged tab bar)
 };
+
+////////////////////////////////
+//~ rad: Drag/Drop (port of raddbg's RD_DragDropState)
+
+typedef enum RAD_DragDropState
+{
+  RAD_DragDropState_Null,
+  RAD_DragDropState_Dragging,
+  RAD_DragDropState_Dropping,
+}
+RAD_DragDropState;
+
+typedef enum RAD_DragKind
+{
+  RAD_DragKind_Null,
+  RAD_DragKind_Tab,
+  RAD_DragKind_Panel,       // rad: a tab bar: all of the panel's tabs
+  RAD_DragKind_FilePath,
+}
+RAD_DragKind;
 
 typedef struct RAD_Cmd RAD_Cmd;
 struct RAD_Cmd
@@ -218,6 +242,10 @@ struct RAD_Window
   // built: scripted tests click them)
   Rng2F32 top_bar_cmd_rects[RAD_CmdKind_COUNT];
   Rng2F32 tool_close_rects[RAD_ToolKind_COUNT];   // tool window X buttons (last layout; scripts)
+  CFG_ID panel_rect_ids[64];                      // leaf panels' rects (last layout; scripts)
+  Rng2F32 panel_rects[64];
+  U64 panel_rect_count;
+  F32 panel_rects_font_size;
   U64 tab_list_frame;                             // the "..." tab list button and menu (last layout; scripts)
   Rng2F32 tab_list_button_rect;
   Rng2F32 tab_list_item_rects[64];
@@ -298,6 +326,16 @@ struct RAD_State
   // rad: the code slice whose Ctrl+press started on a link (no selection drag until release)
   UI_Key code_slice_link_press_key;
 
+  //- rad: drag/drop (tabs; explorer files)
+  RAD_DragDropState drag_drop_state;
+  B32 drag_killed;          // Esc ended the drag; no new one until the button is up
+  RAD_DragKind drag_kind;
+  CFG_ID drag_window;
+  CFG_ID drag_panel;
+  CFG_ID drag_tab;
+  U8 drag_path_buffer[4096];
+  U64 drag_path_size;
+
   //- rad: tab file paths by file name (this frame; for tab titles)
   U64 ambiguous_path_slots_count;
   RAD_AmbiguousPathNode **ambiguous_path_slots;
@@ -356,6 +394,14 @@ internal void rad_tool_set_visible(CFG_Node *window, RAD_ToolKind kind, B32 visi
 internal U64 rad_editor_leaf_count(CFG_Node *window);
 internal void rad_panel_close(CFG_Node *window, CFG_Node *panel_cfg);
 internal void rad_window_tool_layout_ensure(CFG_Node *window);
+internal B32 rad_drag_is_active(void);
+internal void rad_drag_begin_tab(CFG_Node *panel, CFG_Node *tab);
+internal void rad_drag_begin_panel(CFG_Node *panel, CFG_Node *selected_tab);
+internal B32 rad_drag_is_dockable(void);
+internal void rad_drag_begin_file(String8 path);
+internal B32 rad_drag_drop(void);
+internal void rad_drag_kill(void);
+internal Rng2F32 rad_drop_site_rect(Rng2F32 panel_rect, F32 font_size, Dir2 dir);
 internal B32 rad_tab_is_pinned(CFG_Node *tab);
 internal void rad_tab_move_after_pinned(CFG_Node *tab);
 internal F32 rad_tab_width_target_px(Arena *arena, CFG_Node *tab, B32 is_selected);

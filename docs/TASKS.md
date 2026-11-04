@@ -293,15 +293,29 @@ tree, each with a header (title, X), no "+", no zoom button.
 
 ## F. Drag and drop
 
-- [ ] **F1. Drag tabs and panels** (`vPebvQb0`). Drag a tab, or a whole
+- [x] **F1. Drag tabs and panels** (`vPebvQb0`). Drag a tab, or a whole
   panel by its tab bar, over a panel: a docking guide in the middle (center
   = add as tab; left/right/up/down = split) plus edge targets, and a preview
   of the future rect. raddbg already has drop sites and the animated
   preview (`raddbg_core.c` "panel non-leaf UI (drag boundaries, drag/drop
   sites)") and `MoveTab`; port them, add the center compass in the same
   style. Tool windows (C) are not drop targets for editor tabs.
-- [ ] **F2. Drag files**: from the explorer into a panel or a tab bar
+  Done 2026-11-04 (script `drag_tabs`): raddbg's drag state machine,
+  combined split + move-tab sites (rad: all four sides plus the center,
+  the docking compass), the animated future rect, the catch-all site (a
+  drop on a tab bar goes after the nearest tab end), boundary sites
+  between editor panels and on the editor area's edges, the hollow
+  dragged tab and the title tooltip. Dragging a tab bar's free space
+  moves the whole panel (all its tabs). A panel left empty closes; Esc
+  cancels a drag. Tool windows are neither dragged nor drop targets. Not
+  done: raddbg's live view preview inside the drag tooltip (rad shows the
+  title only); dragging between windows (one window for now).
+- [x] **F2. Drag files**: from the explorer into a panel or a tab bar
   (opens there), and from Windows Explorer onto a specific panel.
+  Done 2026-11-04: an explorer file row dragged uses the same drop sites
+  (center or tab bar: opens in that panel; a side: in a new panel there).
+  Windows Explorer drops onto a panel already opened there (OS FileDrop
+  event, checked per panel rect). Folders are not draggable.
 
 ## Ideas for later (not in this round)
 

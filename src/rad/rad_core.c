@@ -734,6 +734,17 @@ rad_panel_has_tool_child__(CFG_PanelNode *parent)
   return result;
 }
 
+internal B32
+rad_panel_subtree_has_tool__(CFG_PanelNode *root)
+{
+  B32 result = 0;
+  for(CFG_PanelNode *p = root; p != &cfg_nil_panel_node && !result; p = cfg_panel_node_rec__depth_first_pre(root, p).next)
+  {
+    result = (p->first == &cfg_nil_panel_node && rad_tool_kind_from_panel(p->cfg) != RAD_ToolKind_Null);
+  }
+  return result;
+}
+
 internal void
 rad_panel_close(CFG_Node *window, CFG_Node *panel_cfg)
 {
@@ -1100,6 +1111,121 @@ rad_window_tool_layout_ensure(CFG_Node *window)
     }
   }
   scratch_end(scratch);
+}
+
+////////////////////////////////
+//~ rad: Drag/Drop (port of raddbg's rd_drag_*)
+
+internal B32
+rad_drag_is_active(void)
+{
+  return (rad_state->drag_drop_state == RAD_DragDropState_Dragging ||
+          rad_state->drag_drop_state == RAD_DragDropState_Dropping);
+}
+
+internal void
+rad_drag_begin_tab(CFG_Node *panel, CFG_Node *tab)
+{
+  if(!rad_drag_is_active() && !rad_state->drag_killed)
+  {
+    rad_state->drag_kind = RAD_DragKind_Tab;
+    rad_state->drag_window = rad_window_cfg_from_cfg(panel)->id;
+    rad_state->drag_panel = panel->id;
+    rad_state->drag_tab = tab->id;
+    rad_state->drag_drop_state = RAD_DragDropState_Dragging;
+  }
+}
+
+internal void
+rad_drag_begin_panel(CFG_Node *panel, CFG_Node *selected_tab)
+{
+  rad_drag_begin_tab(panel, selected_tab);
+  if(rad_state->drag_kind == RAD_DragKind_Tab && rad_state->drag_panel == panel->id)
+  {
+    rad_state->drag_kind = RAD_DragKind_Panel;
+  }
+}
+
+internal B32
+rad_drag_is_dockable(void)
+{
+  // rad: a drag the panels' drop sites take (tab, tab bar, explorer file)
+  B32 result = (rad_drag_is_active() &&
+                ((rad_state->drag_kind == RAD_DragKind_Tab && cfg_node_from_id(rad_state->drag_tab) != &cfg_nil_node) ||
+                 (rad_state->drag_kind == RAD_DragKind_Panel && cfg_node_from_id(rad_state->drag_panel) != &cfg_nil_node) ||
+                 rad_state->drag_kind == RAD_DragKind_FilePath));
+  return result;
+}
+
+internal void
+rad_drag_begin_file(String8 path)
+{
+  if(!rad_drag_is_active() && !rad_state->drag_killed)
+  {
+    rad_state->drag_kind = RAD_DragKind_FilePath;
+    rad_state->drag_path_size = Min(path.size, sizeof(rad_state->drag_path_buffer));
+    MemoryCopy(rad_state->drag_path_buffer, path.str, rad_state->drag_path_size);
+    rad_state->drag_drop_state = RAD_DragDropState_Dragging;
+  }
+}
+
+internal B32
+rad_drag_drop(void)
+{
+  B32 result = 0;
+  if(rad_state->drag_drop_state == RAD_DragDropState_Dropping)
+  {
+    result = 1;
+    rad_state->drag_drop_state = RAD_DragDropState_Null;
+  }
+  return result;
+}
+
+internal void
+rad_drag_kill(void)
+{
+  rad_state->drag_drop_state = RAD_DragDropState_Null;
+  rad_state->drag_killed = 1;
+}
+
+internal void
+rad_drop_split(CFG_Node *panel_cfg, Dir2 dir)
+{
+  // rad: a drop on a split site: the dragged tab, or the dragged file, goes
+  // into a new panel on `dir`'s side of `panel_cfg`
+  if(rad_state->drag_kind == RAD_DragKind_FilePath)
+  {
+    rad_cmd(RAD_CmdKind_OpenFile, .dst_panel = panel_cfg->id, .dir2 = dir, .file_path = str8(rad_state->drag_path_buffer, rad_state->drag_path_size));
+  }
+  else
+  {
+    rad_cmd(RAD_CmdKind_MoveTabToNewPanel, .dst_panel = panel_cfg->id, .panel = rad_state->drag_panel, .tab = rad_state->drag_tab, .dir2 = dir,
+            .all_tabs = (rad_state->drag_kind == RAD_DragKind_Panel));
+  }
+}
+
+internal Rng2F32
+rad_drop_site_rect(Rng2F32 panel_rect, F32 font_size, Dir2 dir)
+{
+  // NOTE(rad): raddbg's combined split + move-tab drop sites: a compass in
+  // the panel's middle (Dir2_Invalid: the center)
+  F32 dim_px = ceil_f32(font_size*7.f);
+  dim_px = Min(dim_px, Min(dim_2f32(panel_rect).x, dim_2f32(panel_rect).y)/4.f);
+  dim_px = Max(dim_px, ceil_f32(font_size*3.f));
+  Vec2F32 half = v2f32(dim_px/2, dim_px/2);
+  Vec2F32 c = center_2f32(panel_rect);
+  Vec2F32 off = {0};
+  switch(dir)
+  {
+    default:{}break;
+    case Dir2_Up:   {off = v2f32(0, -dim_px);}break;
+    case Dir2_Down: {off = v2f32(0, +dim_px);}break;
+    case Dir2_Left: {off = v2f32(-dim_px, 0);}break;
+    case Dir2_Right:{off = v2f32(+dim_px, 0);}break;
+  }
+  c = add_2f32(c, off);
+  Rng2F32 result = r2f32(sub_2f32(c, half), add_2f32(c, half));
+  return result;
 }
 
 ////////////////////////////////
@@ -2909,6 +3035,34 @@ rad_window_frame(RAD_Window *ws)
     }
 
     ////////////////////////////
+    //- rad: drag/drop visualization tooltip (raddbg's: the dragged tab's
+    // title; rad: without the view preview below it; a file: its name)
+    //
+    if(rad_drag_is_active())
+    {
+      CFG_Node *drag_tab = cfg_node_from_id(rad_state->drag_tab);
+      DR_FStrList fstrs = {0};
+      if((rad_state->drag_kind == RAD_DragKind_Tab || rad_state->drag_kind == RAD_DragKind_Panel) && drag_tab != &cfg_nil_node)
+      {
+        fstrs = rad_title_fstrs_from_tab(scratch.arena, drag_tab);
+      }
+      else if(rad_state->drag_kind == RAD_DragKind_FilePath)
+      {
+        String8 path = str8(rad_state->drag_path_buffer, rad_state->drag_path_size);
+        DR_FStrParams params = {ui_top_font(), ui_top_text_raster_flags(), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+        dr_fstrs_push_new(scratch.arena, &fstrs, &params, push_str8_copy(scratch.arena, str8_skip_last_slash(path)));
+      }
+      if(fstrs.node_count != 0) UI_Tooltip
+      {
+        UI_Row UI_PrefWidth(ui_text_dim(10, 1))
+        {
+          UI_Box *name_box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
+          ui_box_equip_display_fstrs(name_box, &fstrs);
+        }
+      }
+    }
+
+    ////////////////////////////
     //- rad: panel non-leaf UI (drag boundaries)
     //
     B32 is_changing_panel_boundaries = 0;
@@ -2931,6 +3085,202 @@ rad_window_frame(RAD_Window *ws)
         if(panel == panel_tree.zoom_root)
         {
           panel_rect = content_rect;
+        }
+
+        //- rad: boundary tab-drag/drop sites (port of raddbg's; rad: only
+        // next to editor panels, and in a row with a tool window only once
+        // it has 2+ editor panels: raddbg shows none for a single panel)
+        if(rad_drag_is_dockable())
+        {
+          //- rad: params
+          F32 drop_site_major_dim_px = ceil_f32(ui_top_font_size()*7.f);
+          F32 drop_site_minor_dim_px = ceil_f32(ui_top_font_size()*5.f);
+          F32 corner_radius = ui_top_font_size()*0.5f;
+          F32 padding = ceil_f32(ui_top_font_size()*0.5f);
+          B32 panel_is_editor_only = !rad_panel_subtree_has_tool__(panel);
+          U64 editor_child_count = 0;
+          for(CFG_PanelNode *child = panel->first; child != &cfg_nil_panel_node; child = child->next)
+          {
+            editor_child_count += (child->pct_of_parent > 0.001f && !rad_panel_subtree_has_tool__(child));
+          }
+
+          //- rad: sites across the split axis on the editor area's root
+          // (raddbg's special case for its root panel)
+          if(panel_is_editor_only && (panel->parent == &cfg_nil_panel_node || rad_panel_subtree_has_tool__(panel->parent))) UI_CornerRadius(corner_radius)
+          {
+            Vec2F32 panel_rect_center = center_2f32(panel_rect);
+            Axis2 axis = axis2_flip(panel->split_axis);
+            for EachEnumVal(Side, side)
+            {
+              UI_Key key = ui_key_from_stringf(ui_key_zero(), "root_extra_split_%i_%p", side, panel->cfg);
+              Rng2F32 site_rect = panel_rect;
+              site_rect.p0.v[axis2_flip(axis)] = panel_rect_center.v[axis2_flip(axis)] - drop_site_major_dim_px/2;
+              site_rect.p1.v[axis2_flip(axis)] = panel_rect_center.v[axis2_flip(axis)] + drop_site_major_dim_px/2;
+              site_rect.p0.v[axis] = panel_rect.v[side].v[axis] - drop_site_minor_dim_px/2;
+              site_rect.p1.v[axis] = panel_rect.v[side].v[axis] + drop_site_minor_dim_px/2;
+
+              // rad: build
+              UI_Box *site_box = &ui_nil_box;
+              {
+                F32 site_open_t = ui_anim(ui_key_from_stringf(key, "open_t"), 1.f, .rate = rad_state->menu_animation_rate);
+                UI_Rect(site_rect) UI_Squish(0.1f-0.1f*site_open_t) UI_Transparency(1-site_open_t)
+                {
+                  site_box = ui_build_box_from_key(UI_BoxFlag_DropSite|UI_BoxFlag_DrawHotEffects, key);
+                  ui_signal_from_box(site_box);
+                }
+                UI_Box *site_box_viz = &ui_nil_box;
+                UI_Parent(site_box) UI_WidthFill UI_HeightFill
+                  UI_Padding(ui_px(padding, 1.f))
+                  UI_Column
+                  UI_Padding(ui_px(padding, 1.f))
+                  UI_GroupKey(key)
+                {
+                  ui_set_next_child_layout_axis(axis2_flip(axis));
+                  site_box_viz = ui_build_box_from_key(UI_BoxFlag_DrawBackground|
+                                                       UI_BoxFlag_DrawBorder|
+                                                       UI_BoxFlag_DrawDropShadow|
+                                                       UI_BoxFlag_DrawBackgroundBlur|
+                                                       UI_BoxFlag_DrawHotEffects, ui_key_zero());
+                }
+                UI_Parent(site_box_viz) UI_WidthFill UI_HeightFill UI_Padding(ui_px(padding, 1.f))
+                {
+                  ui_set_next_child_layout_axis(axis);
+                  UI_Box *row_or_column = ui_build_box_from_key(0, ui_key_zero()); UI_Parent(row_or_column) UI_Padding(ui_px(padding, 1.f))
+                  {
+                    ui_build_box_from_key(UI_BoxFlag_DrawBorder, ui_key_zero());
+                    ui_spacer(ui_px(padding, 1.f));
+                    ui_build_box_from_key(UI_BoxFlag_DrawBorder, ui_key_zero());
+                  }
+                }
+              }
+
+              // rad: viz
+              if(ui_key_match(site_box->key, ui_drop_hot_key()))
+              {
+                Rng2F32 future_split_rect_target = site_rect;
+                future_split_rect_target.p0.v[axis] -= drop_site_major_dim_px;
+                future_split_rect_target.p1.v[axis] += drop_site_major_dim_px;
+                future_split_rect_target.p0.v[axis2_flip(axis)] = panel_rect.p0.v[axis2_flip(axis)];
+                future_split_rect_target.p1.v[axis2_flip(axis)] = panel_rect.p1.v[axis2_flip(axis)];
+                future_split_rect_target = pad_2f32(future_split_rect_target, -ui_top_font_size()*2.f);
+                Vec2F32 future_split_rect_target_center = center_2f32(future_split_rect_target);
+                Rng2F32 future_split_rect =
+                {
+                  ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v0"), future_split_rect_target.x0, .initial = future_split_rect_target_center.x, .rate = rad_state->menu_animation_rate),
+                  ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v1"), future_split_rect_target.y0, .initial = future_split_rect_target_center.y, .rate = rad_state->menu_animation_rate),
+                  ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v2"), future_split_rect_target.x1, .initial = future_split_rect_target_center.x, .rate = rad_state->menu_animation_rate),
+                  ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v3"), future_split_rect_target.y1, .initial = future_split_rect_target_center.y, .rate = rad_state->menu_animation_rate),
+                };
+                UI_Rect(future_split_rect) UI_TagF("drop_site") UI_CornerRadius(ui_top_font_size()*2.f)
+                {
+                  ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder, ui_key_zero());
+                }
+              }
+
+              // rad: drop
+              if(ui_key_match(site_box->key, ui_drop_hot_key()) && rad_drag_drop())
+              {
+                Dir2 dir = (axis == Axis2_Y ? (side == Side_Min ? Dir2_Up : Dir2_Down) :
+                            (side == Side_Min ? Dir2_Left : Dir2_Right));
+                rad_drop_split(panel->cfg, dir);
+              }
+            }
+          }
+
+          //- rad: iterate all children, build boundary drop sites
+          if(editor_child_count >= 2) UI_CornerRadius(corner_radius) for(CFG_PanelNode *child = panel->first;; child = child->next)
+          {
+            // rad: which side gets the new panel (never a tool window)
+            CFG_PanelNode *prev = (child == &cfg_nil_panel_node ? panel->last : child->prev);
+            B32 next_ok = (child != &cfg_nil_panel_node && child->pct_of_parent > 0.001f && !rad_panel_subtree_has_tool__(child));
+            B32 prev_ok = (prev != &cfg_nil_panel_node && prev->pct_of_parent > 0.001f && !rad_panel_subtree_has_tool__(prev));
+            if(next_ok || prev_ok)
+            {
+              // rad: form rect
+              CFG_PanelNode *rect_child = (next_ok ? child : prev);
+              Rng2F32 child_rect = cfg_target_rect_from_panel_node_child(panel_rect, panel, rect_child);
+              Vec2F32 child_rect_center = center_2f32(child_rect);
+              F32 boundary = (next_ok ? child_rect.p0.v[split_axis] : child_rect.p1.v[split_axis]);
+              UI_Key key = ui_key_from_stringf(ui_key_zero(), "drop_boundary_%p_%p", panel->cfg, child->cfg);
+              Rng2F32 site_rect = r2f32(child_rect_center, child_rect_center);
+              site_rect.p0.v[split_axis] = boundary - drop_site_minor_dim_px/2;
+              site_rect.p1.v[split_axis] = boundary + drop_site_minor_dim_px/2;
+              site_rect.p0.v[axis2_flip(split_axis)] -= drop_site_major_dim_px/2;
+              site_rect.p1.v[axis2_flip(split_axis)] += drop_site_major_dim_px/2;
+
+              // rad: build
+              UI_Box *site_box = &ui_nil_box;
+              {
+                F32 site_open_t = ui_anim(ui_key_from_stringf(key, "open_t"), 1.f, .rate = rad_state->menu_animation_rate);
+                UI_Rect(site_rect) UI_Squish(0.1f-0.1f*site_open_t) UI_Transparency(1-site_open_t)
+                {
+                  site_box = ui_build_box_from_key(UI_BoxFlag_DropSite|UI_BoxFlag_DrawHotEffects, key);
+                  ui_signal_from_box(site_box);
+                }
+                UI_Box *site_box_viz = &ui_nil_box;
+                UI_Parent(site_box) UI_WidthFill UI_HeightFill
+                  UI_Padding(ui_px(padding, 1.f))
+                  UI_Column
+                  UI_Padding(ui_px(padding, 1.f))
+                  UI_GroupKey(key)
+                {
+                  ui_set_next_child_layout_axis(axis2_flip(split_axis));
+                  site_box_viz = ui_build_box_from_key(UI_BoxFlag_DrawBackground|
+                                                       UI_BoxFlag_DrawBorder|
+                                                       UI_BoxFlag_DrawDropShadow|
+                                                       UI_BoxFlag_DrawBackgroundBlur|
+                                                       UI_BoxFlag_DrawHotEffects, ui_key_zero());
+                }
+                UI_Parent(site_box_viz) UI_WidthFill UI_HeightFill UI_Padding(ui_px(padding, 1.f))
+                {
+                  ui_set_next_child_layout_axis(split_axis);
+                  UI_Box *row_or_column = ui_build_box_from_key(0, ui_key_zero()); UI_Parent(row_or_column) UI_Padding(ui_px(padding, 1.f))
+                  {
+                    ui_build_box_from_key(UI_BoxFlag_DrawBorder, ui_key_zero());
+                    ui_spacer(ui_px(padding, 1.f));
+                    ui_build_box_from_key(UI_BoxFlag_DrawBorder, ui_key_zero());
+                  }
+                }
+              }
+
+              // rad: viz
+              if(ui_key_match(site_box->key, ui_drop_hot_key()))
+              {
+                Rng2F32 future_split_rect_target = site_rect;
+                future_split_rect_target.p0.v[split_axis] -= drop_site_major_dim_px;
+                future_split_rect_target.p1.v[split_axis] += drop_site_major_dim_px;
+                future_split_rect_target.p0.v[axis2_flip(split_axis)] = child_rect.p0.v[axis2_flip(split_axis)];
+                future_split_rect_target.p1.v[axis2_flip(split_axis)] = child_rect.p1.v[axis2_flip(split_axis)];
+                future_split_rect_target = pad_2f32(future_split_rect_target, -ui_top_font_size()*2.f);
+                Vec2F32 future_split_rect_target_center = center_2f32(future_split_rect_target);
+                Rng2F32 future_split_rect =
+                {
+                  ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v0"), future_split_rect_target.x0, .initial = future_split_rect_target_center.x, .rate = rad_state->menu_animation_rate),
+                  ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v1"), future_split_rect_target.y0, .initial = future_split_rect_target_center.y, .rate = rad_state->menu_animation_rate),
+                  ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v2"), future_split_rect_target.x1, .initial = future_split_rect_target_center.x, .rate = rad_state->menu_animation_rate),
+                  ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v3"), future_split_rect_target.y1, .initial = future_split_rect_target_center.y, .rate = rad_state->menu_animation_rate),
+                };
+                UI_Rect(future_split_rect) UI_TagF("drop_site") UI_CornerRadius(ui_top_font_size()*2.f)
+                {
+                  ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder, ui_key_zero());
+                }
+              }
+
+              // rad: drop
+              if(ui_key_match(site_box->key, ui_drop_hot_key()) && rad_drag_drop())
+              {
+                Dir2 dir = (next_ok ? (split_axis == Axis2_X ? Dir2_Left : Dir2_Up) :
+                            (split_axis == Axis2_X ? Dir2_Right : Dir2_Down));
+                rad_drop_split(rect_child->cfg, dir);
+              }
+            }
+
+            // rad: exit on opl child
+            if(child == &cfg_nil_panel_node)
+            {
+              break;
+            }
+          }
         }
 
         //- rad: do UI for drag boundaries between all children
@@ -3065,6 +3415,7 @@ rad_window_frame(RAD_Window *ws)
       CFG_PanelNode *front_panel = cfg_panel_node_from_tree_cfg(panel_tree.root, cfg_node_from_id(ws->panel_hoist_cfg_id));
       CFG_PanelNode *panel_trees[] = {front_panel, panel_tree.root};
       F32 panel_zoom_t = ui_anim(ui_key_from_stringf(ui_key_zero(), "panel_zoom_t"), (F32)(panel_tree.zoom_root != &cfg_nil_panel_node), .initial = (F32)(panel_tree.zoom_root != &cfg_nil_panel_node));
+      ws->panel_rect_count = 0;
       ProfScope("leaf panel UI")
         for EachElement(panel_tree_idx, panel_trees)
         for(CFG_PanelNode *panel = panel_trees[panel_tree_idx];
@@ -3233,6 +3584,151 @@ rad_window_frame(RAD_Window *ws)
           //- rad: decide to skip this panel (e.g. if it non-leaf, or is too small)
           //
           B32 build_panel = ((panel->first == &cfg_nil_panel_node) && content_rect.x1 > content_rect.x0 && content_rect.y1 > content_rect.y0 && ui_top_transparency() < 0.99f);
+
+          //////////////////////////
+          //- rad: record leaf panel rects (scripted input aims drops with them)
+          //
+          if(build_panel && ws->panel_rect_count < ArrayCount(ws->panel_rects))
+          {
+            ws->panel_rects_font_size = ui_top_font_size();
+            ws->panel_rect_ids[ws->panel_rect_count] = panel->cfg->id;
+            ws->panel_rects[ws->panel_rect_count] = panel_rect;
+            ws->panel_rect_count += 1;
+          }
+
+          //////////////////////////
+          //- rad: build combined split+movetab drag/drop sites (port of
+          // raddbg's; rad: all four sides, as VS2022's docking guide; not on
+          // tool windows)
+          //
+          UI_Key catchall_drop_site_key = ui_key_from_stringf(ui_key_zero(), "catchall_drop_site_%p", panel->cfg);
+          B32 tab_drag_here = (build_panel && tool_kind == RAD_ToolKind_Null && rad_drag_is_dockable());
+          if(tab_drag_here && contains_2f32(panel_rect, ui_mouse()) && ui_key_match(ui_drop_hot_key(), ui_key_zero()))
+          {
+            F32 corner_radius = ui_top_font_size()*0.5f;
+            F32 padding = ceil_f32(ui_top_font_size()*0.5f);
+            Dir2 dirs[] = {Dir2_Invalid, Dir2_Up, Dir2_Down, Dir2_Left, Dir2_Right};
+            UI_Key keys[ArrayCount(dirs)];
+            UI_CornerRadius(corner_radius) for EachElement(idx, dirs)
+            {
+              Dir2 dir = dirs[idx];
+              UI_Key key = keys[idx] = ui_key_from_stringf(ui_key_zero(), "drop_split_%i_%p", (int)dir, panel->cfg);
+              Rng2F32 rect = rad_drop_site_rect(panel_rect, ui_top_font_size(), dir);
+              Axis2 split_axis = axis2_from_dir2(dir);
+              Side split_side = side_from_dir2(dir);
+              UI_Box *site_box = &ui_nil_box;
+              {
+                F32 site_open_t = ui_anim(ui_key_from_stringf(key, "open_t"), 1.f, .rate = rad_state->menu_animation_rate);
+                UI_Rect(rect) UI_Squish(0.1f-0.1f*site_open_t) UI_Transparency(1-site_open_t)
+                {
+                  site_box = ui_build_box_from_key(UI_BoxFlag_DropSite|UI_BoxFlag_DrawHotEffects, key);
+                  ui_signal_from_box(site_box);
+                }
+                UI_Box *site_box_viz = &ui_nil_box;
+                UI_GroupKey(key)
+                  UI_Parent(site_box) UI_WidthFill UI_HeightFill
+                  UI_Padding(ui_px(padding, 1.f))
+                  UI_Column
+                  UI_Padding(ui_px(padding, 1.f))
+                {
+                  ui_set_next_child_layout_axis(axis2_flip(split_axis));
+                  site_box_viz = ui_build_box_from_key(UI_BoxFlag_DrawBackground|
+                                                       UI_BoxFlag_DrawBorder|
+                                                       UI_BoxFlag_DrawDropShadow|
+                                                       UI_BoxFlag_DrawBackgroundBlur|
+                                                       UI_BoxFlag_DrawHotEffects, ui_key_zero());
+                }
+                if(dir != Dir2_Invalid)
+                {
+                  UI_Parent(site_box_viz) UI_WidthFill UI_HeightFill UI_Padding(ui_px(padding, 1.f))
+                  {
+                    ui_set_next_child_layout_axis(split_axis);
+                    UI_Box *row_or_column = ui_build_box_from_key(0, ui_key_zero());
+                    UI_Parent(row_or_column) UI_Padding(ui_px(padding, 1.f)) UI_TagF("drop_site")
+                    {
+                      if(split_side == Side_Min) { ui_set_next_flags(UI_BoxFlag_DrawBackground); }
+                      ui_build_box_from_key(UI_BoxFlag_DrawBorder, ui_key_zero());
+                      ui_spacer(ui_px(padding, 1.f));
+                      if(split_side == Side_Max) { ui_set_next_flags(UI_BoxFlag_DrawBackground); }
+                      ui_build_box_from_key(UI_BoxFlag_DrawBorder, ui_key_zero());
+                    }
+                  }
+                }
+                else
+                {
+                  UI_Parent(site_box_viz) UI_WidthFill UI_HeightFill UI_Padding(ui_px(padding, 1.f))
+                  {
+                    ui_set_next_child_layout_axis(split_axis);
+                    UI_Box *row_or_column = ui_build_box_from_key(0, ui_key_zero());
+                    UI_Parent(row_or_column) UI_Padding(ui_px(padding, 1.f)) UI_TagF("drop_site")
+                    {
+                      ui_build_box_from_key(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground, ui_key_zero());
+                    }
+                  }
+                }
+              }
+              if(ui_key_match(site_box->key, ui_drop_hot_key()) && rad_drag_drop())
+              {
+                if(dir != Dir2_Invalid)
+                {
+                  rad_drop_split(panel->cfg, dir);
+                }
+                else if(rad_state->drag_kind == RAD_DragKind_FilePath)
+                {
+                  // rad: a file from the explorer: open it there
+                  rad_cmd(RAD_CmdKind_OpenFile, .panel = panel->cfg->id, .file_path = str8(rad_state->drag_path_buffer, rad_state->drag_path_size));
+                }
+                else
+                {
+                  rad_cmd(RAD_CmdKind_MoveTab,
+                          .dst_panel = panel->cfg->id,
+                          .panel = rad_state->drag_panel,
+                          .tab = rad_state->drag_tab,
+                          .prev_tab = cfg_node_ptr_list_last(&panel->tabs)->id,
+                          .all_tabs = (rad_state->drag_kind == RAD_DragKind_Panel));
+                }
+              }
+            }
+
+            // rad: the future rect of the hot site (raddbg's animated preview)
+            for EachElement(idx, dirs)
+            {
+              if(ui_key_match(ui_drop_hot_key(), keys[idx]))
+              {
+                Axis2 split_axis = axis2_from_dir2(dirs[idx]);
+                Side split_side = side_from_dir2(dirs[idx]);
+                Rng2F32 future_split_rect_target = panel_rect;
+                if(dirs[idx] != Dir2_Invalid)
+                {
+                  Vec2F32 panel_center = center_2f32(panel_rect);
+                  future_split_rect_target.v[side_flip(split_side)].v[split_axis] = panel_center.v[split_axis];
+                }
+                future_split_rect_target = pad_2f32(future_split_rect_target, -ui_top_font_size()*2.f);
+                Vec2F32 future_split_rect_target_center = center_2f32(future_split_rect_target);
+                Rng2F32 future_split_rect =
+                {
+                  ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v0"), future_split_rect_target.x0, .initial = future_split_rect_target_center.x, .rate = rad_state->menu_animation_rate),
+                  ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v1"), future_split_rect_target.y0, .initial = future_split_rect_target_center.y, .rate = rad_state->menu_animation_rate),
+                  ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v2"), future_split_rect_target.x1, .initial = future_split_rect_target_center.x, .rate = rad_state->menu_animation_rate),
+                  ui_anim(ui_key_from_stringf(ui_key_zero(), "drop_site_v3"), future_split_rect_target.y1, .initial = future_split_rect_target_center.y, .rate = rad_state->menu_animation_rate),
+                };
+                UI_Rect(future_split_rect) UI_TagF("drop_site") UI_CornerRadius(ui_top_font_size()*2.f)
+                {
+                  ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder, ui_key_zero());
+                }
+              }
+            }
+          }
+
+          //////////////////////////
+          //- rad: build catch-all panel drop-site (raddbg's: a tab dropped
+          // elsewhere in the panel goes into its tab bar, where the mouse is)
+          //
+          if(tab_drag_here) UI_Rect(panel_rect)
+          {
+            UI_Box *catchall_drop_site = ui_build_box_from_key(UI_BoxFlag_DropSite, catchall_drop_site_key);
+            ui_signal_from_box(catchall_drop_site);
+          }
 
           //////////////////////////
           //- rad: panel not selected? -> darken
@@ -3598,10 +4094,16 @@ rad_window_frame(RAD_Window *ws)
                 ui_set_next_pref_width(ui_px(tab_width_px, 1));
                 UI_Box *tab_column_box = ui_build_box_from_stringf(!is_changing_panel_boundaries*UI_BoxFlag_AnimatePosX, "tab_column_%p", tab);
 
+                // rad: choose palette (raddbg's: the dragged tab is hollow)
+                B32 omit_name = (rad_drag_is_active() &&
+                                 ((rad_state->drag_kind == RAD_DragKind_Tab && rad_state->drag_tab == tab->id) ||
+                                  (rad_state->drag_kind == RAD_DragKind_Panel && rad_state->drag_panel == panel->cfg->id)));
+
                 // rad: build tab container box
                 UI_Parent(tab_column_box)
                   UI_PrefHeight(ui_px(tab_bar_vheight, 1))
-                  UI_TagF(!tab_is_selected ? "inactive" : "")
+                  UI_TagF(omit_name ? "hollow" : "")
+                  UI_TagF(!omit_name && !tab_is_selected ? "inactive" : "")
                 {
                   if(panel->tab_side == Side_Max)
                   {
@@ -3619,7 +4121,7 @@ rad_window_frame(RAD_Window *ws)
                                                               "tab_%p", tab);
 
                   // rad: build tab contents
-                  UI_Parent(tab_box)
+                  if(!omit_name) UI_Parent(tab_box)
                   {
                     UI_WidthFill UI_Row
                     {
@@ -3704,6 +4206,11 @@ rad_window_frame(RAD_Window *ws)
                     {
                       rad_cmd(RAD_CmdKind_FocusTab, .panel = panel->cfg->id, .tab = tab->id);
                       rad_cmd(RAD_CmdKind_FocusPanel, .panel = panel->cfg->id);
+                    }
+                    else if(ui_dragging(sig) && !rad_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f && !rad_tab_is_tool(tab))
+                    {
+                      // rad: port of raddbg's tab drag (tool tabs stay)
+                      rad_drag_begin_tab(panel->cfg, tab);
                     }
                     else if(ui_middle_clicked(sig))
                     {
@@ -3796,8 +4303,55 @@ rad_window_frame(RAD_Window *ws)
                 evt->delta_2f32 = v2f32(evt->delta_2f32.y, 0);
               }
             }
-            ui_signal_from_box(tab_bar_box);
+            UI_Signal tab_bar_sig = ui_signal_from_box(tab_bar_box);
+
+            // rad: not in raddbg (VS2022): dragging a tab bar's free space
+            // drags the whole panel (all its tabs)
+            if(tool_kind == RAD_ToolKind_Null && ui_dragging(tab_bar_sig) && !rad_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
+            {
+              rad_drag_begin_panel(panel->cfg, panel->selected_tab);
+            }
           }
+          }
+
+          //////////////////////////
+          //- rad: accept tab drops (raddbg's: the catch-all site is hot -> the
+          // tab goes after the tab whose end is nearest the mouse)
+          //
+          if(tab_drag_here && ui_key_match(ui_drop_hot_key(), catchall_drop_site_key) && rad_drag_drop())
+          {
+            if(rad_state->drag_kind == RAD_DragKind_FilePath)
+            {
+              String8 path = str8(rad_state->drag_path_buffer, rad_state->drag_path_size);
+              rad_cmd(RAD_CmdKind_OpenFile, .panel = panel->cfg->id, .file_path = path);
+            }
+            else
+            {
+              CFG_Node *drop_prev = &cfg_nil_node;
+              F32 best_distance_px = 1000000.f;
+              F32 off = tab_bar_rect.x0 + ui_top_font_size()*0.5f;
+              {
+                F32 distance = abs_f32(ui_mouse().x - off);
+                best_distance_px = distance;
+              }
+              for(TabTask *task = first_tab_task; task != 0; task = task->next)
+              {
+                if(task->row != 0) { break; }
+                off += task->tab_width + floor_f32(ui_top_font_size()*0.4f);
+                F32 distance = abs_f32(ui_mouse().x - off);
+                if(distance < best_distance_px)
+                {
+                  best_distance_px = distance;
+                  drop_prev = task->tab;
+                }
+              }
+              rad_cmd(RAD_CmdKind_MoveTab,
+                      .dst_panel = panel->cfg->id,
+                      .panel = rad_state->drag_panel,
+                      .tab = rad_state->drag_tab,
+                      .prev_tab = drop_prev->id,
+                      .all_tabs = (rad_state->drag_kind == RAD_DragKind_Panel));
+            }
           }
 
           //////////////////////////
@@ -4538,6 +5092,13 @@ rad_exec_cmd(RAD_Cmd *cmd)
         file_path = sh_pick_file(scratch.arena, str8_lit("Open File"), str8_zero());
       }
 
+      // rad: dropped on a split site of a panel (F2) -> a new panel there
+      CFG_Node *split_dst = cfg_node_from_id(cmd->params.dst_panel);
+      if(file_path.size != 0 && split_dst != &cfg_nil_node && rad_tool_kind_from_panel(split_dst) == RAD_ToolKind_Null)
+      {
+        panel_cfg = rad_panel_split(split_dst, cmd->params.dir2, 0.5f);
+      }
+
       // rad: never into the explorer's panel (focused, dropped on, or passed):
       // into the editor panel instead; none left -> a new one on the right
       CFG_Node *explorer_tab = rad_explorer_tab_from_panel(panel_cfg);
@@ -4870,6 +5431,115 @@ rad_exec_cmd(RAD_Cmd *cmd)
       if(next_selected_tab != &cfg_nil_node)
       {
         rad_focus_tab(next_selected_tab);
+      }
+    }break;
+    case RAD_CmdKind_MoveTab:
+    case RAD_CmdKind_MoveTabToNewPanel:
+    {
+      // NOTE(rad): port of raddbg's MoveView / SplitPanel with a view: the tab
+      // (all_tabs: every tab of its panel, a dragged tab bar) goes into the
+      // target panel (after prev_tab), or a new panel split off it; a source
+      // panel left empty closes (VS2022: the empty group goes)
+      CFG_Node *src = (cmd->params.all_tabs ? panel_cfg : tab_cfg->parent);
+      CFG_Node *dst = cfg_node_from_id(cmd->params.dst_panel);
+      CFG_Node *prev = cfg_node_from_id(cmd->params.prev_tab);
+      CFG_PanelNode *src_node = cfg_panel_node_from_tree_cfg(panel_tree.root, src);
+      if(src_node == &cfg_nil_panel_node || dst == &cfg_nil_node || rad_tool_kind_from_panel(dst) != RAD_ToolKind_Null ||
+         (!cmd->params.all_tabs && (tab_cfg == &cfg_nil_node || rad_tab_is_tool(tab_cfg))))
+      {
+        break;
+      }
+
+      //- rad: the tabs to move, in order; the one to select after
+      CFG_NodePtrList tabs = {0};
+      CFG_Node *select_tab = tab_cfg;
+      if(cmd->params.all_tabs)
+      {
+        select_tab = src_node->selected_tab;
+        for(CFG_NodePtrNode *n = src_node->tabs.first; n != 0; n = n->next)
+        {
+          if(!rad_tab_is_tool(n->v))
+          {
+            cfg_node_ptr_list_push(scratch.arena, &tabs, n->v);
+          }
+        }
+      }
+      else
+      {
+        cfg_node_ptr_list_push(scratch.arena, &tabs, tab_cfg);
+      }
+      if(tabs.count == 0 || (cmd->params.all_tabs && dst == src))
+      {
+        break;
+      }
+      if(cmd->kind == RAD_CmdKind_MoveTabToNewPanel)
+      {
+        if(dst == src && src_node->tabs.count <= tabs.count)
+        {
+          break;
+        }
+        dst = rad_panel_split(dst, cmd->params.dir2, 0.5f);
+        prev = &cfg_nil_node;
+      }
+      else if(prev == tab_cfg && !cmd->params.all_tabs)
+      {
+        break;
+      }
+
+      //- rad: a new selection in the source panel (moving its selected tab
+      // out of it)
+      if(!cmd->params.all_tabs && src != dst && src_node->selected_tab == tab_cfg)
+      {
+        CFG_Node *other = &cfg_nil_node;
+        for(CFG_NodePtrNode *n = src_node->tabs.first; n != 0; n = n->next)
+        {
+          if(n->v != tab_cfg)
+          {
+            other = n->v;
+            if(n->next != 0 && n->next->v == tab_cfg) { break; }
+          }
+        }
+        if(other != &cfg_nil_node)
+        {
+          rad_focus_tab(other);
+        }
+      }
+
+      //- rad: move
+      for(CFG_NodePtrNode *n = tabs.first; n != 0; n = n->next)
+      {
+        CFG_Node *tab = n->v;
+        cfg_node_unhook(rad_state->cfg, src, tab);
+        cfg_node_insert_child(rad_state->cfg, dst, (prev != &cfg_nil_node && prev->parent == dst) ? prev : &cfg_nil_node, tab);
+        prev = tab;
+      }
+      for(CFG_NodePtrNode *n = tabs.first; n != 0; n = n->next)
+      {
+        // rad: unpinned tabs stay after the pinned ones
+        CFG_Node *tab = n->v;
+        B32 pinned_after = 0;
+        for(CFG_Node *c = tab->next; c != &cfg_nil_node && !rad_tab_is_pinned(tab); c = c->next)
+        {
+          pinned_after = pinned_after || rad_tab_is_pinned(c);
+        }
+        if(pinned_after)
+        {
+          rad_tab_move_after_pinned(tab);
+        }
+      }
+      if(select_tab != &cfg_nil_node)
+      {
+        rad_focus_tab(select_tab);
+      }
+      rad_focus_panel(dst);
+
+      //- rad: the source panel left empty -> close it
+      CFG_PanelTree new_tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+      CFG_PanelNode *new_src = cfg_panel_node_from_tree_cfg(new_tree.root, src);
+      if(src != dst && new_src != &cfg_nil_panel_node && new_src->tabs.count == 0 && rad_editor_leaf_count(window) > 1)
+      {
+        rad_panel_close(window, src);
+        rad_focus_panel(dst);
       }
     }break;
     case RAD_CmdKind_TogglePinTab:
@@ -5893,6 +6563,21 @@ rad_frame(void)
       }
 
       //- rad: try window close
+      //- rad: drag/drop drop-kickoff (raddbg's); Esc cancels a drag
+      if(event->kind == WM_EventKind_Release && event->key == WM_Key_LeftMouseButton)
+      {
+        rad_state->drag_killed = 0;
+        if(rad_drag_is_active())
+        {
+          rad_state->drag_drop_state = RAD_DragDropState_Dropping;
+        }
+      }
+      if(!take && rad_drag_is_active() && event->kind == WM_EventKind_Press && event->key == WM_Key_Esc)
+      {
+        rad_drag_kill();
+        take = 1;
+      }
+
       if(!take && event->kind == WM_EventKind_WindowClose && ws != 0)
       {
         take = 1;
@@ -6206,6 +6891,14 @@ rad_frame(void)
   U64 frame_time_us = end_time_us-begin_time_us;
   rad_state->frame_time_us_history[rad_state->frame_index%ArrayCount(rad_state->frame_time_us_history)] = frame_time_us;
   rad_script_frame_end(frame_time_us, build_us);
+
+  //////////////////////////////
+  //- rad: end drag/drop if needed (raddbg's: a drop nobody took)
+  //
+  if(rad_state->drag_drop_state == RAD_DragDropState_Dropping)
+  {
+    rad_state->drag_drop_state = RAD_DragDropState_Null;
+  }
 
   //////////////////////////////
   //- rad: bump frame time counters

@@ -382,6 +382,26 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (tasks F1, F2: drag and drop)
+- rad_core.c "Drag/Drop": port of raddbg's `rd_drag_*` (Null / Dragging /
+  Dropping; a left release sets Dropping, a drop site that is drop-hot
+  takes it with `rad_drag_drop`, the end of the frame clears an untaken
+  one). Kinds: Tab, Panel (a tab bar's free space: all its tabs),
+  FilePath (an explorer row). Esc kills a drag; `drag_killed` blocks a
+  restart until the button is up (the tab is still held).
+- Leaf panels: the docking compass (`rad_drop_site_rect`, raddbg's
+  combined sites with all four sides) and the catch-all site; non-leaf
+  panels: raddbg's boundary sites and its root extra split, limited to
+  editor panels (`rad_panel_subtree_has_tool__`).
+- Commands `MoveTab` / `MoveTabToNewPanel` (params `dst_panel`,
+  `prev_tab`, `dir2`, `all_tabs`); OpenFile takes `dst_panel` + `dir2`
+  (a file dropped on a side). `rad_drop_split` picks one.
+- Script: `mouse_down` / `mouse_up`; `drag` holds one more frame at the
+  end (sites built there need a rect); target `panel_site <n> <site>`;
+  fields `panel_tabs <n>`, `drag_active`; script `drag_tabs` (28).
+- `shared_document` flaked once under load (wait_idle after the 4 s
+  message fade, 10 s timeout); passed on every rerun.
+
 ### 2026-11-04 (task E2: code folding)
 - rad_views.c "Code Folding": `rad_fold_ranges_from_text` (byte scanner:
   brace pairs with inner lines -> [open, close-1], comment runs, use runs;

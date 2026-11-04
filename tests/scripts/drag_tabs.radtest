@@ -1,0 +1,84 @@
+# Drag and drop (tasks F1, F2): a tab dragged onto a panel's docking compass
+# (raddbg's drop sites, all four sides) splits off a new panel on that side
+# or, in the middle, joins that panel's tabs; dropped on a tab bar it goes
+# where the mouse is; a panel left empty closes. A file dragged out of the
+# explorer opens where it is dropped.
+
+open_folder ../fixtures/project
+wait_idle
+open ../fixtures/edit.txt
+wait_idle
+open ../fixtures/fold.rs
+wait_idle
+open ../fixtures/syntax.rs
+wait_idle
+expect panel_count == 1
+expect panel_tabs 1 == "getting_started edit.txt fold.rs syntax.rs"
+
+# right site: a new panel on the right with the tab
+drag tab_box fold.rs panel_site 1 right
+wait_idle
+expect drag_active == 0
+expect panel_count == 2
+expect panel_tabs 2 == "fold.rs"
+expect tab == "fold.rs"
+
+# center of panel 1: joins its tabs (last); the empty panel closes
+drag tab_box fold.rs panel_site 1 center
+wait_idle
+expect panel_count == 1
+expect tab == "fold.rs"
+expect panel_tabs 1 == "getting_started edit.txt syntax.rs fold.rs"
+
+# Esc cancels a drag (mouse still held): nothing moves
+mouse_down tab_box edit.txt
+mouse panel_site 1 up
+mouse panel_site 1 up
+wait_frames 3
+expect drag_active == 1
+key esc
+wait_frames 2
+expect drag_active == 0
+mouse_up panel_site 1 up
+wait_idle
+expect panel_count == 1
+
+# down site: a new panel below
+drag tab_box syntax.rs panel_site 1 down
+wait_idle
+expect panel_count == 2
+expect panel_tabs 2 == "syntax.rs"
+
+# the tab bar's free end: after the last tab
+drag tab_box edit.txt panel_site 2 tabs
+wait_idle
+expect panel_tabs 2 == "syntax.rs edit.txt"
+expect tab == "edit.txt"
+
+# a file dragged from the explorer onto a left site: a new panel there
+drag explorer README.md panel_site 1 left
+wait_idle
+expect panel_count == 3
+expect tab == "README.md"
+expect panel_tabs 1 == "README.md"
+
+# boundary sites (raddbg's): the left edge of a row of editor panels, the
+# bottom edge of a column
+drag tab_box fold.rs panel_site 1 edge_left
+wait_idle
+expect panel_count == 4
+expect panel_tabs 1 == "fold.rs"
+expect panel_tabs 2 == "README.md"
+drag tab_box edit.txt panel_site 4 edge_down
+wait_idle
+expect panel_count == 5
+expect panel_tabs 5 == "edit.txt"
+expect panel_tabs 4 == "syntax.rs"
+
+# a tab bar dragged by its free space moves the whole panel (VS2022)
+drag panel_site 5 tabs panel_site 3 center
+wait_idle
+expect panel_count == 4
+expect panel_tabs 3 == "getting_started edit.txt"
+expect tab == "edit.txt"
+quit

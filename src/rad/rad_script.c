@@ -348,6 +348,42 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       }
     }
   }
+  else if(str8_match(name, str8_lit("panel_tabs"), 0))
+  {
+    // rad: editor panel n's tab names, in order ("a.rs b.rs")
+    S64 n = 0;
+    if(args_count < 2 || !try_s64_from_str8_c_rules(args[1], &n))
+    {
+      *error_out = str8_lit("panel_tabs: needs <n>");
+    }
+    else
+    {
+      CFG_PanelTree tree = rad_script_panel_tree(scratch.arena);
+      S64 idx = 0;
+      String8List names = {0};
+      for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+      {
+        if(p->first == &cfg_nil_panel_node && rad_tool_kind_from_panel(p->cfg) == RAD_ToolKind_Null)
+        {
+          idx += 1;
+          if(idx == n)
+          {
+            for(CFG_NodePtrNode *t = p->tabs.first; t != 0; t = t->next)
+            {
+              str8_list_push(scratch.arena, &names, rad_script_tab_name(t->v));
+            }
+          }
+        }
+      }
+      value = str8_list_join(arena, &names, &(StringJoin){.sep = str8_lit(" ")});
+      result = 1;
+    }
+  }
+  else if(str8_match(name, str8_lit("drag_active"), 0))
+  {
+    value = push_str8f(arena, "%i", (int)rad_drag_is_active());
+    result = 1;
+  }
   else if(str8_match(name, str8_lit("fold_count"), 0) || str8_match(name, str8_lit("line_hidden"), 0))
   {
     // rad: folded ranges shown in the editor view; 1 if a line is folded away
@@ -1145,6 +1181,69 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
       else
       {
         args_used = 2;
+        result = 1;
+      }
+    }
+  }
+
+  //- rad: editor panel n (tree order, tool windows skipped): its middle, a
+  // drop site of its docking compass, or its tab bar's free end
+  else if(str8_match(kind, str8_lit("panel_site"), 0))
+  {
+    RAD_Window *ws = rad_state->first_window;
+    S64 n = 0;
+    if(ws == 0 || args_count < 3 || !try_s64_from_str8_c_rules(args[1], &n) || n < 1)
+    {
+      *error_out = str8_lit("panel_site: needs <n> <center|up|down|left|right|tabs>");
+    }
+    else
+    {
+      Rng2F32 rect = {0};
+      S64 idx = 0;
+      for EachIndex(i, ws->panel_rect_count)
+      {
+        CFG_Node *panel_cfg = cfg_node_from_id(ws->panel_rect_ids[i]);
+        if(panel_cfg != &cfg_nil_node && rad_tool_kind_from_panel(panel_cfg) == RAD_ToolKind_Null)
+        {
+          idx += 1;
+          if(idx == n)
+          {
+            rect = ws->panel_rects[i];
+            break;
+          }
+        }
+      }
+      String8 site = args[2];
+      Dir2 dir = (str8_match(site, str8_lit("up"), 0) ? Dir2_Up :
+                  str8_match(site, str8_lit("down"), 0) ? Dir2_Down :
+                  str8_match(site, str8_lit("left"), 0) ? Dir2_Left :
+                  str8_match(site, str8_lit("right"), 0) ? Dir2_Right : Dir2_Invalid);
+      if(rect.x1 <= rect.x0)
+      {
+        *error_out = push_str8f(arena, "panel_site: no editor panel %I64d", n);
+      }
+      else if(str8_match(str8_prefix(site, 5), str8_lit("edge_"), 0))
+      {
+        // rad: the middle of one of its edges (the boundary drop sites)
+        String8 edge = str8_skip(site, 5);
+        Vec2F32 c = center_2f32(rect);
+        pos = (str8_match(edge, str8_lit("left"), 0)  ? v2f32(rect.x0, c.y) :
+               str8_match(edge, str8_lit("right"), 0) ? v2f32(rect.x1, c.y) :
+               str8_match(edge, str8_lit("up"), 0)    ? v2f32(c.x, rect.y0) : v2f32(c.x, rect.y1));
+        args_used = 3;
+        result = 1;
+      }
+      else if(str8_match(site, str8_lit("tabs"), 0))
+      {
+        F32 font_size = ws->panel_rects_font_size;
+        pos = v2f32(rect.x1 - font_size*8.f, rect.y0 + font_size*1.25f);
+        args_used = 3;
+        result = 1;
+      }
+      else
+      {
+        pos = center_2f32(rad_drop_site_rect(rect, ws->panel_rects_font_size, dir));
+        args_used = 3;
         result = 1;
       }
     }
@@ -1949,6 +2048,17 @@ rad_script_run_line(RAD_ScriptLine *line)
       }
     }
   }
+  else if(str8_match(cmd, str8_lit("mouse_down"), 0) || str8_match(cmd, str8_lit("mouse_up"), 0))
+  {
+    // rad: the left button alone (a drag held across other commands)
+    U64 used = 0;
+    Vec2F32 pos = {0};
+    if(rad_script_target(scratch.arena, args, args_count, &used, &pos, &error))
+    {
+      rad_script_push_input(RAD_ScriptInputKind_MouseMove, pos);
+      rad_script_push_input(str8_match(cmd, str8_lit("mouse_down"), 0) ? RAD_ScriptInputKind_MousePress : RAD_ScriptInputKind_MouseRelease, pos);
+    }
+  }
   else if(str8_match(cmd, str8_lit("drag"), 0))
   {
     U64 used0 = 0;
@@ -1962,6 +2072,7 @@ rad_script_run_line(RAD_ScriptLine *line)
       rad_script_push_input(RAD_ScriptInputKind_MousePress, pos0);
       rad_script_push_input(RAD_ScriptInputKind_MouseMove, mix_2f32(pos0, pos1, 0.5f));
       rad_script_push_input(RAD_ScriptInputKind_MouseMove, pos1);
+      rad_script_push_input(RAD_ScriptInputKind_MouseMove, pos1); // rad: drop sites built at pos1 get a rect
       rad_script_push_input(RAD_ScriptInputKind_MouseRelease, pos1);
     }
   }

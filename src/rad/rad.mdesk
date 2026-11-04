@@ -1090,6 +1090,8 @@ RAD_CmdTable:
   {ShowExplorer           show_explorer        "Explorer"             FolderClosedFilled L          ctrl   0      alt    Null     0         0           0         0 }
   {SearchExplorer         search_explorer      "Search Explorer"      Find              Semicolon  ctrl   0      0      Null     0         0           0         0 }
   {TogglePinTab           toggle_pin_tab       "Pin Tab"              Pin               Null       0      0      0      Null     0         0           0         0 }
+  {MoveTab                move_tab             "Move Tab"             Null              Null       0      0      0      Null     0         0           0         0 }
+  {MoveTabToNewPanel      move_tab_to_new_panel "Move Tab To New Panel" Null            Null       0      0      0      Null     0         0           0         0 }
   {CloseToolWindow        close_tool_window    "Close Tool Window"    X                 Esc        0      shift  0      Null     0         0           0         0 }
   {ClearOutput            clear_output         "Clear Output"         Trash             Null       0      0      0      Null     0         0           0         0 }
 
