@@ -32,6 +32,16 @@ ICONS = [
     ('build.svg', '$', 'rad_build'),
     ('check.svg', '~', 'rad_check'),
     ('test.svg',  't', 'rad_test'),
+    # completion item kinds (the user's, 2026-11-04)
+    ('symbol-method.svg',      ',',  'rad_symbol_method'),
+    ('symbol-field.svg',       '/',  'rad_symbol_field'),
+    ('symbol-variable.svg',    ':',  'rad_symbol_variable'),
+    ('symbol-class.svg',       ';',  'rad_symbol_class'),
+    ('symbol-enum.svg',        '=',  'rad_symbol_enum'),
+    ('symbol-enum-member.svg', '_',  'rad_symbol_enum_member'),
+    ('symbol-constant.svg',    '|',  'rad_symbol_constant'),
+    ('symbol-keyword.svg',     '\\', 'rad_symbol_keyword'),
+    ('symbol-parameter.svg',   '`',  'rad_symbol_parameter'),
 ]
 
 # 16 SVG units -> 1060 font units (the font has 1000/em), the box centered

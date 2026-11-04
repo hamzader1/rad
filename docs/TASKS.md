@@ -329,8 +329,11 @@ tree, each with a header (title, X), no "+", no zoom button.
 - [x] **G1. Gutter.** Line numbers right-aligned (VS2022), left of the fold
   column; the glyph margins of E1 off for now ("we don't want it for
   now"); the fold chevron's tooltip waits 1 s of hovering.
-- [ ] **G2. Completion icons** from `icons/symbol-*.svg` (the user's)
-  replace the current ones.
+- [x] **G2. Completion icons** from `icons/symbol-*.svg` (the user's)
+  replace the current ones. Done 2026-11-04: in `data/rad_icons.ttf` on
+  the last 9 free ASCII codepoints (`aymbol-constant.svg` renamed to
+  `symbol-constant.svg`); kinds without one of the user's icons (module,
+  snippet, file, folder) keep raddbg's.
 - [ ] **G3. Signature help** popup when typing `(` (follows A7).
 - [ ] **G4. Code actions / quick fixes** (the screwdriver in `tIHhIDuW`):
   LSP `textDocument/codeAction`.

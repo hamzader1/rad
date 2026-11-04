@@ -679,20 +679,23 @@ internal void
 rad_icon_from_lsp_completion_kind(S64 kind, RAD_IconKind *icon_out, RAD_CodeColorSlot *color_out)
 {
   // NOTE(rad): not in raddbg (its lister rows have no kind icons): LSP
-  // CompletionItemKind -> one of raddbg's icons, in the code color of that
-  // kind of token (Visual Studio's shapes where raddbg has one: a cube for
-  // functions, a grid for types)
+  // CompletionItemKind -> the user's symbol icons (icons/symbol-*.svg), or
+  // one of raddbg's, in the code color of that kind of token
   RAD_IconKind icon = RAD_IconKind_Dot;
   RAD_CodeColorSlot color = RAD_CodeColorSlot_CodeDefault;
   switch(kind)
   {
     default:{}break;
-    case 2: case 3: case 4:                   {icon = RAD_IconKind_Cube;   color = RAD_CodeColorSlot_CodeSymbol;}break;  // method, function, constructor
-    case 5: case 6: case 10:                  {icon = RAD_IconKind_Dot;    color = RAD_CodeColorSlot_CodeLocal;}break;   // field, variable, property
-    case 7: case 8: case 13: case 22: case 25:{icon = RAD_IconKind_Grid;   color = RAD_CodeColorSlot_CodeType;}break;    // class, interface, enum, struct, type parameter
-    case 9:                                   {icon = RAD_IconKind_Module; color = RAD_CodeColorSlot_CodeDefault;}break; // module
-    case 11: case 12: case 20: case 21:       {icon = RAD_IconKind_List;   color = RAD_CodeColorSlot_CodeNumeric;}break; // unit, value, enum member, constant
-    case 14: case 24:                         {icon = RAD_IconKind_Dot;    color = RAD_CodeColorSlot_CodeKeyword;}break; // keyword, operator
+    case 2: case 3: case 4:                   {icon = RAD_IconKind_SymbolMethod;     color = RAD_CodeColorSlot_CodeSymbol;}break;  // method, function, constructor
+    case 5: case 10:                          {icon = RAD_IconKind_SymbolField;      color = RAD_CodeColorSlot_CodeLocal;}break;   // field, property
+    case 6:                                   {icon = RAD_IconKind_SymbolVariable;   color = RAD_CodeColorSlot_CodeLocal;}break;   // variable
+    case 7: case 8: case 22:                  {icon = RAD_IconKind_SymbolClass;      color = RAD_CodeColorSlot_CodeType;}break;    // class, interface, struct
+    case 13:                                  {icon = RAD_IconKind_SymbolEnum;       color = RAD_CodeColorSlot_CodeType;}break;    // enum
+    case 25:                                  {icon = RAD_IconKind_SymbolParameter;  color = RAD_CodeColorSlot_CodeType;}break;    // type parameter
+    case 9:                                   {icon = RAD_IconKind_Module;           color = RAD_CodeColorSlot_CodeDefault;}break; // module
+    case 20:                                  {icon = RAD_IconKind_SymbolEnumMember; color = RAD_CodeColorSlot_CodeNumeric;}break; // enum member
+    case 11: case 12: case 21:                {icon = RAD_IconKind_SymbolConstant;   color = RAD_CodeColorSlot_CodeNumeric;}break; // unit, value, constant
+    case 14: case 24:                         {icon = RAD_IconKind_SymbolKeyword;    color = RAD_CodeColorSlot_CodeKeyword;}break; // keyword, operator
     case 15:                                  {icon = RAD_IconKind_Pencil; color = RAD_CodeColorSlot_CodeMeta;}break;    // snippet
     case 17:                                  {icon = RAD_IconKind_FileOutline;         color = RAD_CodeColorSlot_CodeDefault;}break;
     case 19:                                  {icon = RAD_IconKind_FolderClosedOutline; color = RAD_CodeColorSlot_CodeDefault;}break;

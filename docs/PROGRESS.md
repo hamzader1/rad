@@ -382,6 +382,14 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (task G2: completion icons)
+- `icons/make_rad_icons.py` packs the 9 `symbol-*.svg` on `, / : ; = _ |
+  \ `` (the last free ASCII codepoints of raddbg's icons.ttf; more
+  icons need private-use codepoints). Run it with
+  `uv run --no-project --with fonttools python icons/make_rad_icons.py`.
+- `RAD_IconTable`: `Symbol*` kinds; `rad_icon_from_lsp_completion_kind`
+  maps LSP kinds to them (same code colors as before).
+
 ### 2026-11-04 (task G1: gutter)
 - The user's second round is TASKS.md section G (before milestone 10).
 - Line numbers right-aligned in `line_num_width_px - fold_width_px`;

@@ -104,6 +104,16 @@ RAD_IconTable:
   (CargoBuild               "$")
   (CargoCheck               "~")
   (CargoTest                "t")
+  //- rad: icons/symbol-*.svg: completion item kinds (the user's)
+  (SymbolMethod             ",")
+  (SymbolField              "/")
+  (SymbolVariable           ":")
+  (SymbolClass              ";")
+  (SymbolEnum               "=")
+  (SymbolEnumMember         "_")
+  (SymbolConstant           "|")
+  (SymbolKeyword            '\\\\')
+  (SymbolParameter          "`")
 }
 
 @enum RAD_IconKind:
