@@ -1218,7 +1218,10 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
         Rng1U64 line_range = params->line_ranges[line_idx];
         B32 line_is_selected = (dim_1u64(intersect_1u64(select_rng, line_range)) != 0) || (line_range.min <= *cursor && *cursor <= line_range.max);
         S64 shown_line_num = (params->line_nums != 0 ? params->line_nums[line_idx] : line_num);
+        // rad: not in raddbg (VS2022): right-aligned, left of the fold column
         UI_TagF(line_is_selected ? "" : "weak")
+          UI_PrefWidth(ui_px(params->line_num_width_px - params->fold_width_px, 1.f))
+          UI_TextAlignment(UI_TextAlign_Right)
           ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%I64u##line_num", shown_line_num);
       }
     }
@@ -1267,7 +1270,27 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
         {
           result.fold_toggle_idx = line_idx;
         }
-        if(ui_hovering(sig)) UI_Tooltip RAD_Font(RAD_FontSlot_Main) UI_FontSize(ui_bottom_font_size())
+        // rad: the tooltip waits 1 s of hovering (VS2022)
+        B32 show_tooltip = 0;
+        if(ui_hovering(sig))
+        {
+          U64 now_us = now_time_us();
+          if(!ui_key_match(rad_state->fold_hover_key, chevron_box->key))
+          {
+            rad_state->fold_hover_key = chevron_box->key;
+            rad_state->fold_hover_begin_us = now_us;
+          }
+          show_tooltip = (now_us >= rad_state->fold_hover_begin_us + 1000000);
+          if(!show_tooltip)
+          {
+            rad_request_frame();
+          }
+        }
+        else if(ui_key_match(rad_state->fold_hover_key, chevron_box->key))
+        {
+          rad_state->fold_hover_key = ui_key_zero();
+        }
+        if(show_tooltip) UI_Tooltip RAD_Font(RAD_FontSlot_Main) UI_FontSize(ui_bottom_font_size())
         {
           ui_state->tooltip_anchor_key = chevron_box->key;
           ui_label(kind == 2 ? str8_lit("Click to expand the range") : str8_lit("Click to collapse the range"));

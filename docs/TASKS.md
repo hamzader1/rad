@@ -324,15 +324,22 @@ tree, each with a header (title, X), no "+", no zoom button.
   Windows Explorer drops onto a panel already opened there (OS FileDrop
   event, checked per panel rect). Folders are not draggable.
 
-## Ideas for later (not in this round)
+## G. Second round (user, 2026-11-04: after A-F, before milestone 10)
 
-- **[suggestion]** Signature help popup when typing `(` (follows A7).
-- **[suggestion]** Code actions / quick fixes (the screwdriver in
-  `tIHhIDuW`): LSP `textDocument/codeAction` in the glyph margin.
-- **[suggestion]** Navigation bar under the tabs (`TN8f33D5`: type and
-  member dropdowns) from `textDocument/documentSymbol`.
-- **[suggestion]** Semantic token colors from rust-analyzer (functions,
-  macros, types colored like VS2022).
+- [x] **G1. Gutter.** Line numbers right-aligned (VS2022), left of the fold
+  column; the glyph margins of E1 off for now ("we don't want it for
+  now"); the fold chevron's tooltip waits 1 s of hovering.
+- [ ] **G2. Completion icons** from `icons/symbol-*.svg` (the user's)
+  replace the current ones.
+- [ ] **G3. Signature help** popup when typing `(` (follows A7).
+- [ ] **G4. Code actions / quick fixes** (the screwdriver in `tIHhIDuW`):
+  LSP `textDocument/codeAction`.
+- [ ] **G5. Navigation bar** under the tabs (`TN8f33D5`: type and member
+  dropdowns) from `textDocument/documentSymbol`.
+- [ ] **G6. Semantic token colors** from rust-analyzer (functions, macros,
+  types colored like VS2022).
+- [ ] **G7. The user's theme** (`.dev_hints/vsa.json`, from their Zed
+  config) as a theme preset, the default.
 
 ## Decisions (user, 2026-11-04)
 

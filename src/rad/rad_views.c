@@ -1863,7 +1863,10 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
   // NOTE(rad): raddbg's margins (RD_CodeViewBuildFlag_Margins), in text tabs:
   // the priority margin (breakpoints later), the catchall margin (the line's
   // diagnostic icon); same sizes as raddbg
-  B32 do_margins = str8_match(tab->string, str8_lit("text"), 0);
+  // NOTE(rad): the glyph margins (task E1) are off for now (user,
+  // 2026-11-04: "we don't want it for now"); diagnostics still color and
+  // annotate their lines
+  B32 do_margins = 0;
   F32 priority_margin_width_px = 0;
   F32 catchall_margin_width_px = 0;
   if(do_margins)

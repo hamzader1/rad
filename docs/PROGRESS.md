@@ -382,6 +382,13 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (task G1: gutter)
+- The user's second round is TASKS.md section G (before milestone 10).
+- Line numbers right-aligned in `line_num_width_px - fold_width_px`;
+  `do_margins = 0` (E1's margins off; the slice keeps their code); the
+  fold chevron tooltip waits 1 s (`rad_state->fold_hover_key` /
+  `fold_hover_begin_us`, a frame requested while waiting).
+
 ### 2026-11-04 (task B2, the rest: fonts, scroll past end, close button)
 - Setting kind `String` (c type String8, pointing into
   `rad_state->setting_string_buffers`, so a value survives the user

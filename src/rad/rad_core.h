@@ -327,6 +327,8 @@ struct RAD_State
 
   // rad: the code slice whose Ctrl+press started on a link (no selection drag until release)
   UI_Key code_slice_link_press_key;
+  UI_Key fold_hover_key;            // the fold chevron hovered, since when (its tooltip waits 1 s)
+  U64 fold_hover_begin_us;
 
   //- rad: drag/drop (tabs; explorer files)
   RAD_DragDropState drag_drop_state;
