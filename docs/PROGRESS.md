@@ -16,7 +16,7 @@ user, beyond CLAUDE.md:
   Bash heredoc: `\r` and `\n` turn into real control characters. Write such
   edit scripts with the file-writing tool and run `python -I <file>`.
 
-## Status (2026-11-03)
+## Status (2026-11-04)
 
 Windows only for now; macOS is milestones 11-12, at the very end (decided 2026-11-03).
 Plan revised 2026-11-03 (see CLAUDE.md section 6). Builds: unoptimized day to day; an
@@ -32,7 +32,7 @@ optimized build in `build\release\rad.exe` at the end of every milestone.
 | 6. Editor essentials                 | Done. 13 scripts, 210 checks, all pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 7. Rust syntax highlighting          | Done. Rust lexing in the `text` layer (see below, `docs/notes/04-syntax-highlighting.md`); 14 scripts, 242 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 8. Cargo integration                 | Done. `json` layer; cargo runner (Build, Check, Run, Test, Stop; Debug/Release), Output + Problems tabs, diagnostics in the editor, clickable locations, Run in a terminal window, top-bar run toolbar with the user's icons (see journal). 18 scripts, 368 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
-| 9. LSP client                        | In progress: `lsp` layer; rust-analyzer started per Cargo workspace, documents synced, diagnostics in Problems and the editor, hover, go to definition (see journal). Next: completion. |
+| 9. LSP client                        | Done. `lsp` layer; one rust-analyzer per Cargo workspace: diagnostics (Problems + editor), hover, Go To Definition (F12, Ctrl+click, Alt+Left back), completion list (as you type, `.`, `::`, Ctrl+Space; imports) (see journal). 22 scripts, 453 checks, pass (debug and release, `build\release\rad.exe` 2026-11-04). |
 | 10. Remove debugger, rebrand         | Not started. |
 | 11-13. Mac foundation, Mac UI, debugging | Not started. |
 
@@ -203,11 +203,10 @@ Milestone 6 details (each item with its script):
 
 ## Next steps
 
-1. Milestone 9 (LSP client: rust-analyzer over stdin/stdout pipes, JSON-RPC
-   with Content-Length framing; diagnostics first, then hover, go to
-   definition, completion). Reuses milestone 8's `json` layer, process
-   pipes (`rad_cargo.c`) and the diagnostics UI (`RAD_Diagnostic`, line
-   colors, underlines, annotations, Problems tab).
+1. Milestone 10 (remove the debugger and rebrand): debugger-only layers
+   out of the repo and the build, keep the MIT notice. The last Windows
+   step; until then `raddbg.exe` stays the visual reference. Before it,
+   the user may want to try milestone 9 in `build\release\rad.exe`.
 2. Speed: the user will come back to what feels slow (2026-11-03: "ignore,
    we will come back later"). Measured so far: 1 frame from input to
    screen (release: UI build ~2 ms/frame, input shows in the next frame).
@@ -272,6 +271,26 @@ Milestone 6 details (each item with its script):
 - The first launch of a freshly built exe took 15-25 s longer (seen 3
   times, debug and release); the same exe then starts in ~2 s. Cause not
   verified (suspect: antivirus scanning a new exe).
+- `file_watch.radtest` failed once (2026-11-04) in a full run: rad was
+  woken after 471 ms instead of the 1 s write (>= 800 checked); passed 3
+  of 3 right after. Timing under load; not investigated.
+- LSP: documents are synced with their full text on every change (no
+  incremental sync); fine for normal files.
+- LSP: one rust-analyzer per Cargo workspace (the nearest Cargo.toml with
+  `[workspace]`, else the package), started on the first open .rs file and
+  kept until rad quits. No restart command; a server that exits or breaks
+  the protocol stays ended. Library sources (paths with
+  `/.rustup/toolchains/`, `/.cargo/registry/`, `/.cargo/git/`) join an
+  existing server by that path test, never start one.
+- LSP hover: markdown is reduced to code blocks (code font, lexed) and
+  wrapped paragraphs; links, emphasis, tables are dropped as plain text.
+- LSP completion: no snippets (a method inserts its name, no parentheses),
+  no documentation beside the list, no kind icons; import items show
+  rust-analyzer's "(use path)" in the label; an import's `use` line is a
+  second undo step (it arrives after the commit). A word start opens the
+  list only when it is the only character typed in its frame. Filtering:
+  prefix, then substring, then subsequence (raddbg's highlight marks
+  substring matches only).
 
 ## Build, run, test (Windows)
 
@@ -328,6 +347,16 @@ Milestone 6 details (each item with its script):
   Output text (one block, submitted to a content key every 100 ms), the
   Debug/Release choice (user file: `cargo_profile`).
 - `src/json/` (`JSON_`, base only): JSON parser and writer.
+- `src/lsp/` (`LSP_`, base + json): language server client: Content-Length
+  framing, JSON-RPC messages, a process with pipes and a reader and a
+  writer thread (`LSP_Client`).
+- `rad_lsp.h/.c`: rust-analyzer per workspace (notes at the top of the
+  header): document sync, diagnostics, progress, hover, Go To Definition and
+  Navigate Backward, completion (request, items, filtering, resolve), and
+  the merged Problems list (`rad_problems`). The completion popup, commit
+  and triggers are in `rad_views.c` (`rad_completion_popup_ui`,
+  `rad_code_view_completion_*`); the popup is built in `rad_window_frame`
+  before the top bar (raddbg's floating views).
 - `icons/`: the user's SVG icons; `make_rad_icons.py` puts them in
   `data/rad_icons.ttf` (raddbg's `icons.ttf` + these glyphs), which rad
   embeds.
@@ -343,6 +372,37 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-04 (milestone 9 done)
+- Release build in `build\release\rad.exe`; 22 scripts (453 checks) and
+  rad_tests (37,610,518 checks) pass on debug and release.
+
+### 2026-11-04 (milestone 9, step 5: completion list)
+- As you type (Visual Studio's IntelliSense): a word's first character,
+  `.`, `::`, or Complete Word (Ctrl+Space, new command) sends
+  textDocument/completion; the list is filtered by the typed word (prefix,
+  substring, subsequence; then the server's order) and asked for again when
+  the server marks it incomplete or nothing matches.
+- Popup: port of raddbg's autocompletion floating view (container flags,
+  30 em, at most 30 em of rows, open animation, built before the panels so
+  it is on top; its scroll list takes Up/Down/PageUp/PageDown through
+  raddbg's secondary-keyboard permission). Rows like the Problems rows,
+  label in code colors, detail weak, the typed word highlighted
+  (`RAD_CellParams.search_needle`, ported from `rd_cell`).
+- Enter/Tab/click commit (the item's edit, extended over what was typed
+  since; additional edits; one undo step); Esc closes; moving the cursor
+  or typing a non-word character closes it. Enter's newline and the space
+  Windows sends with Ctrl+Space are not typed.
+- Imports: rust-analyzer offers items from crates not imported yet only to
+  clients that resolve them: rad advertises `resolveSupport`
+  (additionalTextEdits) and sends completionItem/resolve on commit; the
+  `use` line is applied when it comes.
+- `text_buffer`: `tb_buffer_map_offset_side` (Side_Min: an insertion at an
+  offset leaves it in place), for the start of the typed word and of edit
+  ranges; rad_tests check it in the random-edit test.
+- New fixture `lsp_complete`, script `lsp_completion` (45); fields
+  completion_open/count/selected/row/has/cursor/filter, target
+  `completion <n>`.
 
 ### 2026-11-04 (milestone 9, step 4: go to definition)
 - Go To Definition (F12, Ctrl+click, as in VS2022) sends

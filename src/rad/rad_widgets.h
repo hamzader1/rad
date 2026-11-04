@@ -48,6 +48,7 @@ struct RAD_CellParams
   RAD_CellFlags flags;
   S32 depth;
   String8 pre_edit_value;
+  String8 search_needle;
   DR_FStrList value_fstrs;
 
   //- rad: expander r/w info

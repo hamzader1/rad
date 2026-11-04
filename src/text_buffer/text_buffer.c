@@ -243,9 +243,16 @@ tb_string_from_buffer(Arena *arena, Access *access, TB_Buffer *buffer)
 internal B32
 tb_buffer_map_offset(TB_Buffer *buffer, U64 version, U64 *off)
 {
+  return tb_buffer_map_offset_side(buffer, version, off, Side_Max);
+}
+
+internal B32
+tb_buffer_map_offset_side(TB_Buffer *buffer, U64 version, U64 *off, Side side)
+{
   // NOTE(rad): returns 0 if the changes since `version` are not all in the
   // log (too old, from the future, or a reload); `*off` is then unchanged
-  // and the caller should clamp it to the text.
+  // and the caller should clamp it to the text. Side_Max: the offset sticks
+  // to the character after it; Side_Min: to the character before it.
   B32 result = (version <= buffer->version && buffer->version - version <= TB_CHANGE_LOG_SIZE);
   for(U64 v = version+1; result && v <= buffer->version; v += 1)
   {
@@ -258,9 +265,9 @@ tb_buffer_map_offset(TB_Buffer *buffer, U64 version, U64 *off)
     for(U64 v = version+1; v <= buffer->version; v += 1)
     {
       TB_Change *change = &buffer->change_log[v%TB_CHANGE_LOG_SIZE];
-      if(o < change->range.min)
+      if(o < change->range.min || (side == Side_Min && o == change->range.min))
       {
-        // rad: before the change: stays
+        // rad: before the change (Side_Min: or where it starts): stays
       }
       else if(o >= change->range.max)
       {

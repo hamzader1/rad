@@ -353,6 +353,434 @@ rad_code_view_redo(RAD_CodeViewState *cv, TB_Buffer *buffer)
   return result;
 }
 
+////////////////////////////////
+//~ rad: Completion
+
+internal B32
+rad_char_is_word(U8 c)
+{
+  return (char_is_alpha(c) || char_is_digit(c, 10) || c == '_' || c >= 0x80);
+}
+
+internal void
+rad_document_apply_edits(RAD_Document *doc, U64 version, RAD_LspTextEdit *edits, U64 edits_count)
+{
+  // NOTE(rad): edits in the text of an older version (a language server's
+  // answer): carried to the current text (an edit's start stays before what
+  // was inserted there), then applied from the end backwards, one undo step.
+  // The views map their cursors when next built.
+  Temp scratch = scratch_begin(0, 0);
+  TB_Buffer *buffer = doc->buffer;
+  Access *access = access_open();
+  TB_Text text = tb_text_from_buffer(scratch.arena, access, buffer);
+  if(text.base_info.lines_count != 0)
+  {
+    RAD_LspTextEdit *mapped = push_array(scratch.arena, RAD_LspTextEdit, edits_count);
+    U64 mapped_count = 0;
+    for EachIndex(idx, edits_count)
+    {
+      RAD_LspTextEdit e = edits[idx];
+      if(tb_buffer_map_offset_side(buffer, version, &e.range.min, Side_Min) &&
+         tb_buffer_map_offset(buffer, version, &e.range.max) &&
+         e.range.min <= e.range.max && e.range.max <= text.patched.size)
+      {
+        mapped[mapped_count] = e;
+        mapped_count += 1;
+      }
+    }
+    for(U64 i = 1; i < mapped_count; i += 1)
+    {
+      for(U64 j = i; j > 0 && mapped[j-1].range.min < mapped[j].range.min; j -= 1)
+      {
+        Swap(RAD_LspTextEdit, mapped[j-1], mapped[j]);
+      }
+    }
+    TXT_Patched patched = text.patched;
+    tb_buffer_close_undo_group(buffer);
+    for EachIndex(idx, mapped_count)
+    {
+      tb_buffer_edit(buffer, &patched, mapped[idx].range, mapped[idx].text);
+      patched = txt_patched_from_info_data_patches(scratch.arena, &text.base_info, text.base_data, &buffer->patches);
+    }
+    tb_buffer_close_undo_group(buffer);
+    rad_request_frame();
+  }
+  access_close(access);
+  scratch_end(scratch);
+}
+
+internal void
+rad_code_view_completion_commit(Arena *arena, RAD_Document *doc, TB_Buffer *buffer, TXT_TextInfo *text_info, String8 text_data, TXT_Patched *text_patched, U64 *cursor)
+{
+  // NOTE(rad): the selected item: its edit (from where the word started,
+  // over what was typed since the request) and its additional edits (a `use`
+  // line), applied from the end of the text backwards so that earlier
+  // offsets stay valid, as one undo step; the cursor goes after the inserted
+  // text. `text_patched` is rebuilt in `arena`.
+  RAD_LspCompletion *c = &rad_lsp->completion;
+  if(1 <= c->cursor.y && c->cursor.y <= (S64)c->rows_count)
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    RAD_LspCompletionItem *item = &c->items[c->rows[c->cursor.y-1]];
+
+    //- rad: edits the server computes on request (an import): asked for now,
+    // applied when they come
+    if(doc != 0 && item->resolve_json.size != 0 && item->more_edits_count == 0)
+    {
+      rad_lsp_completion_resolve(doc, item);
+    }
+
+    //- rad: the main edit, in the current text
+    RAD_LspTextEdit main_edit = {r1u64(Min(c->word_start, *cursor), *cursor), item->insert_text};
+    if(item->has_edit)
+    {
+      U64 min = item->edit.range.min;
+      U64 max = item->edit.range.max;
+      if(tb_buffer_map_offset_side(buffer, c->items_version, &min, Side_Min) &&
+         tb_buffer_map_offset(buffer, c->items_version, &max) &&
+         min <= *cursor)
+      {
+        main_edit.range = r1u64(min, Max(max, *cursor));
+        main_edit.text = item->edit.text;
+      }
+    }
+
+    //- rad: the additional edits that still map (and do not overlap it)
+    U64 edits_count = 0;
+    RAD_LspTextEdit *edits = push_array(scratch.arena, RAD_LspTextEdit, item->more_edits_count+1);
+    for EachIndex(idx, item->more_edits_count)
+    {
+      RAD_LspTextEdit e = item->more_edits[idx];
+      if(tb_buffer_map_offset_side(buffer, c->items_version, &e.range.min, Side_Min) &&
+         tb_buffer_map_offset(buffer, c->items_version, &e.range.max) &&
+         (e.range.max <= main_edit.range.min || main_edit.range.max <= e.range.min))
+      {
+        edits[edits_count] = e;
+        edits_count += 1;
+      }
+    }
+    U64 main_idx = edits_count;
+    edits[edits_count] = main_edit;
+    edits_count += 1;
+
+    //- rad: order: last in the text first
+    U64 *order = push_array(scratch.arena, U64, edits_count);
+    for EachIndex(idx, edits_count)
+    {
+      order[idx] = idx;
+    }
+    for(U64 i = 1; i < edits_count; i += 1)
+    {
+      for(U64 j = i; j > 0 && edits[order[j-1]].range.min < edits[order[j]].range.min; j -= 1)
+      {
+        Swap(U64, order[j-1], order[j]);
+      }
+    }
+
+    //- rad: apply
+    S64 shift = 0;
+    tb_buffer_close_undo_group(buffer);
+    for EachIndex(idx, edits_count)
+    {
+      RAD_LspTextEdit *e = &edits[order[idx]];
+      tb_buffer_edit(buffer, text_patched, e->range, e->text);
+      *text_patched = txt_patched_from_info_data_patches(arena, text_info, text_data, &buffer->patches);
+      if(order[idx] != main_idx && e->range.max <= main_edit.range.min)
+      {
+        shift += (S64)e->text.size - (S64)dim_1u64(e->range);
+      }
+    }
+    tb_buffer_close_undo_group(buffer);
+    *cursor = (U64)((S64)main_edit.range.min + shift) + main_edit.text.size;
+    scratch_end(scratch);
+  }
+  rad_lsp_completion_close();
+}
+
+internal void
+rad_code_view_completion_update(CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer *buffer, TXT_Patched *text, B32 focused, B32 typed, U8 typed_char, B32 moved)
+{
+  // NOTE(rad): after the view's input: start, follow or close the list
+  // (rad_lsp.h, "completion")
+  Temp scratch = scratch_begin(0, 0);
+  RAD_LspCompletion *c = &rad_lsp->completion;
+  RAD_Document *doc = rad_document_from_tab(tab);
+  CFG_Node *window = cfg_window_from_cfg(tab);
+  B32 complete_word = cv->complete_word;
+  cv->complete_word = 0;
+  B32 here = (c->active && c->tab == tab->id);
+
+  //- rad: close: no document, the view lost the keyboard, the cursor moved
+  // (not by typing), a selection
+  if(here && (doc == 0 || !cv->editable || doc->id != c->doc_id || !focused || moved || cv->cursor != cv->mark))
+  {
+    rad_lsp_completion_close();
+    here = 0;
+  }
+
+  //- rad: the word start, in the current text (typing at it stays after it)
+  if(here && c->word_version != buffer->version)
+  {
+    U64 off = c->word_start;
+    if(tb_buffer_map_offset_side(buffer, c->word_version, &off, Side_Min))
+    {
+      c->word_start = off;
+      c->word_version = buffer->version;
+    }
+    else
+    {
+      rad_lsp_completion_close();
+      here = 0;
+    }
+  }
+
+  //- rad: start: the first character of a word (not a number), `.`, `::`;
+  // Complete Word: the word before the cursor
+  U64 cursor = cv->cursor;
+  if(doc != 0 && cv->editable && focused && cursor == cv->mark && (typed || complete_word))
+  {
+    String8 before = memory_map_data_from_range(scratch.arena, &text->memory_map, r1u64(cursor > 128 ? cursor-128 : 0, cursor));
+    U64 word_size = 0;
+    for(;word_size < before.size && rad_char_is_word(before.str[before.size-1-word_size]); word_size += 1);
+    U64 word_start = cursor - word_size;
+    String8 word = str8_postfix(before, word_size);
+    U8 char_before_typed = (before.size >= 2 ? before.str[before.size-2] : 0);
+    if(complete_word)
+    {
+      if(!rad_lsp_completion_request(window, tab, doc, cursor, word_start, word, 0, 0))
+      {
+        rad_set_error(str8_lit("Complete Word needs rust-analyzer running for this file (it starts when a .rs file of a Cargo project is open)."));
+      }
+    }
+    else if(rad_char_is_word(typed_char))
+    {
+      if(!here && word_size == 1 && !char_is_digit(typed_char, 10))
+      {
+        rad_lsp_completion_request(window, tab, doc, cursor, word_start, word, 0, 0);
+      }
+    }
+    else
+    {
+      if(here)
+      {
+        rad_lsp_completion_close();
+      }
+      if(typed_char == '.' || (typed_char == ':' && char_before_typed == ':'))
+      {
+        rad_lsp_completion_request(window, tab, doc, cursor, cursor, str8_zero(), typed_char, 0);
+      }
+    }
+    here = (c->active && c->tab == tab->id);
+  }
+
+  //- rad: the typed word -> the list's filter; asked for again (one request
+  // at a time) when the word changed and the list is marked incomplete or
+  // has nothing that matches (servers add items as the word grows: imports)
+  if(here)
+  {
+    String8 word = {0};
+    B32 is_word = (c->word_start <= cursor && cursor - c->word_start <= 128);
+    if(is_word)
+    {
+      word = memory_map_data_from_range(scratch.arena, &text->memory_map, r1u64(c->word_start, cursor));
+      for EachIndex(idx, word.size)
+      {
+        is_word = (is_word && rad_char_is_word(word.str[idx]));
+      }
+    }
+    if(!is_word)
+    {
+      rad_lsp_completion_close();
+    }
+    else
+    {
+      rad_lsp_completion_set_filter(word);
+      String8 items_filter = str8(c->items_filter, c->items_filter_size);
+      if(c->request_id == 0 &&
+         (c->retry || (c->answered && (c->incomplete || c->rows_count == 0) && !str8_match(word, items_filter, 0))))
+      {
+        rad_lsp_completion_request(window, tab, doc, cursor, c->word_start, word, 0, 1);
+      }
+    }
+  }
+  scratch_end(scratch);
+}
+
+internal void
+rad_completion_popup_ui(RAD_Window *ws, CFG_Node *window)
+{
+  // NOTE(rad): port of raddbg's autocompletion floating view (raddbg_core.c,
+  // "@window_ui_part build all floating views"): same container, size,
+  // placement, animation, focus and permissions; its rows are built like the
+  // Problems rows (raddbg's watch rows: one code-colored cell, the typed
+  // word highlighted). Built before the panels, from the last frame's anchor.
+  RAD_LspCompletion *c = &rad_lsp->completion;
+  if(c->active && c->window == window->id && c->anchor_frame+1 < rad_state->frame_index)
+  {
+    // rad: its view was not built last frame (another tab, a hidden panel)
+    rad_lsp_completion_close();
+  }
+  if(c->active && c->window == window->id && c->rows_count != 0)
+    RAD_Font(RAD_FontSlot_Code)
+    UI_TagF("floating")
+  {
+    Temp scratch = scratch_begin(0, 0);
+
+    //- rad: size and place (raddbg: 30 em wide, at most 30 em of rows, below
+    // the anchor; not in raddbg: kept inside the window, above the line when
+    // it does not fit below)
+    F32 row_height_px = ui_top_px_height();
+    U64 max_row_count = (U64)floor_f32(ui_top_font_size()*30.f / row_height_px);
+    U64 needed_row_count = Min(max_row_count, c->rows_count);
+    F32 width_px = floor_f32(30.f*ui_top_font_size());
+    F32 height_px = needed_row_count*row_height_px;
+    Rng2F32 window_rect = wm_client_rect_from_window(ws->os);
+    Rng2F32 rect = r2f32p(c->anchor_line_rect.x0, c->anchor_line_rect.y1,
+                          c->anchor_line_rect.x0 + width_px, c->anchor_line_rect.y1 + height_px);
+    if(rect.y1 > window_rect.y1 && c->anchor_line_rect.y0 - height_px >= window_rect.y0)
+    {
+      rect.y0 = c->anchor_line_rect.y0 - height_px;
+      rect.y1 = c->anchor_line_rect.y0;
+    }
+    if(rect.x1 > window_rect.x1)
+    {
+      F32 shift = Min(rect.x1 - window_rect.x1, rect.x0 - window_rect.x0);
+      rect.x0 -= shift;
+      rect.x1 -= shift;
+    }
+    F32 open_t = ui_anim(ui_key_from_stringf(ui_key_zero(), "completion_open_%I64x", c->open_gen), 1.f,
+                         .rate = rad_state->menu_animation_rate,
+                         .initial = 0.f);
+
+    //- rad: build
+    UI_Focus(UI_FocusKind_On)
+      UI_PermissionFlags(UI_PermissionFlag_KeyboardSecondary|UI_PermissionFlag_Clicks|UI_PermissionFlag_ScrollX|UI_PermissionFlag_ScrollY)
+    {
+      //- rad: top-level container box (raddbg's)
+      UI_Box *container = &ui_nil_box;
+      UI_Rect(rect) UI_ChildLayoutAxis(Axis2_Y)
+        UI_Squish(0.1f-0.1f*open_t)
+        UI_Transparency(1.f-open_t)
+        UI_CornerRadius(ui_top_font_size()*0.15f)
+      {
+        container = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                              UI_BoxFlag_DrawBorder|
+                                              UI_BoxFlag_DrawBackground|
+                                              UI_BoxFlag_DrawBackgroundBlur|
+                                              UI_BoxFlag_RoundChildrenByParent|
+                                              UI_BoxFlag_DisableFocusOverlay|
+                                              UI_BoxFlag_DrawDropShadow|
+                                              UI_BoxFlag_SquishAnchored,
+                                              "floating_view_container_completion");
+      }
+
+      //- rad: contents: the rows (raddbg: the watch view's scroll list)
+      UI_Parent(container) UI_Focus(UI_FocusKind_Null)
+      {
+        ui_set_next_pref_width(ui_pct(1, 0));
+        ui_set_next_pref_height(ui_px(height_px, 1));
+        ui_set_next_child_layout_axis(Axis2_Y);
+        UI_Box *view_contents_container = ui_build_box_from_stringf(UI_BoxFlag_Clip, "###view_contents_container");
+        UI_Parent(view_contents_container) UI_WidthFill
+        {
+          S64 rows_count = (S64)c->rows_count;
+          F32 contents_width_px = (width_px - floor_f32(ui_bottom_font_size()*1.5f));
+          UI_ScrollListParams scroll_list_params = {0};
+          {
+            scroll_list_params.flags         = UI_ScrollListFlag_All;
+            scroll_list_params.row_height_px = row_height_px;
+            scroll_list_params.dim_px        = v2f32(width_px, height_px);
+            scroll_list_params.cursor_range  = r2s64(v2s64(0, 1), v2s64(0, rows_count));
+            scroll_list_params.item_range    = r1s64(0, rows_count);
+          }
+          Vec2S64 mark = c->cursor;
+          Rng1S64 visible_row_rng = {0};
+          UI_ScrollListSignal scroll_list_sig = {0};
+          UI_Focus(UI_FocusKind_On)
+            UI_ScrollList(&scroll_list_params, &c->scroll_pt, &c->cursor, &mark, &visible_row_rng, &scroll_list_sig)
+            UI_Focus(UI_FocusKind_Null)
+          {
+            ui_set_next_pref_height(ui_children_sum(1));
+            ui_set_next_child_layout_axis(Axis2_Y);
+            UI_Box *table = ui_build_box_from_string(0, str8_lit("table"));
+            UI_Parent(table)
+              for(S64 row_idx = visible_row_rng.min; row_idx <= visible_row_rng.max && row_idx < rows_count; row_idx += 1)
+            {
+              RAD_LspCompletionItem *item = &c->items[c->rows[row_idx]];
+              B32 row_selected = (c->cursor.y == row_idx+1);
+
+              //- rad: row text: label (code colors)  detail (weak)
+              DR_FStrList fstrs = rad_fstrs_from_code_string_lang(scratch.arena, 1.f, ui_color_from_name(str8_lit("text")), TXT_LangKind_Rust, item->label);
+              if(item->detail.size != 0)
+              {
+                Vec4F32 weak_color = {0};
+                UI_TagF("weak") weak_color = ui_color_from_name(str8_lit("text"));
+                DR_FStrParams params = {rad_font_from_slot(RAD_FontSlot_Code), rad_raster_flags_from_slot(RAD_FontSlot_Code), weak_color, ui_top_font_size()};
+                dr_fstrs_push_new(scratch.arena, &fstrs, &params, push_str8f(scratch.arena, "  %S", item->detail));
+              }
+
+              //- rad: build row box
+              UI_BoxFlags row_flags = UI_BoxFlag_DisableFocusOverlay;
+              if(row_idx & 1)
+              {
+                ui_set_next_tag(str8_lit("alt"));
+                row_flags |= UI_BoxFlag_DrawBackground;
+              }
+              ui_set_next_pref_width(ui_px(contents_width_px, 1.f));
+              ui_set_next_pref_height(ui_px(row_height_px, 1.f));
+              ui_set_next_focus_hot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off);
+              UI_Box *row_box = ui_build_box_from_stringf(row_flags|UI_BoxFlag_Clickable, "row_%I64x", row_idx);
+              if(row_idx == visible_row_rng.min)
+              {
+                c->layout_first_row      = row_idx;
+                c->layout_first_row_rect = row_box->rect;
+              }
+
+              //- rad: build cell
+              UI_Signal sig = {0};
+              UI_Parent(row_box)
+              {
+                UI_Box *cell_box = &ui_nil_box;
+                UI_PrefWidth(ui_px(contents_width_px, 1.f))
+                {
+                  ui_set_next_fixed_height(floor_f32(row_height_px));
+                  cell_box = ui_build_box_from_stringf(UI_BoxFlag_DrawSideLeft, "cell_%I64x", row_idx);
+                }
+                RAD_CellParams cell_params = {0};
+                cell_params.flags         = (RAD_CellFlag_KeyboardClickable|RAD_CellFlag_NoBackground|RAD_CellFlag_CodeContents);
+                cell_params.value_fstrs   = fstrs;
+                cell_params.search_needle = c->filter;
+                UI_Parent(cell_box)
+                  UI_FocusHot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off)
+                  UI_FocusActive(UI_FocusKind_Off)
+                  UI_TagF("weak")
+                {
+                  sig = rad_cellf(&cell_params, "###cell_%I64x", row_idx);
+                }
+              }
+              UI_Signal row_sig = ui_signal_from_box(row_box);
+
+              //- rad: a click uses it (raddbg: a click on a lister/autocomplete row accepts it)
+              if(ui_pressed(sig) || ui_pressed(row_sig))
+              {
+                c->cursor = v2s64(0, row_idx+1);
+                c->commit_requested = 1;
+                rad_request_frame();
+              }
+            }
+          }
+        }
+      }
+
+      //- rad: interact with container (takes the clicks between rows)
+      ui_signal_from_box(container);
+    }
+    c->built_frame = rad_state->frame_index;
+    c->layout_rect = rect;
+    scratch_end(scratch);
+  }
+}
+
 internal void
 rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data)
 {
@@ -390,6 +818,25 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
   //
   TXT_Patched text_patched = txt_patched_from_info_data_patches(scratch.arena, text_info, text_data, &buffer->patches);
   B32 snap[Axis2_COUNT] = {0};
+
+  //- rad: not in raddbg: the language server's completion list (rad_lsp.h):
+  // a clicked row is committed; this frame's input is noted for it
+  RAD_LspCompletion *cmp = &rad_lsp->completion;
+  B32 cmp_shown = rad_lsp_completion_is_shown(tab->id);
+  B32 cmp_typed = 0;
+  U8 cmp_typed_char = 0;
+  B32 cmp_moved = 0;
+  B32 cmp_eat_newline = 0;
+  B32 view_focused = 0;
+  UI_Focus(UI_FocusKind_On) view_focused = ui_is_focus_active();
+  if(cmp->active && cmp->tab == tab->id && cmp->commit_requested && cv->editable && text_is_ready)
+  {
+    rad_code_view_completion_commit(scratch.arena, rad_document_from_tab(tab), buffer, text_info, text_data, &text_patched, &cv->cursor);
+    cv->mark = cv->cursor;
+    cmp_shown = 0;
+    snap[Axis2_X] = snap[Axis2_Y] = 1;
+  }
+
   UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && text_is_ready)
   {
     U64 line_count_per_page = ClampBot(num_possible_visible_lines, 10) - 10;
@@ -398,6 +845,41 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     S64 *preferred_column = &cv->preferred_column;
     for(UI_Event *evt = 0; ui_next_event(&evt);)
     {
+      //- rad: not in raddbg: a shown completion list takes Enter and Tab
+      // (commit) and Esc (close); Enter's "\n" text event goes with it
+      if(cmp_shown && cv->editable)
+      {
+        B32 is_commit = ((evt->kind == UI_EventKind_Press && evt->slot == UI_EventActionSlot_Accept) ||
+                         (evt->kind == UI_EventKind_Text && evt->key == WM_Key_Tab));
+        B32 is_cancel = (evt->kind == UI_EventKind_Press && evt->slot == UI_EventActionSlot_Cancel);
+        if(is_commit)
+        {
+          rad_code_view_completion_commit(scratch.arena, rad_document_from_tab(tab), buffer, text_info, text_data, &text_patched, cursor);
+          *mark = *cursor;
+          U64 line_num = txt_line_num_from_off(&text_patched.line_map, *cursor);
+          Rng1U64 line_range = txt_range_from_line_num(&text_patched.line_map, line_num);
+          *preferred_column = (S64)(*cursor - line_range.min);
+          cmp_shown = 0;
+          cmp_eat_newline = (evt->kind == UI_EventKind_Press);
+          snap[Axis2_X] = snap[Axis2_Y] = 1;
+          ui_eat_event(evt);
+          continue;
+        }
+        if(is_cancel)
+        {
+          rad_lsp_completion_close();
+          cmp_shown = 0;
+          ui_eat_event(evt);
+          continue;
+        }
+      }
+      if(cmp_eat_newline && evt->kind == UI_EventKind_Text && str8_match(evt->string, str8_lit("\n"), 0))
+      {
+        cmp_eat_newline = 0;
+        ui_eat_event(evt);
+        continue;
+      }
+
       if(evt->kind != UI_EventKind_Navigate && evt->kind != UI_EventKind_Edit && evt->kind != UI_EventKind_Text)
       {
         continue;
@@ -620,6 +1102,18 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       // moving the cursor without editing ends the current undo group
       if(cv->editable && (replaced_range.max != replaced_range.min || single_line_op.replace.size != 0))
       {
+        // rad: not in raddbg: one typed character (completion triggers), a
+        // deletion (the list follows), anything else (it closes)
+        if(evt->kind == UI_EventKind_Text && !(evt->flags & UI_EventFlag_Paste) && evt->key != WM_Key_Tab &&
+           evt->string.size == 1 && single_line_op.replace.size == 1 && replaced_range.min == replaced_range.max)
+        {
+          cmp_typed = 1;
+          cmp_typed_char = evt->string.str[0];
+        }
+        else if(!(evt->flags & UI_EventFlag_Delete) || single_line_op.replace.size != 0 || start_cursor != start_mark)
+        {
+          cmp_moved = 1;
+        }
         tb_buffer_edit(buffer, &text_patched, replaced_range, single_line_op.replace);
         text_patched = txt_patched_from_info_data_patches(scratch.arena, text_info, text_data, &buffer->patches);
         *cursor = *mark = replaced_range.min + single_line_op.replace.size;
@@ -631,6 +1125,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       else if(*cursor != start_cursor)
       {
         tb_buffer_close_undo_group(buffer);
+        cmp_moved = 1;
       }
 
       //- rad: consume
@@ -648,6 +1143,14 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
         snap[Axis2_Y] = 1;
       }
     }
+  }
+
+  //////////////////////////////
+  //- rad: not in raddbg: completion list: start, follow or close it
+  //
+  if(text_is_ready)
+  {
+    rad_code_view_completion_update(tab, cv, buffer, &text_patched, view_focused, cmp_typed, cmp_typed_char, cmp_moved);
   }
 
   //////////////////////////////
@@ -1053,9 +1556,35 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
 
     //- rad: build code slice
     RAD_CodeSliceSignal sig = {0};
+    U64 cursor_before_slice = cv->cursor;
+    U64 mark_before_slice = cv->mark;
     UI_Focus(UI_FocusKind_On)
     {
       sig = rad_code_slicef(&code_slice_params, &cv->cursor, &cv->mark, &cv->preferred_column, "code_slice");
+    }
+
+    //- rad: not in raddbg: the mouse moved the cursor -> the completion list
+    // closes; else it is placed under its word's start (next frame)
+    if(cmp->active && cmp->tab == tab->id)
+    {
+      if(cv->cursor != cursor_before_slice || cv->mark != mark_before_slice)
+      {
+        rad_lsp_completion_close();
+      }
+      else if(text_is_ready)
+      {
+        S64 line_num = (S64)txt_line_num_from_off(&text_patched.line_map, cmp->word_start);
+        if(visible_line_num_range.min <= line_num && line_num <= visible_line_num_range.max)
+        {
+          Rng1U64 line_range = txt_range_from_line_num(&text_patched.line_map, (U64)line_num);
+          String8 prefix = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, r1u64(line_range.min, Max(line_range.min, cmp->word_start)));
+          F32 advance = fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, prefix).x;
+          F32 x = sig.text_rect.x0 + sig.text_x_off + advance;
+          F32 y = sig.text_rect.y0 + (F32)(line_num - visible_line_num_range.min)*code_line_height;
+          cmp->anchor_line_rect = r2f32p(x, y, x + code_line_height, y + code_line_height);
+          cmp->anchor_frame = rad_state->frame_index;
+        }
+      }
     }
 
     //- rad: not in raddbg: hover (Quick Info): the mouse rests on a token

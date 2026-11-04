@@ -1087,6 +1087,7 @@ RAD_CmdTable:
 
   //- rad: language server (Visual Studio's keys)
   {GoToDefinition         goto_definition      "Go To Definition"     Target            F12        0      0      0      Null     0         0           0         0 }
+  {CompleteWord           complete_word        "Complete Word"        Null              Space      ctrl   0      0      Null     0         0           0         0 }
   {NavigateBack           navigate_back        "Navigate Backward"    LeftArrow         Left       0      0      alt    Null     0         0           0         0 }
 
   //- rad: locations (internal; no default bindings)

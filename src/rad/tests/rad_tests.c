@@ -449,7 +449,8 @@ test_buffer_random(char *test_name, U64 seed, U64 ops_count, B32 crlf)
   // list of texts at each history position (each edit its own undo record)
   // (also: a marker '@' that edits never touch; its offset is mapped through
   // the change log after every op, like another view's cursor, and must
-  // always land on the '@')
+  // always land on the '@'; the offset after it, mapped with Side_Min, must
+  // stay right after it although edits start there)
   Temp scratch = scratch_begin(0, 0);
   U64 rng = seed;
   String8 base = test_random_text(scratch.arena, &rng, 100, crlf);
@@ -460,6 +461,7 @@ test_buffer_random(char *test_name, U64 seed, U64 ops_count, B32 crlf)
   }
   TestBuf t = test_buf_open(base, TXT_LangKind_Rust);
   U64 marker_off = str8_find_needle(base, 0, str8_lit("@"), 0);
+  U64 marker_after_off = marker_off+1;
   U64 marker_version = t.buffer->version;
   String8 save_path = push_str8f(scratch.arena, "%S/rad_tests_save.tmp", get_process_info()->binary_path);
   String8 *states = push_array(scratch.arena, String8, ops_count+1);
@@ -517,6 +519,8 @@ test_buffer_random(char *test_name, U64 seed, U64 ops_count, B32 crlf)
     test_expect(test_name, "dirty iff history position != saved position", tb_buffer_is_dirty(t.buffer) == ((S64)pos != saved_pos));
     test_expect(test_name, "offsets map through the change log", tb_buffer_map_offset(t.buffer, marker_version, &marker_off));
     test_expect(test_name, "a mapped offset stays on its character", marker_off == str8_find_needle(states[pos], 0, str8_lit("@"), 0));
+    test_expect(test_name, "offsets map through the change log (Side_Min)", tb_buffer_map_offset_side(t.buffer, marker_version, &marker_after_off, Side_Min));
+    test_expect(test_name, "a Side_Min offset stays after its character", marker_after_off == str8_find_needle(states[pos], 0, str8_lit("@"), 0)+1);
     marker_version = t.buffer->version;
     last_version = t.buffer->version;
     if(!test_buf_check(test_name, op_idx, &t, states[pos]))

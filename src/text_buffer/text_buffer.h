@@ -28,8 +28,10 @@
 // server's answer) can be mapped to the current text with
 // `tb_buffer_map_offset`. Offsets stick to the character after them: an
 // insertion at an offset pushes it right; an offset whose next character is
-// replaced moves to the end of the replacement. A reload (or a version older
-// than the log) cannot be mapped.
+// replaced moves to the end of the replacement. `tb_buffer_map_offset_side`
+// with Side_Min makes an offset stick to the character before it instead (an
+// insertion or replacement starting at it leaves it in place: the start of a
+// range). A reload (or a version older than the log) cannot be mapped.
 //
 // Undo history: one record per edit (consecutive typing / deleting merges
 // into one record until a pause), in the coordinates of the text right
@@ -150,6 +152,7 @@ internal B32 tb_buffer_is_busy(TB_Buffer *buffer);
 internal TB_Text tb_text_from_buffer(Arena *arena, Access *access, TB_Buffer *buffer);
 internal String8 tb_string_from_buffer(Arena *arena, Access *access, TB_Buffer *buffer);
 internal B32 tb_buffer_map_offset(TB_Buffer *buffer, U64 version, U64 *off);
+internal B32 tb_buffer_map_offset_side(TB_Buffer *buffer, U64 version, U64 *off, Side side);
 
 ////////////////////////////////
 //~ rad: Editing

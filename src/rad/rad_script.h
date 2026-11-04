@@ -80,6 +80,7 @@
 //   output <line> <col>         a visible text position in the Output tab
 //   output_text "<text>"        the first Output line containing it, at its start
 //   problem <n>                 middle of visible Problems row n (1-based)
+//   completion <n>              middle of visible completion list row n (1-based)
 //   toolbar <name>              a top bar button: cargo_run cargo_test cargo_check
 //                               cargo_build cargo_stop, configuration (the
 //                               Debug/Release box), or its open menu's rows
@@ -124,6 +125,11 @@
 //   cursor_line_text            the editor's line at the cursor
 //   hover_text                  the hover tooltip's text (markdown; "" when none)
 //   hover_has "<text>"          1 if it contains the text
+//   completion_open             1 if the completion list is shown
+//   completion_count            its rows; completion_row <n>: row n's label
+//   completion_selected         the selected row's label; completion_cursor: its number
+//   completion_has "<label>"    1 if a row has that label
+//   completion_filter           the typed word it is filtered by
 //   diag_count diag_errors diag_warnings   problems: the last cargo command's
 //                               diagnostics and the language servers', merged
 //   diag <n>                    "<kind> <path>:<line>:<col> <message>" (path

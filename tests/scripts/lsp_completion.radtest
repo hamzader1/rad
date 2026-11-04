@@ -1,0 +1,110 @@
+#! timeout: 300
+# Completion list (Visual Studio's IntelliSense): typing a word's first
+# character, `.`, `::` or Complete Word (Ctrl+Space) shows rust-analyzer's
+# list under the word, filtered as you type; Up/Down select, Enter/Tab or a
+# click commit (one undo step, with the item's `use` line if it has one),
+# Esc closes. The fixture is never saved.
+
+lsp on
+open_folder ../fixtures/lsp_complete
+wait_idle
+open ../fixtures/lsp_complete/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+expect line_count == 25
+
+# a word's first character opens it; Enter commits (the newline is not typed)
+click code 23 1
+wait_idle
+text "    cou"
+wait_until 15000 completion_open == 1
+expect completion_filter == "cou"
+expect completion_selected == "counter"
+expect completion_has "Counter" == 1
+key return
+wait_idle
+expect line 23 == "    counter"
+expect line_count == 25
+expect completion_open == 0
+
+# `.` opens the members; typing filters; Up/Down select; Tab commits
+text "."
+wait_until 15000 completion_open == 1
+expect completion_has "total" == 1
+expect completion_has "increment" == 1
+expect completion_has "count" == 1
+text "to"
+wait_idle
+expect completion_filter == "to"
+expect completion_selected == "total"
+key down
+wait_idle
+expect completion_cursor == 2
+key up
+wait_idle
+expect completion_cursor == 1
+key tab
+wait_idle
+expect line 23 == "    counter.total"
+expect cursor_col == 18
+expect completion_open == 0
+
+# one undo step takes the commit back
+key ctrl+z
+wait_idle
+expect line 23 == "    counter.to"
+
+# Complete Word (Ctrl+Space) on the word before the cursor; Esc closes it
+key end
+key ctrl+space
+wait_until 15000 completion_open == 1
+expect completion_filter == "to"
+key esc
+wait_idle
+expect completion_open == 0
+expect line 23 == "    counter.to"
+
+# `::` opens the associated items; a click on a row commits it
+key backspace 3
+text "; Counter::"
+wait_until 15000 completion_open == 1
+expect completion_has "new" == 1
+text "n"
+wait_idle
+expect completion_selected == "new"
+click completion 1
+wait_idle
+expect line 23 == "    counter; Counter::new"
+expect completion_open == 0
+
+# a character that is not part of a word closes it
+text " c"
+wait_until 15000 completion_open == 1
+text "o "
+wait_idle
+expect completion_open == 0
+expect line 23 == "    counter; Counter::new co "
+
+# an item from a crate path that is not imported: its `use` line comes too
+key return
+text "let m: HashMa"
+wait_until 15000 completion_open == 1
+expect completion_selected == "HashMap(use std::collections::HashMap)"
+key return
+wait_until 15000 line 1 == "use std::collections::HashMap;"
+expect line 2 == ""
+expect line 3 == "struct Counter {"
+expect line 26 == "    let m: HashMap"
+expect cursor_line == 26
+expect cursor_col == 19
+
+# undo: the import (it came later), then the word
+key ctrl+z
+wait_idle
+expect line 1 == "struct Counter {"
+expect line 24 == "    let m: HashMap"
+key ctrl+z
+wait_idle
+expect line 24 == "    let m: HashMa"
+quit

@@ -354,7 +354,8 @@ rad_lsp_server_start(String8 root)
                               "\"publishDiagnostics\":{\"versionSupport\":true},"
                               "\"hover\":{\"contentFormat\":[\"markdown\",\"plaintext\"]},"
                               "\"definition\":{\"linkSupport\":false},"
-                              "\"completion\":{\"completionItem\":{\"snippetSupport\":false}}"
+                              "\"completion\":{\"completionItem\":{\"snippetSupport\":false,"
+                              "\"resolveSupport\":{\"properties\":[\"additionalTextEdits\"]}}}"
                               "},"
                               "\"experimental\":{\"serverStatusNotification\":true}"
                               "}}",
@@ -704,6 +705,14 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
       {
         rad_lsp_take_definition(s, &m);
       }
+      else if(rad_lsp->completion.request_id != 0 && rad_lsp->completion.server == s && m.id == rad_lsp->completion.request_id)
+      {
+        rad_lsp_take_completion(s, &m);
+      }
+      else if(rad_lsp->resolve.request_id != 0 && rad_lsp->resolve.server == s && m.id == rad_lsp->resolve.request_id)
+      {
+        rad_lsp_take_resolve(s, &m);
+      }
       else if(rad_lsp->hover.requested && !rad_lsp->hover.answered &&
               rad_lsp->hover.server == s && m.id == rad_lsp->hover.request_id)
       {
@@ -970,6 +979,351 @@ rad_lsp_navigate_back(CFG_Node *window)
 }
 
 ////////////////////////////////
+//~ rad: Completion
+
+internal B32
+rad_lsp_completion_request(CFG_Node *window, CFG_Node *tab, RAD_Document *doc, U64 off, U64 word_start, String8 word, U8 trigger_char, B32 for_incomplete)
+{
+  // NOTE(rad): starts a completion session for the tab (or, for_incomplete,
+  // asks again within the current one); `word`: what is typed between the
+  // word start and `off`. 0 if no ready server has the document open
+  Temp scratch = scratch_begin(0, 0);
+  RAD_LspCompletion *c = &rad_lsp->completion;
+  RAD_LspServer *s = 0;
+  String8 params = rad_lsp_position_params(scratch.arena, doc, off, &s);
+  B32 result = (params.size != 0 && params.str[params.size-1] == '}');
+  if(result)
+  {
+    //- rad: new session
+    B32 continues = (for_incomplete && c->active && c->tab == tab->id && c->doc_id == doc->id);
+    if(!continues)
+    {
+      rad_lsp_completion_close();
+      c->active       = 1;
+      c->window       = window->id;
+      c->tab          = tab->id;
+      c->doc_id       = doc->id;
+      c->word_start   = word_start;
+      c->word_version = doc->buffer->version;
+      c->open_gen    += 1;
+      c->cursor       = v2s64(0, 1);
+      c->filter       = push_str8_copy(c->filter_arena, word);
+    }
+
+    //- rad: context: invoked (1), typed trigger character (2), an incomplete
+    // list asked again (3)
+    String8 context = (for_incomplete ? str8_lit("{\"triggerKind\":3}") :
+                       trigger_char != 0 ? push_str8f(scratch.arena, "{\"triggerKind\":2,\"triggerCharacter\":\"%c\"}", trigger_char) :
+                       str8_lit("{\"triggerKind\":1}"));
+    String8 body = push_str8f(scratch.arena, "%S,\"context\":%S}", str8_chop(params, 1), context);
+    c->server = s;
+    c->retry = 0;
+    c->request_id = lsp_client_request(s->client, str8_lit("textDocument/completion"), body);
+    c->request_version = doc->buffer->version;
+    c->request_filter_size = Min(word.size, sizeof(c->request_filter));
+    MemoryCopy(c->request_filter, word.str, c->request_filter_size);
+  }
+  scratch_end(scratch);
+  return result;
+}
+
+internal RAD_LspTextEdit
+rad_lsp_text_edit_from_json(Arena *arena, RAD_LspServer *s, RAD_LspSnapshot *snap, JSON_Value *edit)
+{
+  // NOTE(rad): TextEdit {range, newText}; InsertReplaceEdit {insert, replace,
+  // newText} (not asked for; its replace range if a server sends one)
+  RAD_LspTextEdit result = {0};
+  JSON_Value *range = json_value_from_key(edit, str8_lit("range"));
+  if(range->kind != JSON_ValueKind_Object)
+  {
+    range = json_value_from_key(edit, str8_lit("replace"));
+  }
+  JSON_Value *start = json_value_from_key(range, str8_lit("start"));
+  JSON_Value *end = json_value_from_key(range, str8_lit("end"));
+  result.range.min = rad_lsp_offset_from_position(snap->text, snap->line_starts, snap->line_count,
+                                                  json_s64_from_value(json_value_from_key(start, str8_lit("line"))),
+                                                  json_s64_from_value(json_value_from_key(start, str8_lit("character"))),
+                                                  s->utf8_positions);
+  result.range.max = rad_lsp_offset_from_position(snap->text, snap->line_starts, snap->line_count,
+                                                  json_s64_from_value(json_value_from_key(end, str8_lit("line"))),
+                                                  json_s64_from_value(json_value_from_key(end, str8_lit("character"))),
+                                                  s->utf8_positions);
+  if(result.range.max < result.range.min)
+  {
+    Swap(U64, result.range.min, result.range.max);
+  }
+  result.text = push_str8_copy(arena, json_string_from_value(json_value_from_key(edit, str8_lit("newText"))));
+  return result;
+}
+
+internal void
+rad_lsp_take_completion(RAD_LspServer *s, LSP_Message *m)
+{
+  // NOTE(rad): CompletionList {isIncomplete, items} | CompletionItem[] | null
+  RAD_LspCompletion *c = &rad_lsp->completion;
+  c->request_id = 0;
+  RAD_LspDoc *ld = rad_lsp_doc_from_id(s, c->doc_id);
+  RAD_LspSnapshot *snap = (ld != 0 ? rad_lsp_snapshot_from_version(ld, c->request_version) : 0);
+  c->retry = (snap == 0);
+  if(snap != 0)
+  {
+    //- rad: unpack the list
+    JSON_Value *items = m->result;
+    B32 incomplete = 0;
+    if(m->result->kind == JSON_ValueKind_Object)
+    {
+      items = json_value_from_key(m->result, str8_lit("items"));
+      incomplete = json_b32_from_value(json_value_from_key(m->result, str8_lit("isIncomplete")));
+    }
+    U64 count = (items->kind == JSON_ValueKind_Array ? Min(items->child_count, RAD_LSP_COMPLETION_MAX_ITEMS) : 0);
+
+    //- rad: items
+    arena_clear(c->arena);
+    c->answered      = 1;
+    c->incomplete    = incomplete;
+    c->items_version = c->request_version;
+    c->items_count   = count;
+    c->items         = push_array(c->arena, RAD_LspCompletionItem, count);
+    c->items_filter_size = c->request_filter_size;
+    MemoryCopy(c->items_filter, c->request_filter, c->request_filter_size);
+    U64 idx = 0;
+    for(JSON_Value *it = items->first; it != &json_value_nil && idx < count; it = it->next, idx += 1)
+    {
+      RAD_LspCompletionItem *item = &c->items[idx];
+      String8 label       = json_string_from_value(json_value_from_key(it, str8_lit("label")));
+      String8 detail      = json_string_from_value(json_value_from_key(it, str8_lit("detail")));
+      String8 filter_text = json_string_from_value(json_value_from_key(it, str8_lit("filterText")));
+      String8 sort_text   = json_string_from_value(json_value_from_key(it, str8_lit("sortText")));
+      String8 insert_text = json_string_from_value(json_value_from_key(it, str8_lit("insertText")));
+      detail = str8_prefix(detail, str8_find_needle(detail, 0, str8_lit("\n"), 0));
+      item->label       = push_str8_copy(c->arena, label);
+      item->detail      = push_str8_copy(c->arena, str8_skip_chop_whitespace(detail));
+      item->filter_text = (filter_text.size != 0 ? push_str8_copy(c->arena, filter_text) : item->label);
+      item->sort_text   = (sort_text.size != 0 ? push_str8_copy(c->arena, sort_text) : item->label);
+      item->insert_text = (insert_text.size != 0 ? push_str8_copy(c->arena, insert_text) : item->label);
+      item->kind        = json_s64_from_value(json_value_from_key(it, str8_lit("kind")));
+      JSON_Value *edit = json_value_from_key(it, str8_lit("textEdit"));
+      if(edit->kind == JSON_ValueKind_Object)
+      {
+        item->has_edit = 1;
+        item->edit = rad_lsp_text_edit_from_json(c->arena, s, snap, edit);
+      }
+      if(!json_value_is_nil(json_value_from_key(it, str8_lit("data"))))
+      {
+        item->resolve_json = json_text_from_value(c->arena, it);
+      }
+      JSON_Value *more = json_value_from_key(it, str8_lit("additionalTextEdits"));
+      if(more->kind == JSON_ValueKind_Array && more->child_count != 0)
+      {
+        item->more_edits = push_array(c->arena, RAD_LspTextEdit, more->child_count);
+        for(JSON_Value *e = more->first; e != &json_value_nil; e = e->next)
+        {
+          item->more_edits[item->more_edits_count] = rad_lsp_text_edit_from_json(c->arena, s, snap, e);
+          item->more_edits_count += 1;
+        }
+      }
+    }
+
+    //- rad: rows for the word typed so far
+    Temp scratch = scratch_begin(0, 0);
+    String8 filter = push_str8_copy(scratch.arena, c->filter);
+    rad_lsp_completion_refilter(filter);
+    scratch_end(scratch);
+  }
+  rad_request_frame();
+}
+
+internal U32
+rad_lsp_completion_rank(String8 filter, String8 text)
+{
+  // NOTE(rad): 0: starts with the filter (same case), 1: (any case), 2:
+  // contains it, 3: contains its characters in order; max_U32: no match
+  U32 result = max_U32;
+  if(filter.size == 0 || str8_match(str8_prefix(text, filter.size), filter, 0))
+  {
+    result = 0;
+  }
+  else if(str8_match(str8_prefix(text, filter.size), filter, StringMatchFlag_CaseInsensitive))
+  {
+    result = 1;
+  }
+  else if(str8_find_needle(text, 0, filter, StringMatchFlag_CaseInsensitive) < text.size)
+  {
+    result = 2;
+  }
+  else
+  {
+    U64 filter_idx = 0;
+    for(U64 idx = 0; idx < text.size && filter_idx < filter.size; idx += 1)
+    {
+      if(lower_from_char(text.str[idx]) == lower_from_char(filter.str[filter_idx]))
+      {
+        filter_idx += 1;
+      }
+    }
+    if(filter_idx == filter.size)
+    {
+      result = 3;
+    }
+  }
+  return result;
+}
+
+typedef struct RAD_LspCompletionRow RAD_LspCompletionRow;
+struct RAD_LspCompletionRow
+{
+  U32 rank;
+  U64 item_idx;
+  RAD_LspCompletionItem *item;
+};
+
+internal int
+rad_lsp_completion_row_compare(RAD_LspCompletionRow *a, RAD_LspCompletionRow *b)
+{
+  int result = 0;
+  if(a->rank != b->rank)
+  {
+    result = (a->rank < b->rank ? -1 : 1);
+  }
+  else
+  {
+    String8 as = a->item->sort_text;
+    String8 bs = b->item->sort_text;
+    int c = MemoryCompare(as.str, bs.str, Min(as.size, bs.size));
+    result = (c != 0 ? c :
+              as.size != bs.size ? (as.size < bs.size ? -1 : 1) :
+              a->item_idx != b->item_idx ? (a->item_idx < b->item_idx ? -1 : 1) : 0);
+  }
+  return result;
+}
+
+internal void
+rad_lsp_completion_refilter(String8 filter)
+{
+  // NOTE(rad): rows = the matching items, best first; selection = the first
+  Temp scratch = scratch_begin(0, 0);
+  RAD_LspCompletion *c = &rad_lsp->completion;
+  filter = push_str8_copy(scratch.arena, filter);
+  arena_clear(c->filter_arena);
+  c->filter = push_str8_copy(c->filter_arena, filter);
+  RAD_LspCompletionRow *rows = push_array(scratch.arena, RAD_LspCompletionRow, c->items_count);
+  U64 rows_count = 0;
+  for EachIndex(idx, c->items_count)
+  {
+    U32 rank = rad_lsp_completion_rank(filter, c->items[idx].filter_text);
+    if(rank != max_U32)
+    {
+      rows[rows_count].rank = rank;
+      rows[rows_count].item_idx = idx;
+      rows[rows_count].item = &c->items[idx];
+      rows_count += 1;
+    }
+  }
+  quick_sort(rows, rows_count, sizeof(rows[0]), rad_lsp_completion_row_compare);
+  c->rows = push_array(c->filter_arena, U64, rows_count);
+  for EachIndex(idx, rows_count)
+  {
+    c->rows[idx] = rows[idx].item_idx;
+  }
+  c->rows_count = rows_count;
+  c->cursor = v2s64(0, 1);
+  MemoryZeroStruct(&c->scroll_pt);
+  scratch_end(scratch);
+}
+
+internal void
+rad_lsp_completion_set_filter(String8 filter)
+{
+  RAD_LspCompletion *c = &rad_lsp->completion;
+  if(!str8_match(filter, c->filter, 0))
+  {
+    rad_lsp_completion_refilter(filter);
+    rad_request_frame();
+  }
+}
+
+internal void
+rad_lsp_completion_close(void)
+{
+  RAD_LspCompletion *c = &rad_lsp->completion;
+  if(c->active)
+  {
+    rad_request_frame();
+  }
+  Arena *arena = c->arena;
+  Arena *filter_arena = c->filter_arena;
+  U64 open_gen = c->open_gen;
+  arena_clear(arena);
+  arena_clear(filter_arena);
+  MemoryZeroStruct(c);
+  c->arena = arena;
+  c->filter_arena = filter_arena;
+  c->open_gen = open_gen;
+}
+
+internal void
+rad_lsp_completion_resolve(RAD_Document *doc, RAD_LspCompletionItem *item)
+{
+  // NOTE(rad): before the commit's edit: the server gets the text as it is
+  // now, and its answer's ranges are in it (rad_lsp_take_resolve)
+  RAD_LspCompletion *c = &rad_lsp->completion;
+  RAD_LspServer *s = c->server;
+  RAD_LspDoc *ld = (s != 0 ? rad_lsp_doc_from_id(s, doc->id) : 0);
+  if(s != 0 && s->state == RAD_LspServerState_Ready && s->client != 0 && ld != 0 && ld->opened && item->resolve_json.size != 0)
+  {
+    if(ld->sent_version != doc->buffer->version)
+    {
+      rad_lsp_doc_send(s, ld, doc);
+    }
+    RAD_LspResolve *r = &rad_lsp->resolve;
+    r->server = s;
+    r->doc_id = doc->id;
+    r->version = doc->buffer->version;
+    r->request_id = lsp_client_request(s->client, str8_lit("completionItem/resolve"), item->resolve_json);
+  }
+}
+
+internal void
+rad_lsp_take_resolve(RAD_LspServer *s, LSP_Message *m)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RAD_LspResolve *r = &rad_lsp->resolve;
+  r->request_id = 0;
+  RAD_LspDoc *ld = rad_lsp_doc_from_id(s, r->doc_id);
+  RAD_LspSnapshot *snap = (ld != 0 ? rad_lsp_snapshot_from_version(ld, r->version) : 0);
+  RAD_Document *doc = 0;
+  for(RAD_Document *d = rad_state->first_document; d != 0; d = d->next)
+  {
+    if(d->id == r->doc_id)
+    {
+      doc = d;
+      break;
+    }
+  }
+  JSON_Value *more = json_value_from_key(m->result, str8_lit("additionalTextEdits"));
+  if(snap != 0 && doc != 0 && more->kind == JSON_ValueKind_Array && more->child_count != 0)
+  {
+    RAD_LspTextEdit *edits = push_array(scratch.arena, RAD_LspTextEdit, more->child_count);
+    U64 edits_count = 0;
+    for(JSON_Value *e = more->first; e != &json_value_nil; e = e->next)
+    {
+      edits[edits_count] = rad_lsp_text_edit_from_json(scratch.arena, s, snap, e);
+      edits_count += 1;
+    }
+    rad_document_apply_edits(doc, r->version, edits, edits_count);
+  }
+  scratch_end(scratch);
+}
+
+internal B32
+rad_lsp_completion_is_shown(CFG_ID tab)
+{
+  // NOTE(rad): the popup was built this frame (before the panels), with rows
+  RAD_LspCompletion *c = &rad_lsp->completion;
+  return (c->active && c->tab == tab && c->built_frame == rad_state->frame_index && c->rows_count != 0);
+}
+
+////////////////////////////////
 //~ rad: Language Server Functions
 
 internal void
@@ -980,6 +1334,8 @@ rad_lsp_init(void)
   rad_lsp->arena = arena;
   rad_lsp->hover.arena = arena_alloc();
   rad_lsp->definition.arena = arena_alloc();
+  rad_lsp->completion.arena = arena_alloc();
+  rad_lsp->completion.filter_arena = arena_alloc();
   Arena *problems_arena = arena_alloc();
   rad_problems = push_array(problems_arena, RAD_Problems, 1);
   rad_problems->arena = arena_alloc();

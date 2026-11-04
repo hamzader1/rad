@@ -554,6 +554,11 @@ rad_cell(RAD_CellParams *params, String8 string)
   F32 cursor_off = 0;
   UI_Parent(scrollable_box)
   {
+    FuzzyMatchRangeList fuzzy_matches = {0};
+    if(params->search_needle.size != 0)
+    {
+      fuzzy_matches = dr_fuzzy_match_find_from_fstrs(scratch.arena, &fstrs, params->search_needle);
+    }
     if(ui_top_text_alignment() == UI_TextAlign_Left && (params->flags & (RAD_CellFlag_Expander|RAD_CellFlag_ExpanderSpace|RAD_CellFlag_ExpanderPlaceholder)) == 0)
     {
       ui_spacer(ui_em(0.5f, 1.f));
@@ -565,6 +570,7 @@ rad_cell(RAD_CellParams *params, String8 string)
     ui_set_next_pref_width(ui_text_dim(ui_top_font_size()*0.5f, 0));
     UI_Box *text_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText, "###text_box");
     ui_box_equip_display_fstrs(text_box, &fstrs);
+    ui_box_equip_fuzzy_match_ranges(text_box, &fuzzy_matches);
     if(is_editing)
     {
       String8 edit_string = str8(params->edit_buffer, params->edit_string_size_out[0]);

@@ -1363,6 +1363,16 @@ rad_window_frame(RAD_Window *ws)
     }
 
     ////////////////////////////
+    //- rad: floating views (raddbg: built here, before the bars and panels,
+    // so they are on top and take their input first): the completion list
+    //
+    ProfScope("build floating views")
+      UI_Focus(ui_any_ctx_menu_is_open() || ws->menu_bar_focused ? UI_FocusKind_Off : UI_FocusKind_Null)
+    {
+      rad_completion_popup_ui(ws, window);
+    }
+
+    ////////////////////////////
     //- rad: top bar
     //
     ProfScope("build top bar")
@@ -3986,6 +3996,18 @@ rad_exec_cmd(RAD_Cmd *cmd)
     {
       rad_lsp_navigate_back(window);
     }break;
+
+    //- rad: language server: completion list for the word before the cursor
+    // (the tab's code view starts it when built)
+    case RAD_CmdKind_CompleteWord:
+    {
+      RAD_Document *doc = rad_document_from_tab(tab_cfg);
+      if(doc != 0)
+      {
+        rad_view_state_from_cfg(tab_cfg)->cv.complete_word = 1;
+        rad_request_frame();
+      }
+    }break;
   }
   scratch_end(scratch);
 }
@@ -4588,11 +4610,13 @@ rad_push_text_nav_ui_events(RAD_Window *ws, Arena *arena, WM_Event *event)
     result = 1;
   }
 
-  // rad: tab -> indentation (4 spaces, the Rust convention)
+  // rad: tab -> indentation (4 spaces, the Rust convention); the key stays
+  // on the event (a completion list commits on Tab instead)
   if(!result && event->key == WM_Key_Tab && event->modifiers == 0)
   {
     UI_Event evt = zero_struct;
     evt.kind   = UI_EventKind_Text;
+    evt.key    = WM_Key_Tab;
     evt.string = str8_lit("    ");
     ui_event_list_push(arena, &ws->ui_events, &evt);
     result = 1;
@@ -4802,6 +4826,13 @@ rad_frame(void)
       if(!take && ws != 0 && event->kind == WM_EventKind_Press)
       {
         take = rad_push_text_nav_ui_events(ws, scratch.arena, event);
+      }
+
+      //- rad: Ctrl+Space (Complete Word) also sends a space character: not text
+      if(!take && event->kind == WM_EventKind_Text && event->character == ' ' &&
+         (event->modifiers & WM_Modifier_Ctrl) && !(event->modifiers & WM_Modifier_Alt))
+      {
+        take = 1;
       }
 
       //- rad: do fall-through -> ui event (same mapping as raddbg's RD_CmdKind_WMEvent)

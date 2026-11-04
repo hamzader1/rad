@@ -40,6 +40,7 @@
 #define RAD_LSP_SNAPSHOT_COUNT      4
 #define RAD_LSP_SHUTDOWN_WAIT_US    1000000
 #define RAD_LSP_HOVER_DELAY_US      500000
+#define RAD_LSP_COMPLETION_MAX_ITEMS 4096
 
 ////////////////////////////////
 //~ rad: Server Types
@@ -184,6 +185,110 @@ struct RAD_LspNavEntry
   S64 column;
 };
 
+// NOTE(rad): completion (Visual Studio's IntelliSense list), one at a time:
+//
+//   typed: a word's first character, `.`, `::`; or Complete Word (Ctrl+Space)
+//     -> textDocument/completion at the cursor (pending edits sent first)
+//   answer: items; their edits' ranges -> offsets in the text of the request's
+//     version (its snapshot); later carried to the current text by the
+//     buffer's change log (tb_buffer_map_offset)
+//   list (rows): the items that match the typed word (filter = word start ..
+//     cursor): prefix matches first, then substring, then subsequence; each
+//     group in the server's order (sortText). A list the server marks
+//     incomplete, or one with no matching rows, is asked for again whenever
+//     the word changes (one request at a time).
+//   popup: raddbg's autocompletion floating view (built before the panels,
+//     from the last frame's anchor and rows); its scroll list takes Up/Down/
+//     PageUp/PageDown (secondary-keyboard events, as raddbg's). The code view
+//     takes Enter/Tab (commit: the item's edit, extended over what was typed
+//     since, and its additional edits, e.g. a `use` line; one undo step) and
+//     Esc (close). Moving the cursor otherwise, or typing a character that is
+//     not part of a word, closes it.
+//   imports: items from crates not imported yet (rust-analyzer offers them
+//     only to clients that resolve) carry `data`; committing one sends
+//     completionItem/resolve first (the server still has the text before the
+//     commit), and the `use` edit it answers with is applied when it comes,
+//     carried over the commit and any typing since (a second undo step).
+typedef struct RAD_LspTextEdit RAD_LspTextEdit;
+struct RAD_LspTextEdit
+{
+  Rng1U64 range;                // offsets in the text of the items' version
+  String8 text;
+};
+
+typedef struct RAD_LspCompletionItem RAD_LspCompletionItem;
+struct RAD_LspCompletionItem
+{
+  String8 label;
+  String8 detail;               // shown after the label (a signature, a type)
+  String8 filter_text;
+  String8 sort_text;
+  S64 kind;                     // LSP CompletionItemKind
+  B32 has_edit;
+  RAD_LspTextEdit edit;         // else: `insert_text` replaces the typed word
+  String8 insert_text;
+  RAD_LspTextEdit *more_edits;  // additionalTextEdits
+  U64 more_edits_count;
+  String8 resolve_json;         // the item as sent, if it has edits to resolve (`data`)
+};
+
+typedef struct RAD_LspResolve RAD_LspResolve;
+struct RAD_LspResolve
+{
+  RAD_LspServer *server;
+  S64 request_id;               // 0: none
+  U64 doc_id;
+  U64 version;                  // the document's version the server had
+};
+
+typedef struct RAD_LspCompletion RAD_LspCompletion;
+struct RAD_LspCompletion
+{
+  B32 active;
+  CFG_ID window;
+  CFG_ID tab;
+  U64 doc_id;
+  U64 word_start;               // in the text of `word_version`
+  U64 word_version;
+  U64 open_gen;                 // changes per session (restarts the open animation)
+
+  //- rad: request in flight
+  RAD_LspServer *server;
+  S64 request_id;               // 0: none
+  U64 request_version;
+  U8 request_filter[256];       // the typed word when it was sent
+  U64 request_filter_size;
+  B32 retry;                    // its answer came for text no longer kept: ask again
+
+  //- rad: answer
+  Arena *arena;
+  B32 answered;
+  B32 incomplete;
+  U64 items_version;
+  RAD_LspCompletionItem *items;
+  U64 items_count;
+  U8 items_filter[256];         // the typed word the items were computed for
+  U64 items_filter_size;
+
+  //- rad: list (rows: indices into items)
+  Arena *filter_arena;
+  String8 filter;               // (filter_arena)
+  U64 *rows;
+  U64 rows_count;
+  Vec2S64 cursor;               // y: selected row, 1-based (scroll list cursor)
+  UI_ScrollPt scroll_pt;
+
+  //- rad: popup (the code view records the anchor; the window builds the
+  // popup from it in the next frame)
+  U64 anchor_frame;
+  Rng2F32 anchor_line_rect;     // window pixels: the word start's line, from the word start
+  U64 built_frame;              // last frame the popup was built (with rows)
+  B32 commit_requested;         // a row was clicked: the code view commits it
+  Rng2F32 layout_rect;          // (scripts) popup rect, first visible row, row height
+  S64 layout_first_row;
+  Rng2F32 layout_first_row_rect;
+};
+
 typedef struct RAD_LspState RAD_LspState;
 struct RAD_LspState
 {
@@ -199,6 +304,8 @@ struct RAD_LspState
   RAD_LspDefinition definition;
   RAD_LspNavEntry nav[RAD_LSP_NAV_MAX];
   U64 nav_count;
+  RAD_LspCompletion completion;
+  RAD_LspResolve resolve;
 };
 
 ////////////////////////////////
@@ -252,6 +359,19 @@ internal void rad_lsp_goto_definition(CFG_Node *window, CFG_Node *tab, RAD_Docum
 internal void rad_lsp_take_definition(RAD_LspServer *s, LSP_Message *m);
 internal void rad_lsp_navigate_back(CFG_Node *window);
 internal B32 rad_lsp_path_is_external(String8 path);
+
+////////////////////////////////
+//~ rad: Completion Functions
+
+internal B32 rad_lsp_completion_request(CFG_Node *window, CFG_Node *tab, RAD_Document *doc, U64 off, U64 word_start, String8 word, U8 trigger_char, B32 for_incomplete);
+internal void rad_lsp_take_completion(RAD_LspServer *s, LSP_Message *m);
+internal void rad_lsp_completion_refilter(String8 filter);
+internal void rad_lsp_completion_set_filter(String8 filter);
+internal void rad_lsp_completion_close(void);
+internal B32 rad_lsp_completion_is_shown(CFG_ID tab);
+internal void rad_lsp_completion_resolve(RAD_Document *doc, RAD_LspCompletionItem *item);
+internal void rad_lsp_take_resolve(RAD_LspServer *s, LSP_Message *m);
+internal void rad_document_apply_edits(RAD_Document *doc, U64 version, RAD_LspTextEdit *edits, U64 edits_count); // (rad_views.c)
 
 ////////////////////////////////
 //~ rad: Problems Functions

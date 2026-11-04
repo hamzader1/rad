@@ -599,6 +599,65 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   {
     value = (rad_lsp->hover.answered ? rad_lsp->hover.text : str8_zero());
   }
+
+  //- rad: the completion list (shown: built in the last frame)
+  else if(str8_match(name, str8_lit("completion_open"), 0) || str8_match(name, str8_lit("completion_count"), 0) ||
+          str8_match(name, str8_lit("completion_selected"), 0) || str8_match(name, str8_lit("completion_row"), 0) ||
+          str8_match(name, str8_lit("completion_has"), 0) || str8_match(name, str8_lit("completion_cursor"), 0) ||
+          str8_match(name, str8_lit("completion_filter"), 0))
+  {
+    RAD_LspCompletion *c = &rad_lsp->completion;
+    B32 shown = (c->active && c->rows_count != 0 && c->built_frame+1 >= rad_state->frame_index);
+    U64 rows_count = (c->active ? c->rows_count : 0);
+    if(str8_match(name, str8_lit("completion_open"), 0))
+    {
+      value = (shown ? str8_lit("1") : str8_lit("0"));
+    }
+    else if(str8_match(name, str8_lit("completion_count"), 0))
+    {
+      value = push_str8f(arena, "%I64u", rows_count);
+    }
+    else if(str8_match(name, str8_lit("completion_cursor"), 0))
+    {
+      value = push_str8f(arena, "%I64d", (rows_count != 0 ? c->cursor.y : 0));
+    }
+    else if(str8_match(name, str8_lit("completion_filter"), 0))
+    {
+      value = (c->active ? c->filter : str8_zero());
+    }
+    else if(str8_match(name, str8_lit("completion_selected"), 0))
+    {
+      if(1 <= c->cursor.y && (U64)c->cursor.y <= rows_count)
+      {
+        value = c->items[c->rows[c->cursor.y-1]].label;
+      }
+    }
+    else if(str8_match(name, str8_lit("completion_row"), 0))
+    {
+      S64 n = 0;
+      if(args_count < 2 || !try_s64_from_str8_c_rules(args[1], &n) || n < 1)
+      {
+        *error_out = str8_lit("completion_row: needs a row number");
+        result = 0;
+      }
+      else if((U64)n <= rows_count)
+      {
+        value = c->items[c->rows[n-1]].label;
+      }
+    }
+    else
+    {
+      value = str8_lit("0");
+      for EachIndex(idx, rows_count)
+      {
+        if(args_count >= 2 && str8_match(c->items[c->rows[idx]].label, args[1], 0))
+        {
+          value = str8_lit("1");
+          break;
+        }
+      }
+    }
+  }
   else if(str8_match(name, str8_lit("hover_has"), 0))
   {
     String8 hover = (rad_lsp->hover.answered ? rad_lsp->hover.text : str8_zero());
@@ -1057,6 +1116,37 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
       {
         pos.x = center_2f32(pr->layout_first_row_rect).x;
         pos.y = row_y0 + pr->layout_row_height/2;
+        args_used = 2;
+        result = 1;
+      }
+    }
+  }
+
+  //- rad: the completion list's rows
+  else if(str8_match(kind, str8_lit("completion"), 0))
+  {
+    RAD_LspCompletion *c = &rad_lsp->completion;
+    S64 n = 0;
+    if(!c->active || c->rows_count == 0 || c->built_frame+1 < rad_state->frame_index)
+    {
+      *error_out = str8_lit("completion: no list shown");
+    }
+    else if(args_count < 2 || !try_s64_from_str8_c_rules(args[1], &n) || n < 1 || (U64)n > c->rows_count)
+    {
+      *error_out = push_str8f(arena, "completion: needs a row number in 1..%I64u", c->rows_count);
+    }
+    else
+    {
+      F32 row_height = dim_2f32(c->layout_first_row_rect).y;
+      F32 row_y0 = c->layout_first_row_rect.y0 + (F32)((n-1) - c->layout_first_row)*row_height;
+      if(row_y0 < c->layout_rect.y0 || c->layout_rect.y1 < row_y0 + row_height)
+      {
+        *error_out = push_str8f(arena, "completion: row %I64d is not visible", n);
+      }
+      else
+      {
+        pos.x = center_2f32(c->layout_first_row_rect).x;
+        pos.y = row_y0 + row_height/2;
         args_used = 2;
         result = 1;
       }

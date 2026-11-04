@@ -67,6 +67,9 @@ struct RAD_CodeViewState
   B32 double_clicked;
   U64 double_clicked_off;
 
+  // rad: Complete Word (Ctrl+Space) asked for; the view starts it when built
+  B32 complete_word;
+
   // rad: layout of the last build, in window pixels (scripted input aims
   // with it; see rad_script.h)
   Rng2F32 layout_code_rect;
@@ -229,6 +232,14 @@ internal void rad_code_view_init(RAD_CodeViewState *cv);
 internal B32 rad_code_view_undo(RAD_CodeViewState *cv, TB_Buffer *buffer);
 internal B32 rad_code_view_redo(RAD_CodeViewState *cv, TB_Buffer *buffer);
 internal void rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data);
+
+////////////////////////////////
+//~ rad: Completion (the language server's list; see rad_lsp.h)
+
+internal B32 rad_char_is_word(U8 c);
+internal void rad_code_view_completion_commit(Arena *arena, RAD_Document *doc, TB_Buffer *buffer, TXT_TextInfo *text_info, String8 text_data, TXT_Patched *text_patched, U64 *cursor);
+internal void rad_code_view_completion_update(CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer *buffer, TXT_Patched *text, B32 focused, B32 typed, U8 typed_char, B32 moved);
+internal void rad_completion_popup_ui(RAD_Window *ws, CFG_Node *window);
 
 ////////////////////////////////
 //~ rad: Text View
