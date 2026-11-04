@@ -136,9 +136,9 @@ them), then layout (C), tabs (D), the gutter (E), drag and drop (F).
   and applied: all animations, opaque backgrounds, blur, drop shadows,
   rounded corners, density (row and tab heights), UI and code font sizes,
   smooth/hint text, Mouse Wheel Zoom, line numbers, tab width, scope
-  lines/annotations, theme, Alt focuses the menu bar. Left: tab overflow
-  and close button (D), explorer compact rows and side (C2), scroll past
-  end, font faces, density for panel headers (C).
+  lines/annotations, theme, Alt focuses the menu bar, explorer side and
+  compact rows. Left: tab overflow and close button (D), scroll past end,
+  font faces.
   - Animations (all), Scrolling Animations ("smooth movement"), Tooltip
     Animations, Menu Animations, Cursor Trail (raddbg's).
   - Transparency: Opaque Backgrounds, Background Blur (raddbg's); Drop
@@ -194,7 +194,7 @@ tree, each with a header (title, X), no "+", no zoom button.
   Done 2026-11-04 (script `tool_windows`): View > Explorer (Ctrl+Alt+L),
   Output (Ctrl+Alt+O), Problems (no key: no chords yet), Close Tool Window
   (Shift+Esc, VS2022's). The Tab menu's Alt key was V by mistake; now B.
-- [ ] **C2. Explorer as a tool window** (left, width adjustable). Header:
+- [x] **C2. Explorer as a tool window** (left, width adjustable). Header:
   folder name, X to close. No "+" next to the folder name; no Toggle Zoom.
   Open Folder stays in File and in the empty state. A search/filter box
   with a search icon: filters files and folders by name, keeps the parents
@@ -209,7 +209,13 @@ tree, each with a header (title, X), no "+", no zoom button.
   header with title + X (zoom button style), no tab bar, no "+", no zoom;
   Close Panel / X / Shift+Esc hide; splits go to the editor panel and take
   space only from the split panel; the last editor panel cannot close.
-  Left: the search/filter box, compact rows.
+  Filter + compact rows done 2026-11-04 (script `explorer_filter`): a
+  filter row on top (the query bar's look); typing in the explorer or
+  Ctrl+; (Search Explorer) gives it the keyboard; matches by name in the
+  whole tree (fuzzy, case-insensitive) with their parent folders, skipping
+  .git and target; Down/Enter go to the first match; Enter on a folder
+  clears the filter and reveals the folder; Esc clears, Esc again leaves.
+  Setting Compact Explorer Rows (2 font sizes).
 - [x] **C3. Bottom tool window** (`QJK3Syr5`): docked below everything, full
   window width, height adjustable, compact header (title, collapse, X),
   tabs Output / Problems at the bottom as VS2022 shows them, rows and text

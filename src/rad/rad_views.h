@@ -146,6 +146,17 @@ struct RAD_ExplorerState
   U8 selected_path_buffer[4096];
   U64 selected_path_size;
 
+  // rad: search filter (VS2022's Search Solution Explorer): non-empty ->
+  // the rows are the matches in the whole tree, with their parent folders
+  B32 filter_focused;
+  U8 filter_buffer[256];
+  U64 filter_size;
+  U64 filter_cursor;
+  U64 filter_mark;
+  U8 rows_filter_buffer[256];
+  U64 rows_filter_size;
+  Rng2F32 layout_filter_rect;
+
   // rad: layout of the last build, in window pixels (scripted input aims
   // with it; see rad_script.h). `layout_first_row_rect` is the rect of row
   // `layout_first_row` (0-based); rows are `layout_row_height` apart.

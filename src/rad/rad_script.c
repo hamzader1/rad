@@ -566,7 +566,9 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
 
   //- rad: explorer
   else if(str8_match(name, str8_lit("explorer_root"), 0) || str8_match(name, str8_lit("explorer_rows"), 0) ||
-          str8_match(name, str8_lit("explorer_selected"), 0) || str8_match(name, str8_lit("explorer_row"), 0))
+          str8_match(name, str8_lit("explorer_selected"), 0) || str8_match(name, str8_lit("explorer_row"), 0) ||
+          str8_match(name, str8_lit("explorer_filter"), 0) || str8_match(name, str8_lit("explorer_filter_focused"), 0) ||
+          str8_match(name, str8_lit("explorer_row_height"), 0))
   {
     CFG_Node *tab = rad_script_explorer_tab();
     RAD_ExplorerState *ex = (tab != &cfg_nil_node ? &rad_view_state_from_cfg(tab)->ex : 0);
@@ -574,6 +576,18 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     {
       *error_out = str8_lit("no explorer");
       result = 0;
+    }
+    else if(str8_match(name, str8_lit("explorer_filter"), 0))
+    {
+      value = push_str8_copy(arena, str8(ex->filter_buffer, ex->filter_size));
+    }
+    else if(str8_match(name, str8_lit("explorer_filter_focused"), 0))
+    {
+      value = push_str8f(arena, "%i", (int)!!ex->filter_focused);
+    }
+    else if(str8_match(name, str8_lit("explorer_row_height"), 0))
+    {
+      value = push_str8f(arena, "%.0f", ex->layout_row_height);
     }
     else if(str8_match(name, str8_lit("explorer_root"), 0))
     {
@@ -1348,6 +1362,23 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
         args_used = used;
         result = 1;
       }
+    }
+  }
+
+  //- rad: the explorer's search filter row
+  else if(str8_match(kind, str8_lit("explorer_filter"), 0))
+  {
+    CFG_Node *tab = rad_script_explorer_tab();
+    Rng2F32 rect = (tab != &cfg_nil_node ? rad_view_state_from_cfg(tab)->ex.layout_filter_rect : r2f32p(0, 0, 0, 0));
+    if(rect.x1 <= rect.x0 || rect.y1 <= rect.y0)
+    {
+      *error_out = str8_lit("explorer_filter: not visible");
+    }
+    else
+    {
+      pos = center_2f32(rect);
+      args_used = 1;
+      result = 1;
     }
   }
 

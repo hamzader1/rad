@@ -2292,6 +2292,7 @@ rad_window_frame(RAD_Window *ws)
                   RAD_CmdKind cmds[] =
                   {
                     RAD_CmdKind_ShowExplorer,
+                    RAD_CmdKind_SearchExplorer,
                     RAD_CmdKind_ShowOutput,
                     RAD_CmdKind_ShowProblems,
                     RAD_CmdKind_Null,//-
@@ -2300,6 +2301,7 @@ rad_window_frame(RAD_Window *ws)
                   U32 codepoints[] =
                   {
                     'e',
+                    's',
                     'o',
                     'p',
                     0,//-
@@ -4724,6 +4726,19 @@ rad_exec_cmd(RAD_Cmd *cmd)
       {
         rad_focus_tab(tab);
         rad_focus_panel(tab->parent);
+      }
+    }break;
+    case RAD_CmdKind_SearchExplorer:
+    if(window != &cfg_nil_node)
+    {
+      // rad: VS2022's Search Solution Explorer (Ctrl+;)
+      rad_tool_set_visible(window, RAD_ToolKind_Explorer, 1);
+      CFG_Node *tab = rad_tab_from_window_kind(window, str8_lit("explorer"));
+      if(tab != &cfg_nil_node)
+      {
+        rad_focus_tab(tab);
+        rad_focus_panel(tab->parent);
+        rad_view_state_from_cfg(tab)->ex.filter_focused = 1;
       }
     }break;
     case RAD_CmdKind_CloseToolWindow:

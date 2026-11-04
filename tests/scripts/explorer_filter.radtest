@@ -1,0 +1,85 @@
+# Explorer search filter (task C2): typing in the explorer (or Ctrl+;)
+# filters the whole tree by name, keeping the parent folders of matches;
+# Enter opens a file, Enter on a folder clears the filter and reveals it;
+# Esc clears, Esc again leaves the filter. Compact Explorer Rows setting.
+
+open_folder ../fixtures/project
+wait_idle
+expect panel == "explorer"
+expect explorer_rows == 4
+expect explorer_filter_focused == 0
+
+# typing goes to the filter; matches anywhere in the tree, with parents
+text "mod"
+wait_idle
+expect explorer_filter_focused == 1
+expect explorer_filter == "mod"
+expect explorer_rows == 3
+expect explorer_row 1 == "src"
+expect explorer_row 2 == "util"
+expect explorer_row 3 == "mod.rs"
+
+# fuzzy, case-insensitive; "rs" matches every .rs file
+key esc
+wait_idle
+expect explorer_filter == ""
+expect explorer_rows == 4
+text "RS"
+wait_idle
+expect explorer_rows == 7
+key esc
+wait_idle
+
+# Down goes to the list; Enter opens the selected file
+text "basic"
+wait_idle
+expect explorer_rows == 2
+key down
+wait_idle
+expect explorer_filter_focused == 0
+expect explorer_selected == "tests"
+key down
+expect explorer_selected == "basic.rs"
+key return
+wait_idle
+expect panel == "text"
+expect tab == "basic.rs"
+
+# Enter on a folder: the filter clears, the folder shows expanded, selected
+key ctrl+semicolon
+wait_idle
+expect panel == "explorer"
+expect explorer_filter_focused == 1
+expect explorer_filter == "basic"
+key esc
+text "util"
+wait_idle
+key down
+expect explorer_selected == "src"
+key down
+expect explorer_selected == "util"
+key return
+wait_idle
+expect explorer_filter == ""
+expect explorer_selected == "util"
+expect explorer_rows == 8
+
+# Esc in the list clears a filter; Esc in an empty filter leaves it
+click explorer_filter
+text "zzz"
+wait_idle
+expect explorer_rows == 0
+key esc
+wait_idle
+expect explorer_filter == ""
+key esc
+wait_idle
+expect explorer_filter_focused == 0
+
+# compact rows
+expect explorer_row_height == 33
+set_setting explorer_compact_rows 1
+wait_idle
+expect explorer_row_height == 22
+set_setting explorer_compact_rows 0
+quit

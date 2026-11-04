@@ -382,6 +382,22 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (task C2: explorer search filter, compact rows)
+- Explorer filter (`RAD_ExplorerState.filter_*`): a filter row above the
+  list (column layout, as Settings). Non-empty -> rows from
+  `rad_explorer_rows_push_filtered__`: the whole tree (expanded or not),
+  matches + parent folders (a folder row is rolled back if nothing under it
+  matches), .git and target skipped, 200000 entries at most; match
+  highlights through the cell's `search_needle`.
+- Keys: typing in the list or Ctrl+; (Search Explorer, View menu) -> the
+  filter; Down/Enter -> the first match; Esc clears, Esc again leaves;
+  Enter / double-click on a folder while filtering clears the filter and
+  reveals it. Settings' filter: Down is a Navigate event; fixed there too.
+- Setting `explorer_compact_rows` (2 font sizes).
+- Script: fields `explorer_filter`, `explorer_filter_focused`,
+  `explorer_row_height`; target `explorer_filter`; script
+  `explorer_filter` (31).
+
 ### 2026-11-04 (tasks C1, C3, C2 layout: tool windows)
 - Tool windows (`RAD_ToolKind`, rad_core.c "Tool Windows"): leaf panels
   holding tool tabs (explorer; output + problems). Every frame, before

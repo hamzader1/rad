@@ -2360,13 +2360,128 @@ rad_explorer_rows_push_folder__(Arena *arena, RAD_ExplorerState *ex, RAD_Explore
   scratch_end(scratch);
 }
 
+internal B32
+rad_explorer_name_matches(Arena *arena, String8 needle, String8 name)
+{
+  FuzzyMatchRangeList m = fuzzy_match_find(arena, needle, name);
+  B32 result = (m.count != 0 && m.count == m.needle_part_count);
+  return result;
+}
+
+internal B32
+rad_explorer_rows_push_filtered__(Arena *arena, RAD_ExplorerState *ex, RAD_ExplorerRowList *rows, String8 folder, S32 depth, String8 needle, U64 *budget)
+{
+  // NOTE(rad): the matches under `folder` (all folders, expanded or not),
+  // each folder shown if something under it matches (or its name does).
+  // Skips .git and target (cargo's build output); `budget` caps the entries
+  // looked at. Returns whether anything was pushed.
+  Temp scratch = scratch_begin(&arena, 1);
+  B32 result = 0;
+
+  //- rad: list the folder, sorted (folders first, then by name)
+  typedef struct InfoNode InfoNode;
+  struct InfoNode
+  {
+    InfoNode *next;
+    FileInfo v;
+  };
+  InfoNode *first_info = 0;
+  InfoNode *last_info = 0;
+  U64 infos_count = 0;
+  FileIter *it = file_iter_begin(scratch.arena, folder, 0);
+  for(FileInfo info = {0}; budget[0] != 0 && file_iter_next(scratch.arena, it, &info);)
+  {
+    budget[0] -= 1;
+    if(str8_match(info.name, str8_lit(".git"), 0) ||
+       ((info.props.flags & FilePropertyFlag_IsFolder) && str8_match(info.name, str8_lit("target"), 0)))
+    {
+      continue;
+    }
+    InfoNode *n = push_array(scratch.arena, InfoNode, 1);
+    n->v = info;
+    SLLQueuePush(first_info, last_info, n);
+    infos_count += 1;
+  }
+  file_iter_end(it);
+  FileInfo *infos = push_array(scratch.arena, FileInfo, infos_count);
+  {
+    U64 idx = 0;
+    for(InfoNode *n = first_info; n != 0; n = n->next, idx += 1)
+    {
+      infos[idx] = n->v;
+    }
+  }
+  quick_sort(infos, infos_count, sizeof(infos[0]), rad_explorer_file_info_compare);
+
+  //- rad: push matches; folders first, rolled back if nothing under them matches
+  B32 folder_has_trailing_slash = (folder.size != 0 && (folder.str[folder.size-1] == '/' || folder.str[folder.size-1] == '\\'));
+  for EachIndex(idx, infos_count)
+  {
+    if(rows->count >= RAD_EXPLORER_MAX_ROWS)
+    {
+      break;
+    }
+    FileInfo *info = &infos[idx];
+    B32 is_folder = !!(info->props.flags & FilePropertyFlag_IsFolder);
+    B32 name_matches = rad_explorer_name_matches(scratch.arena, needle, info->name);
+    if(!is_folder && !name_matches)
+    {
+      continue;
+    }
+    RAD_ExplorerRowNode *saved_last = rows->last;
+    U64 saved_count = rows->count;
+    RAD_ExplorerRowNode *n = push_array(arena, RAD_ExplorerRowNode, 1);
+    n->v.path = push_str8f(arena, "%S%s%S", folder, folder_has_trailing_slash ? "" : "/", info->name);
+    n->v.name = str8_skip_last_slash(n->v.path);
+    n->v.depth = depth;
+    n->v.is_folder = is_folder;
+    n->v.is_expanded = is_folder;
+    SLLQueuePush(rows->first, rows->last, n);
+    rows->count += 1;
+    B32 children_match = (is_folder && rad_explorer_rows_push_filtered__(arena, ex, rows, n->v.path, depth+1, needle, budget));
+    if(is_folder && !children_match && !name_matches)
+    {
+      rows->last = saved_last;
+      rows->count = saved_count;
+      if(saved_last != 0)
+      {
+        saved_last->next = 0;
+      }
+      else
+      {
+        rows->first = 0;
+      }
+      continue;
+    }
+    if(is_folder && !children_match)
+    {
+      n->v.is_expanded = 0;
+    }
+    result = 1;
+  }
+
+  scratch_end(scratch);
+  return result;
+}
+
 internal void
 rad_explorer_rows_build(RAD_ExplorerState *ex, String8 root)
 {
   arena_clear(ex->rows_arena);
   ex->rows_root = push_str8_copy(ex->rows_arena, root);
   RAD_ExplorerRowList rows = {0};
-  rad_explorer_rows_push_folder__(ex->rows_arena, ex, &rows, ex->rows_root, 0);
+  String8 filter = str8(ex->filter_buffer, ex->filter_size);
+  MemoryCopy(ex->rows_filter_buffer, ex->filter_buffer, ex->filter_size);
+  ex->rows_filter_size = ex->filter_size;
+  if(filter.size != 0)
+  {
+    U64 budget = 200000;
+    rad_explorer_rows_push_filtered__(ex->rows_arena, ex, &rows, ex->rows_root, 0, filter, &budget);
+  }
+  else
+  {
+    rad_explorer_rows_push_folder__(ex->rows_arena, ex, &rows, ex->rows_root, 0);
+  }
   ex->rows = push_array(ex->rows_arena, RAD_ExplorerRow, rows.count);
   ex->rows_count = rows.count;
   {
@@ -2490,6 +2605,7 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
   {
     RAD_FolderWatchChange change = rad_folder_watch_take_change(root);
     if(ex->rows_dirty || !str8_match(ex->rows_root, root, 0) ||
+       !str8_match(str8(ex->rows_filter_buffer, ex->rows_filter_size), str8(ex->filter_buffer, ex->filter_size), 0) ||
        change == RAD_FolderWatchChange_Changed ||
        (change == RAD_FolderWatchChange_NoWatch && now_time_us() >= ex->rows_build_us + RAD_EXPLORER_REFRESH_US))
     {
@@ -2500,21 +2616,131 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
   //////////////////////////////
   //- rad: unpack
   //
-  F32 row_height_px = ui_top_px_height();
-  Vec2F32 rect_dim = dim_2f32(rect);
+  F32 filter_row_height_px = (root.size != 0 ? ui_top_px_height() : 0);
+  F32 row_height_px = (rad_state->settings.explorer_compact_rows ? floor_f32(ui_top_font_size()*2.f) : ui_top_px_height());
+  Rng2F32 list_rect = r2f32p(rect.x0, Min(rect.y1, rect.y0 + filter_row_height_px), rect.x1, rect.y1);
+  Vec2F32 rect_dim = dim_2f32(list_rect);
   F32 contents_width_px = (rect_dim.x - floor_f32(ui_bottom_font_size()*1.5f));
   S64 rows_count = (root.size != 0 ? (S64)ex->rows_count : 0);
+  String8 needle = str8(ex->filter_buffer, ex->filter_size);
+  B32 filtering = (str8(ex->rows_filter_buffer, ex->rows_filter_size).size != 0);
   String8 toggle_path = {0};
   String8 open_path = {0};
-  ex->layout_rect = rect;
+  String8 reveal_path = {0};
+  ex->layout_rect = list_rect;
   ex->layout_row_height = row_height_px;
   ex->layout_font_size = ui_top_font_size();
+
+  //////////////////////////////
+  //- rad: keyboard, filter: typing in the list goes to it; Down/Enter go
+  // back to the list; Esc clears it, Esc again goes back (as Settings)
+  //
+  if(root.size != 0) UI_Focus(UI_FocusKind_On) if(ui_is_focus_active())
+  {
+    for(UI_Event *evt = 0; ui_next_event(&evt);)
+    {
+      if(ex->filter_focused)
+      {
+        if((evt->kind == UI_EventKind_Press && evt->modifiers == 0 && evt->key == WM_Key_Return) ||
+           (evt->kind == UI_EventKind_Navigate && !(evt->flags & UI_EventFlag_KeepMark) && evt->delta_unit == UI_EventDeltaUnit_Char && evt->delta_2s32.y > 0))
+        {
+          // rad: Down/Enter from the filter: the first match
+          ex->filter_focused = 0;
+          if(rows_count != 0)
+          {
+            ex->cursor = ex->mark = v2s64(0, 1);
+          }
+          ui_eat_event(evt);
+        }
+        else if(evt->kind == UI_EventKind_Press && evt->modifiers == 0 && evt->key == WM_Key_Esc)
+        {
+          if(ex->filter_size != 0)
+          {
+            ex->filter_size = ex->filter_cursor = ex->filter_mark = 0;
+          }
+          else
+          {
+            ex->filter_focused = 0;
+          }
+          ui_eat_event(evt);
+        }
+        else if(evt->kind == UI_EventKind_Text && str8_find_needle(evt->string, 0, str8_lit("\n"), 0) < evt->string.size)
+        {
+          ui_eat_event(evt);
+        }
+        continue;
+      }
+      if(evt->kind == UI_EventKind_Text && evt->string.size != 0 && !(evt->flags & UI_EventFlag_Paste) &&
+         str8_find_needle(evt->string, 0, str8_lit("\n"), 0) == evt->string.size)
+      {
+        ex->filter_focused = 1;
+      }
+      else if(evt->kind == UI_EventKind_Press && evt->modifiers == 0 && evt->key == WM_Key_Esc && ex->filter_size != 0)
+      {
+        ex->filter_size = ex->filter_cursor = ex->filter_mark = 0;
+        ui_eat_event(evt);
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: filter row (the query bar's look, as the Settings view's)
+  //
+  UI_Box *column = &ui_nil_box;
+  if(root.size != 0) UI_WidthFill UI_HeightFill UI_ChildLayoutAxis(Axis2_Y)
+  {
+    column = ui_build_box_from_stringf(0, "###explorer_column");
+  }
+  if(root.size != 0) UI_Parent(column)
+  {
+    UI_Box *filter_row = &ui_nil_box;
+    UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(filter_row_height_px, 1.f))
+    {
+      if(ex->filter_focused)
+      {
+        ui_set_next_border_color(ui_color_from_name(str8_lit("border")));
+      }
+      filter_row = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawDropShadow, "###explorer_filter_row");
+    }
+    ex->layout_filter_rect = filter_row->rect;
+    UI_Parent(filter_row) UI_WidthFill UI_HeightFill UI_Focus(ex->filter_focused ? UI_FocusKind_On : UI_FocusKind_Off)
+      RAD_Font(RAD_FontSlot_Main)
+      UI_Flags(UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder)
+    {
+      UI_TagF("weak")
+      {
+        ui_spacer(ui_em(0.5f, 1.f));
+        UI_TextAlignment(UI_TextAlign_Center) RAD_Font(RAD_FontSlot_Icons) UI_PrefWidth(ui_em(2.f, 1.f))
+          ui_label(rad_icon_kind_text_table[RAD_IconKind_Find]);
+      }
+      RAD_CellParams params = {0};
+      {
+        params.flags |= RAD_CellFlag_NoBackground;
+        params.cursor               = &ex->filter_cursor;
+        params.mark                 = &ex->filter_mark;
+        params.edit_buffer          = ex->filter_buffer;
+        params.edit_string_size_out = &ex->filter_size;
+        params.edit_buffer_size     = sizeof(ex->filter_buffer);
+        params.pre_edit_value       = needle;
+      }
+      UI_FocusHot(ex->filter_focused ? UI_FocusKind_On : UI_FocusKind_Off)
+        UI_FocusActive(ex->filter_focused ? UI_FocusKind_On : UI_FocusKind_Off)
+      {
+        UI_Signal sig = rad_cellf(&params, "Search Explorer (Ctrl+;)###explorer_filter");
+        if(ui_pressed(sig))
+        {
+          ex->filter_focused = 1;
+          rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
+        }
+      }
+    }
+  }
 
   //////////////////////////////
   //- rad: keyboard: Left/Right collapse/expand (or move to parent/child),
   // Enter opens a file or toggles a folder
   //
-  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && rows_count != 0)
+  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && rows_count != 0 && !ex->filter_focused)
   {
     for(UI_Event *evt = 0; ui_next_event(&evt);)
     {
@@ -2557,7 +2783,11 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
       }
       else if(evt->kind == UI_EventKind_Press && evt->key == WM_Key_Return && evt->modifiers == 0)
       {
-        if(row->is_folder)
+        if(row->is_folder && filtering)
+        {
+          reveal_path = push_str8_copy(scratch.arena, row->path);
+        }
+        else if(row->is_folder)
         {
           toggle_path = push_str8_copy(scratch.arena, row->path);
         }
@@ -2587,9 +2817,11 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
     }
     Rng1S64 visible_row_rng = {0};
     UI_ScrollListSignal scroll_list_sig = {0};
-    UI_Focus(UI_FocusKind_On)
+    UI_Parent(column)
+      UI_Focus(ex->filter_focused ? UI_FocusKind_Off : UI_FocusKind_On)
       UI_ScrollList(&scroll_list_params, &ex->scroll_pos.y, &ex->cursor, &ex->mark, &visible_row_rng, &scroll_list_sig)
       UI_Focus(UI_FocusKind_Null)
+      UI_PrefHeight(ui_px(row_height_px, 1.f))
     {
       ui_set_next_pref_height(ui_children_sum(1));
       ui_set_next_child_layout_axis(Axis2_Y);
@@ -2652,10 +2884,11 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
           }
           RAD_CellParams cell_params = {0};
           cell_params.flags        = (RAD_CellFlag_KeyboardClickable|RAD_CellFlag_NoBackground|
-                                      (row->is_folder ? RAD_CellFlag_Expander : RAD_CellFlag_ExpanderSpace));
+                                      (row->is_folder && !filtering ? RAD_CellFlag_Expander : RAD_CellFlag_ExpanderSpace));
           cell_params.depth        = row->depth;
           cell_params.value_fstrs  = fstrs;
           cell_params.expanded_out = &next_expanded;
+          cell_params.search_needle = (filtering ? str8(ex->rows_filter_buffer, ex->rows_filter_size) : str8_zero());
           UI_Parent(cell_box)
             UI_FocusHot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off)
             UI_FocusActive(UI_FocusKind_Off)
@@ -2672,11 +2905,16 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
         if(ui_pressed(sig) || ui_pressed(row_sig))
         {
           ex->cursor = ex->mark = v2s64(0, row_idx+1);
+          ex->filter_focused = 0;
           rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
         }
         if(ui_double_clicked(sig) || ui_double_clicked(row_sig))
         {
-          if(row->is_folder)
+          if(row->is_folder && filtering)
+          {
+            reveal_path = push_str8_copy(scratch.arena, row->path);
+          }
+          else if(row->is_folder)
           {
             toggle_path = push_str8_copy(scratch.arena, row->path);
           }
@@ -2709,6 +2947,20 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
   if(toggle_path.size != 0)
   {
     rad_explorer_set_expanded(ex, toggle_path, !rad_explorer_is_expanded(ex, toggle_path));
+    rad_request_frame();
+  }
+  if(reveal_path.size != 0)
+  {
+    // rad: a folder found by the filter: clear the filter, expand the folder
+    // and its parents, select it
+    for(String8 p = reveal_path; p.size > root.size; p = str8_chop_last_slash(p))
+    {
+      rad_explorer_set_expanded(ex, p, 1);
+    }
+    ex->filter_size = ex->filter_cursor = ex->filter_mark = 0;
+    ex->selected_path_size = Min(reveal_path.size, sizeof(ex->selected_path_buffer));
+    MemoryCopy(ex->selected_path_buffer, reveal_path.str, ex->selected_path_size);
+    ex->rows_dirty = 1;
     rad_request_frame();
   }
   if(open_path.size != 0)
@@ -3141,10 +3393,12 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
     {
       if(ss->filter_focused)
       {
-        if(evt->kind == UI_EventKind_Press && evt->modifiers == 0 && (evt->key == WM_Key_Down || evt->key == WM_Key_Return))
+        if((evt->kind == UI_EventKind_Press && evt->modifiers == 0 && evt->key == WM_Key_Return) ||
+           (evt->kind == UI_EventKind_Navigate && !(evt->flags & UI_EventFlag_KeepMark) && evt->delta_unit == UI_EventDeltaUnit_Char && evt->delta_2s32.y > 0))
         {
+          // rad: Down/Enter from the filter: the first match
           ss->filter_focused = 0;
-          if(ss->cursor.y == 0 && rows_count != 0)
+          if(rows_count != 0)
           {
             ss->cursor = ss->mark = v2s64(0, 1);
           }

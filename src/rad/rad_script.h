@@ -86,6 +86,7 @@
 //   output_text "<text>"        the first Output line containing it, at its start
 //   problem <n>                 middle of visible Problems row n (1-based)
 //   tool_close <explorer|bottom> a tool window's X button
+//   explorer_filter             the explorer's search filter row
 //   setting_row <name>          middle of a visible Settings row
 //   setting_control <name>      its toggle switch or slider
 //   setting_revert <name>       its revert button (only on changed settings)
@@ -113,6 +114,9 @@
 //   zoomed                      1 if a panel is zoomed (Toggle Panel Zoom)
 //   menu_bar_focused            1 if the menu bar has the keyboard (Alt tapped)
 //   explorer_visible            1 if the explorer tool window is shown
+//   explorer_filter             the explorer search filter's text
+//   explorer_filter_focused     1 if the explorer filter has the keyboard
+//   explorer_row_height         explorer row height in pixels
 //   explorer_on_right           1 if the explorer is docked on the right
 //   bottom_visible              1 if the bottom tool window (Output, Problems) is shown
 //   settings_rows               rows the Settings tab shows (the filter's matches)
