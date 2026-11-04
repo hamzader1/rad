@@ -132,13 +132,20 @@ them), then layout (C), tabs (D), the gutter (E), drag and drop (F).
   switch, value + slider, revert button (changed settings only); enums and
   the theme open a menu of their options. Keyboard: Up/Down, Space/Enter,
   Left/Right; typing filters. Not yet: typing a number into a value.
-- [ ] **B2. The settings themselves** (first set). 2026-11-04: in the table
+- [x] **B2. The settings themselves** (first set). 2026-11-04: in the table
   and applied: all animations, opaque backgrounds, blur, drop shadows,
   rounded corners, density (row and tab heights), UI and code font sizes,
   smooth/hint text, Mouse Wheel Zoom, line numbers, tab width, scope
   lines/annotations, theme, Alt focuses the menu bar, explorer side and
   compact rows. Left: tab overflow and close button (D), scroll past end,
   font faces.
+  Done 2026-11-04 (script `settings_more`): Tab Close Button (On Hover /
+  Always), Scroll Past End (on = raddbg's), UI Font / Code Font (raddbg's
+  `main_font` / `code_font`, a new String kind edited in place: Enter or
+  double-click starts, Enter commits, Esc cancels). The font provider
+  takes a file name looked up in the user and system font folders
+  (`consola.ttf`) or a path, not a family name (raddbg's behavior); one
+  that does not open falls back to the built-in font.
   - Animations (all), Scrolling Animations ("smooth movement"), Tooltip
     Animations, Menu Animations, Cursor Trail (raddbg's).
   - Transparency: Opaque Backgrounds, Background Blur (raddbg's); Drop

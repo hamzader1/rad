@@ -245,6 +245,15 @@ struct RAD_SettingsState
   // rad: the setting whose options menu is open (enums, the theme)
   U64 menu_setting;
 
+  // rad: a String setting edited in place (raddbg's watch cell editing:
+  // Enter/double-click starts, Enter commits, Esc cancels)
+  B32 text_editing;
+  U64 edit_setting;
+  U8 edit_buffer[512];
+  U64 edit_size;
+  U64 edit_cursor;
+  U64 edit_mark;
+
   // rad: layout of the last build (scripted input aims with it); per
   // setting, zero if not visible
   U64 layout_frame;

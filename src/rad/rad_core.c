@@ -91,6 +91,14 @@ rad_settings_from_cfg(void)
     }
     F64 v = info->default_value;
     B32 good = 1;
+    if(info->kind == RAD_SettingKind_String)
+    {
+      // rad: copied (the user file's node may change during the frame)
+      U64 size = Min(value.size, sizeof(rad_state->setting_string_buffers[idx]));
+      MemoryCopy(rad_state->setting_string_buffers[idx], value.str, size);
+      *(String8 *)((U8 *)&s + info->offset) = str8(rad_state->setting_string_buffers[idx], size);
+      continue;
+    }
     switch(info->kind)
     {
       default:{good = 0;}break;
@@ -175,6 +183,10 @@ rad_setting_value_string(Arena *arena, RAD_Settings *settings, U64 idx)
     {
       result = rad_theme_preset_code_string_table[Min((U64)v, RAD_ThemePreset_COUNT-1)];
     }break;
+    case RAD_SettingKind_String:
+    {
+      result = push_str8_copy(arena, *(String8 *)((U8 *)settings + info->offset));
+    }break;
   }
   return result;
 }
@@ -229,6 +241,44 @@ rad_setting_set_f64(String8 name, F64 value)
     rad_request_frame();
     scratch_end(scratch);
     break;
+  }
+}
+
+internal void
+rad_setting_set_string(String8 name, String8 value)
+{
+  // NOTE(rad): String settings (fonts): written as is; empty = the default
+  value = str8_skip_chop_whitespace(value);
+  if(value.size == 0)
+  {
+    rad_setting_revert(name);
+  }
+  else
+  {
+    CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+    if(user != &cfg_nil_node)
+    {
+      CFG_Node *settings = cfg_node_child_from_string(user, str8_lit("settings"));
+      if(settings == &cfg_nil_node)
+      {
+        settings = cfg_node_new(rad_state->cfg, user, str8_lit("settings"));
+      }
+      CFG_Node *node = cfg_node_child_from_string(settings, name);
+      if(node == &cfg_nil_node)
+      {
+        node = cfg_node_new(rad_state->cfg, settings, name);
+      }
+      if(node->first == &cfg_nil_node)
+      {
+        cfg_node_new(rad_state->cfg, node, value);
+      }
+      else
+      {
+        cfg_node_equip_string(rad_state->cfg, node->first, value);
+      }
+    }
+    rad_state->settings = rad_settings_from_cfg();
+    rad_request_frame();
   }
 }
 
@@ -4169,7 +4219,7 @@ rad_window_frame(RAD_Window *ws)
                         ui_label(tab_is_pinned ? str8_lit("Unpin Tab") : str8_lit("Pin Tab"));
                       }
                     }
-                    if(!rad_tab_is_tool(tab) && !tab_is_selected && !tab_is_hovered)
+                    if(!rad_tab_is_tool(tab) && !tab_is_selected && !tab_is_hovered && rad_state->settings.tab_close_button == 0)
                     {
                       ui_spacer(ui_px(tab_close_width_px, 1.f));
                     }
@@ -6451,6 +6501,31 @@ rad_frame(void)
   //- rad: settings: defaults + the user file (rad.mdesk RAD_SettingTable)
   //
   rad_state->settings = rad_settings_from_cfg();
+
+  //////////////////////////////
+  //- rad: get fonts from settings (raddbg's "get fonts from config", with
+  // `use_alternative_font_for_ui`: a name or a path; one that does not open
+  // -> the built-in font)
+  //
+  {
+    String8 names[] = {rad_state->settings.main_font, rad_state->settings.code_font};
+    RAD_FontSlot slots[] = {RAD_FontSlot_Main, RAD_FontSlot_Code};
+    String8 *defaults[] = {&rad_default_main_font_bytes, &rad_default_code_font_bytes};
+    for EachElement(idx, slots)
+    {
+      FNT_Tag tag = fnt_tag_zero();
+      if(names[idx].size != 0)
+      {
+        tag = fnt_tag_from_path(names[idx]);
+      }
+      rad_state->font_slot_is_custom[slots[idx]] = !fnt_tag_match(tag, fnt_tag_zero());
+      if(fnt_tag_match(tag, fnt_tag_zero()))
+      {
+        tag = fnt_tag_from_static_data_string(defaults[idx]);
+      }
+      rad_state->font_slot_table[slots[idx]] = tag;
+    }
+  }
 
   //////////////////////////////
   //- rad: tool window layout of every window (before commands run)

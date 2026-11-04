@@ -1,0 +1,79 @@
+# Settings (task B2, the rest): Scroll Past End, Tab Close Button, and the
+# UI Font / Code Font text settings (raddbg's main_font / code_font: a name
+# or a path, edited in place in the Settings tab; one that does not open
+# falls back to the built-in font).
+
+open ../fixtures/lines_3000.txt
+wait_idle
+
+# Scroll Past End on (default, raddbg's): the last line can reach the top
+# (3001 lines: the file ends with a line break)
+key ctrl+end
+wait_idle
+wheel 60 tab_code "lines_3000.txt"
+wait_idle
+expect visible_first > 2990
+set_setting scroll_past_end 0
+wait_frames 3
+wheel 60 tab_code "lines_3000.txt"
+wait_idle
+expect visible_last == 3001
+expect visible_first < 2990
+set_setting scroll_past_end 1
+wait_idle
+
+# Tab Close Button: Always -> unselected tabs have one too
+open ../fixtures/edit.txt
+wait_idle
+expect tab_count == 3
+set_setting tab_close_button 1
+wait_frames 3
+mouse code 1 1
+wait_frames 3
+click tab_close lines_3000.txt
+wait_idle
+expect tab_count == 2
+expect tab == "edit.txt"
+set_setting tab_close_button 0
+wait_idle
+
+# Code Font: Enter starts editing, typing, Enter commits
+cmd settings
+wait_idle
+click setting_row code_font
+wait_frames 2
+expect settings_selected == "code_font"
+key return
+wait_frames 2
+expect settings_editing == 1
+text "consola.ttf"
+key return
+wait_idle
+expect settings_editing == 0
+expect setting code_font == "consola.ttf"
+expect font_custom code == 1
+expect font_custom main == 0
+
+# a font that does not open: the built-in one
+key return
+wait_frames 2
+key ctrl+a
+text "NoSuchFont123"
+key return
+wait_idle
+expect setting code_font == "NoSuchFont123"
+expect font_custom code == 0
+
+# Esc cancels an edit; the revert button empties it (built-in)
+key return
+wait_frames 2
+text "Arial"
+key esc
+wait_idle
+expect settings_editing == 0
+expect setting code_font == "NoSuchFont123"
+click setting_revert code_font
+wait_idle
+expect setting code_font == ""
+expect font_custom code == 0
+quit

@@ -421,7 +421,8 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   else if(str8_match(name, str8_lit("settings_rows"), 0) ||
           str8_match(name, str8_lit("settings_selected"), 0) ||
           str8_match(name, str8_lit("settings_filter"), 0) ||
-          str8_match(name, str8_lit("settings_filter_focused"), 0))
+          str8_match(name, str8_lit("settings_filter_focused"), 0) ||
+          str8_match(name, str8_lit("settings_editing"), 0))
   {
     // rad: the Settings tab: rows shown, selected setting, filter
     CFG_Node *tab = rad_script_window_tab(str8_lit("settings"));
@@ -445,11 +446,21 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       {
         value = push_str8_copy(arena, str8(ss->filter_buffer, ss->filter_size));
       }
+      else if(str8_match(name, str8_lit("settings_editing"), 0))
+      {
+        value = push_str8f(arena, "%i", (int)!!ss->text_editing);
+      }
       else
       {
         value = push_str8f(arena, "%i", (int)!!ss->filter_focused);
       }
     }
+  }
+  else if(str8_match(name, str8_lit("font_custom"), 0))
+  {
+    // rad: 1 if the UI Font (main) / Code Font (code) setting opened a font
+    RAD_FontSlot slot = (args_count >= 2 && str8_match(args[1], str8_lit("code"), 0) ? RAD_FontSlot_Code : RAD_FontSlot_Main);
+    value = push_str8f(arena, "%i", (int)!!rad_state->font_slot_is_custom[slot]);
   }
   else if(str8_match(name, str8_lit("menu_bar_focused"), 0))
   {

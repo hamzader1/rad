@@ -140,6 +140,8 @@
 //   settings_selected           the selected setting's name ("" = none)
 //   settings_filter             the Settings filter's text
 //   settings_filter_focused     1 if the filter has the keyboard
+//   settings_editing            1 while a text setting (a font) is edited in place
+//   font_custom <main|code>     1 if the UI Font / Code Font setting opened a font
 //   setting <name>              a setting's value as stored (enums: the option's name)
 //   editor_font_size            the editor view's font size (code font setting)
 //   panel_tabs <n>              editor panel n's tab names, space-separated

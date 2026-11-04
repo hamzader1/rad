@@ -1131,6 +1131,7 @@ RAD_SettingTable:
   {explorer_side                Enum  U64 0   0  1  Layout     "Explorer Side"                 "The side of the window the explorer is docked to." "Left|Right"}
   {explorer_compact_rows        Bool  B32 0   0  1  Layout     "Compact Explorer Rows"         "Shorter explorer rows (2 font sizes), for big folders." ""}
   {tab_overflow                 Enum  U64 0   0  1  Layout     "Tab Overflow"                  "When the tabs do not fit: one row, scrolled with the mouse wheel, with a list of all tabs (Scroll); or more rows (Wrap)." "Scroll|Wrap"}
+  {tab_close_button             Enum  U64 0   0  1  Layout     "Tab Close Button"              "Which tabs show their close button: the selected and the hovered one (On Hover), or every tab (Always)." "On Hover|Always"}
   {opaque_backgrounds           Bool  B32 0   0  1  Appearance "Opaque Backgrounds"            "Controls whether or not all floating background colors are forced to be fully opaque." ""}
   {background_blur              Bool  B32 1   0  1  Appearance "Background Blur"               "Controls whether or not occluded regions behind floating elements are blurred." ""}
   {drop_shadows                 Bool  B32 1   0  1  Appearance "Drop Shadows"                  "Controls whether or not drop shadows are drawn." ""}
@@ -1140,6 +1141,8 @@ RAD_SettingTable:
   {tooltip_animations           Bool  B32 1   0  1  Animations "Tooltip Animations"            "Enables tooltip animations." ""}
   {menu_animations              Bool  B32 1   0  1  Animations "Menu Animations"               "Enables menu animations." ""}
   {cursor_trail                 Bool  B32 1   0  1  Animations "Cursor Trail"                  "Controls whether or not a movement trail animation of the cursor is drawn." ""}
+  {main_font                    String String8 0 0 0 Fonts     "UI Font"                       "A font file name (looked up in the user and system fonts folders, e.g. segoeui.ttf) or path, for non-code UI elements; empty: the built-in font." ""}
+  {code_font                    String String8 0 0 0 Fonts     "Code Font"                     "A font file name (looked up in the user and system fonts folders, e.g. consola.ttf) or path, for code; empty: the built-in font." ""}
   {font_size                    U64   U64 11  6  72 Fonts      "UI Font Size"                  "The font size of menus, tabs, panels and lists (Alt+= / Alt+-)." ""}
   {code_font_size               U64   U64 11  6  72 Fonts      "Code Font Size"                "The font size of the editor and the Output text only (Ctrl+Shift+= / Ctrl+Shift+-, Ctrl+0 resets)." ""}
   {mouse_wheel_zoom             Bool  B32 1   0  1  Fonts      "Mouse Wheel Zoom"              "Whether to zoom the editor font size with the mouse wheel while holding the primary modifier key (Ctrl on Windows, Cmd on macOS)." ""}
@@ -1149,6 +1152,7 @@ RAD_SettingTable:
   {hint_code_text               Bool  B32 1   0  1  Fonts      "Hint Code Text"                "Controls whether or not code text is hinted, for better text readability at small sizes." ""}
   {show_line_numbers            Bool  B32 1   0  1  Editor     "Line Numbers"                  "Shows line numbers in text views." ""}
   {tab_width                    U64   U64 2   1  16 Editor     "Tab Width"                     "The width of a tab character, in spaces." ""}
+  {scroll_past_end              Bool  B32 1   0  1  Editor     "Scroll Past End"               "Lets text views scroll until their last line is at the top (raddbg's); off: the last line stops at the bottom." ""}
   {cursor_scope_lines           Bool  B32 1   0  1  Editor     "Cursor Scope Lines"            "Controls whether or not scopes containing the cursor in text views are drawn." ""}
   {cursor_scope_end_annotations Bool  B32 1   0  1  Editor     "Cursor Scope End Annotations"  "Controls whether or not ending annotations for scopes containing the cursor are drawn." ""}
   {focus_menu_bar_with_alt      Bool  B32 1   0  1  Window     "Focus Menu Bar With Alt"       "Pressing and releasing Alt alone gives the keyboard to the menu bar." ""}
@@ -1161,6 +1165,7 @@ RAD_SettingTable:
   {F32}
   {Enum}
   {Theme}
+  {String}
 }
 
 @enum RAD_SettingKind:

@@ -303,6 +303,8 @@ struct RAD_State
 
   //- rad: fonts & icons
   FNT_Tag font_slot_table[RAD_FontSlot_COUNT];
+  B32 font_slot_is_custom[RAD_FontSlot_COUNT];      // a UI Font / Code Font setting took (scripts)
+  U8 setting_string_buffers[RAD_SettingCode_COUNT][512]; // String settings' values (RAD_Settings points here)
   R_Handle icon_texture;
 
   //- rad: user-facing error / warning (shown in the bottom bar, same as raddbg)
@@ -387,6 +389,7 @@ internal RAD_Settings rad_settings_from_cfg(void);
 internal CFG_Node *rad_setting_cfg_node(String8 name);
 internal void rad_setting_set_f64(String8 name, F64 value);
 internal void rad_setting_revert(String8 name);
+internal void rad_setting_set_string(String8 name, String8 value);
 internal RAD_ToolKind rad_tool_kind_from_panel(CFG_Node *panel);
 internal CFG_Node *rad_tool_panel_from_window(CFG_Node *window, RAD_ToolKind kind);
 internal B32 rad_tool_is_visible(CFG_Node *window, RAD_ToolKind kind);

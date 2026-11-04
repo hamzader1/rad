@@ -382,6 +382,22 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (task B2, the rest: fonts, scroll past end, close button)
+- Setting kind `String` (c type String8, pointing into
+  `rad_state->setting_string_buffers`, so a value survives the user
+  file's node changing); `rad_setting_set_string` (empty = revert).
+- rad_frame: "get fonts from settings" after reading the settings (port
+  of raddbg's, with `use_alternative_font_for_ui`); `font_slot_is_custom`
+  for scripts.
+- Settings view: String rows edit in place (raddbg's watch-cell editing:
+  `text_editing`, the row's `UI_FocusActive` on, the scroll list's Nav off
+  while editing); "Built-in" weak when empty.
+- Scroll Past End off: the Y range ends at total - visible + 2; a view
+  past it is moved to the max first (`ui_scroll_pt_clamp_idx` would send
+  it to the top).
+- Script fields `settings_editing`, `font_custom <main|code>`; script
+  `settings_more` (18). All 35 scripts pass.
+
 ### 2026-11-04 (tasks F1, F2: drag and drop)
 - rad_core.c "Drag/Drop": port of raddbg's `rd_drag_*` (Null / Dragging /
   Dropping; a left release sets Dropping, a drop site that is drop-hot

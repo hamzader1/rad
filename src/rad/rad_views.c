@@ -1830,6 +1830,17 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     line_size_x = ClampBot(line_size_x, (S64)code_area_dim.x);
     scroll_idx_rng[Axis2_X] = r1s64(0, line_size_x-(S64)code_area_dim.x);
     scroll_idx_rng[Axis2_Y] = r1s64(0, total_rows-1);
+    if(!rad_state->settings.scroll_past_end)
+    {
+      // rad: not in raddbg: the last line stops at the bottom (a view
+      // scrolled further stays at the end: ui_scroll_pt_clamp_idx would
+      // send it to the top)
+      scroll_idx_rng[Axis2_Y].max = Max(0, total_rows - (S64)num_possible_visible_lines + 2);
+      if(scroll_pos.y.idx > scroll_idx_rng[Axis2_Y].max)
+      {
+        ui_scroll_pt_target_idx(&scroll_pos.y, scroll_idx_rng[Axis2_Y].max);
+      }
+    }
   }
 
   //////////////////////////////
@@ -3919,6 +3930,7 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
   // goes to the filter. Filter has it: Down/Enter go to the list, Esc clears.
   //
   B32 open_menu_for_selected = 0;
+  B32 start_edit_for_selected = 0;
   UI_Focus(UI_FocusKind_On) if(ui_is_focus_active())
   {
     for(UI_Event *evt = 0; ui_next_event(&evt);)
@@ -3946,6 +3958,25 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
           {
             ss->filter_focused = 0;
           }
+          ui_eat_event(evt);
+        }
+        continue;
+      }
+      if(ss->text_editing)
+      {
+        // rad: a String setting is edited: Enter commits, Esc cancels; the
+        // rest goes to its cell
+        if(evt->kind == UI_EventKind_Press && evt->modifiers == 0 && (evt->key == WM_Key_Return || evt->key == WM_Key_Esc))
+        {
+          if(evt->key == WM_Key_Return && ss->edit_setting < RAD_SettingCode_COUNT)
+          {
+            rad_setting_set_string(rad_setting_info_table[ss->edit_setting].name, str8(ss->edit_buffer, ss->edit_size));
+          }
+          ss->text_editing = 0;
+          ui_eat_event(evt);
+        }
+        else if(evt->kind == UI_EventKind_Text && str8_match(evt->string, str8_lit("\n"), 0))
+        {
           ui_eat_event(evt);
         }
         continue;
@@ -3979,6 +4010,10 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
         else if(info->kind == RAD_SettingKind_Enum || info->kind == RAD_SettingKind_Theme)
         {
           open_menu_for_selected = 1;
+        }
+        else if(info->kind == RAD_SettingKind_String)
+        {
+          start_edit_for_selected = 1;
         }
         ui_eat_event(evt);
       }
@@ -4074,6 +4109,11 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
         scroll_list_params.flags         = UI_ScrollListFlag_All;
         scroll_list_params.row_height_px = row_height_px;
         scroll_list_params.dim_px        = v2f32(rect_dim.x, list_height_px);
+        if(ss->text_editing)
+        {
+          // rad: the edited cell gets the arrows (raddbg's watch view)
+          scroll_list_params.flags &= ~UI_ScrollListFlag_Nav;
+        }
         scroll_list_params.cursor_range  = r2s64(v2s64(0, 0), v2s64(0, rows_count));
         scroll_list_params.item_range    = r1s64(0, rows_count);
         scroll_list_params.cursor_min_is_empty_selection[Axis2_Y] = 1;
@@ -4097,7 +4137,8 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
           F64 value = rad_setting_f64_from_settings(settings, setting_idx);
           String8 value_string = rad_setting_value_string(scratch.arena, settings, setting_idx);
           CFG_Node *value_cfg = rad_setting_cfg_node(info->name);
-          B32 is_set = (value_cfg != &cfg_nil_node && value != info->default_value);
+          B32 is_set = (value_cfg != &cfg_nil_node && (info->kind == RAD_SettingKind_String ? value_string.size != 0 : value != info->default_value));
+          B32 row_editing = (ss->text_editing && ss->edit_setting == setting_idx);
 
           //- rad: name, value
           DR_FStrList meta_fstrs = {0};
@@ -4125,6 +4166,20 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
                                 .font = rad_font_from_slot(RAD_FontSlot_Icons),
                                 .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons),
                                 .size = ui_top_font_size()*0.8f);
+            }
+            else if(info->kind == RAD_SettingKind_String)
+            {
+              // rad: the name or path; empty: the built-in font (weak)
+              Vec4F32 weak_color = {0};
+              UI_TagF("weak") { weak_color = ui_color_from_name(str8_lit("text")); }
+              if(value_string.size != 0)
+              {
+                dr_fstrs_push_new(scratch.arena, &value_fstrs, &params, value_string);
+              }
+              else
+              {
+                dr_fstrs_push_new(scratch.arena, &value_fstrs, &params, str8_lit("Built-in"), .color = weak_color);
+              }
             }
           }
 
@@ -4170,9 +4225,18 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
             {
               cell_params.flags |= RAD_CellFlag_RevertButton;
             }
+            if(row_editing)
+            {
+              cell_params.pre_edit_value       = value_string;
+              cell_params.edit_buffer          = ss->edit_buffer;
+              cell_params.edit_buffer_size     = sizeof(ss->edit_buffer);
+              cell_params.edit_string_size_out = &ss->edit_size;
+              cell_params.cursor               = &ss->edit_cursor;
+              cell_params.mark                 = &ss->edit_mark;
+            }
             UI_WidthFill
               UI_FocusHot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off)
-              UI_FocusActive(UI_FocusKind_Off)
+              UI_FocusActive(row_editing ? UI_FocusKind_On : UI_FocusKind_Off)
             {
               sig = rad_cellf(&cell_params, "###setting_%S", info->name);
             }
@@ -4185,6 +4249,12 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
             ss->cursor = ss->mark = v2s64(0, row_idx+1);
             ss->filter_focused = 0;
             rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
+            if(ss->text_editing && ss->edit_setting != setting_idx && ss->edit_setting < RAD_SettingCode_COUNT)
+            {
+              // rad: another row pressed: the edit is committed
+              rad_setting_set_string(rad_setting_info_table[ss->edit_setting].name, str8(ss->edit_buffer, ss->edit_size));
+              ss->text_editing = 0;
+            }
           }
           if((ui_clicked(sig) || ui_clicked(row_sig)) &&
              (info->kind == RAD_SettingKind_Enum || info->kind == RAD_SettingKind_Theme))
@@ -4196,6 +4266,19 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
           {
             toggled = !toggled;
           }
+          if(info->kind == RAD_SettingKind_String && !row_editing &&
+             ((start_edit_for_selected && row_selected) || ui_double_clicked(sig) || ui_double_clicked(row_sig)))
+          {
+            // rad: start editing: the value, all selected
+            ss->text_editing  = 1;
+            ss->edit_setting  = setting_idx;
+            ss->edit_size     = Min(value_string.size, sizeof(ss->edit_buffer));
+            MemoryCopy(ss->edit_buffer, value_string.str, ss->edit_size);
+            ss->edit_cursor   = ss->edit_size;
+            ss->edit_mark     = 0;
+            ss->filter_focused = 0;
+          }
+
           if(open_menu_for_selected && row_selected)
           {
             ss->menu_setting = setting_idx;
