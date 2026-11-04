@@ -135,6 +135,8 @@ struct RAD_LspDocRoot
   RAD_LspDocRoot *next;
   U64 doc_id;
   String8 root;                 // empty: not in a Cargo project
+  B32 external;                 // a library's source (toolchain, cargo registry/git):
+                                // goes to an existing server, never starts one
 };
 
 // NOTE(rad): hover (Quick Info): the mouse rests on a token of a code view
@@ -157,6 +159,31 @@ struct RAD_LspHover
   String8 text;                 // (arena) markdown; empty: nothing to show
 };
 
+// NOTE(rad): Go To Definition: one request at a time (a newer one wins)
+typedef struct RAD_LspDefinition RAD_LspDefinition;
+struct RAD_LspDefinition
+{
+  B32 pending;
+  RAD_LspServer *server;
+  S64 request_id;
+  CFG_ID window;
+  String8 from_path;            // (arena) where the jump starts, for Navigate Backward
+  S64 from_line;
+  S64 from_column;
+  Arena *arena;
+};
+
+// NOTE(rad): Navigate Backward: where definition jumps started
+#define RAD_LSP_NAV_MAX 64
+typedef struct RAD_LspNavEntry RAD_LspNavEntry;
+struct RAD_LspNavEntry
+{
+  U8 path[512];
+  U64 path_size;
+  S64 line;
+  S64 column;
+};
+
 typedef struct RAD_LspState RAD_LspState;
 struct RAD_LspState
 {
@@ -169,6 +196,9 @@ struct RAD_LspState
   U64 diags_gen;
   U64 servers_started;
   RAD_LspHover hover;
+  RAD_LspDefinition definition;
+  RAD_LspNavEntry nav[RAD_LSP_NAV_MAX];
+  U64 nav_count;
 };
 
 ////////////////////////////////
@@ -218,6 +248,10 @@ internal String8 rad_lsp_status_string(Arena *arena, B32 *busy_out);
 internal String8 rad_lsp_markdown_from_hover(Arena *arena, JSON_Value *result);
 internal String8 rad_lsp_position_params(Arena *arena, RAD_Document *doc, U64 off, RAD_LspServer **server_out);
 internal String8 rad_lsp_hover_from_mouse(RAD_Document *doc, Rng1U64 token_range, U64 char_off);
+internal void rad_lsp_goto_definition(CFG_Node *window, CFG_Node *tab, RAD_Document *doc, U64 off);
+internal void rad_lsp_take_definition(RAD_LspServer *s, LSP_Message *m);
+internal void rad_lsp_navigate_back(CFG_Node *window);
+internal B32 rad_lsp_path_is_external(String8 path);
 
 ////////////////////////////////
 //~ rad: Problems Functions

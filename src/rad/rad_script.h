@@ -37,6 +37,7 @@
 //   mouse <target>              move the mouse
 //   click <target>              left click
 //   double_click <target>
+//   ctrl_click <target>         left click with Ctrl held
 //   drag <target> <target>      left press at the first, move, release at the second
 //   write_file <path> "<text>"  write a file on disk (as another program would)
 //   delete_file <path>
@@ -119,6 +120,8 @@
 //                               ready, ended (none also when rust-analyzer is missing)
 //   lsp_busy                    1 while it reports progress or is not quiescent
 //   lsp_status                  its bottom bar text ("" when idle)
+//   lsp_servers                 language servers started so far
+//   cursor_line_text            the editor's line at the cursor
 //   hover_text                  the hover tooltip's text (markdown; "" when none)
 //   hover_has "<text>"          1 if it contains the text
 //   diag_count diag_errors diag_warnings   problems: the last cargo command's

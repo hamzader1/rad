@@ -169,6 +169,8 @@ RAD_CmdKind_PrevError,
 RAD_CmdKind_ShowOutput,
 RAD_CmdKind_ShowProblems,
 RAD_CmdKind_ClearOutput,
+RAD_CmdKind_GoToDefinition,
+RAD_CmdKind_NavigateBack,
 RAD_CmdKind_GoToLocation,
 RAD_CmdKind_COUNT,
 } RAD_CmdKind;

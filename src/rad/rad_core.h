@@ -153,6 +153,9 @@ struct RAD_CmdParams
   String8 file_path;
   S64 line_num;
   S64 column_num;
+  B32 column_in_bytes;      // rad: column_num counts UTF-8 bytes (language servers)
+  B32 has_text_offset;      // rad: text_offset is a position in the tab's text
+  U64 text_offset;
   String8 string;
 };
 

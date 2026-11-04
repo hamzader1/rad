@@ -362,7 +362,7 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
           str8_match(name, str8_lit("line_count"), 0) || str8_match(name, str8_lit("line"), 0) ||
           str8_match(name, str8_lit("token"), 0) ||
           str8_match(name, str8_lit("visible_first"), 0) || str8_match(name, str8_lit("visible_last"), 0) ||
-          str8_match(name, str8_lit("dirty"), 0))
+          str8_match(name, str8_lit("dirty"), 0) || str8_match(name, str8_lit("cursor_line_text"), 0))
   {
     RAD_CodeViewState *cv = 0;
     RAD_Document *doc = 0;
@@ -381,6 +381,10 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       if(str8_match(name, str8_lit("cursor_line"), 0) || str8_match(name, str8_lit("mark_line"), 0))
       {
         value = push_str8f(arena, "%I64u", line_num);
+      }
+      else if(str8_match(name, str8_lit("cursor_line_text"), 0))
+      {
+        value = memory_map_data_from_range(arena, &text.patched.memory_map, line_range);
       }
       else if(str8_match(name, str8_lit("cursor_col"), 0) || str8_match(name, str8_lit("mark_col"), 0))
       {
@@ -587,6 +591,10 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   }
 
   //- rad: hover tooltip
+  else if(str8_match(name, str8_lit("lsp_servers"), 0))
+  {
+    value = push_str8f(arena, "%I64u", rad_lsp->servers_started);
+  }
   else if(str8_match(name, str8_lit("hover_text"), 0))
   {
     value = (rad_lsp->hover.answered ? rad_lsp->hover.text : str8_zero());
@@ -1141,6 +1149,7 @@ rad_script_inject(RAD_ScriptInput *input)
                            WM_EventKind_Release);
       WM_Event *evt = wm_sim_push_event(window, kind);
       evt->pos = input->pos;
+      evt->modifiers = input->modifiers;
       if(input->kind == RAD_ScriptInputKind_Wheel)
       {
         // NOTE(rad): same sign as win32 (WM_MOUSEWHEEL): +y scrolls down
@@ -1300,18 +1309,20 @@ rad_script_run_line(RAD_ScriptLine *line)
       }
     }
   }
-  else if(str8_match(cmd, str8_lit("mouse"), 0) || str8_match(cmd, str8_lit("click"), 0) || str8_match(cmd, str8_lit("double_click"), 0))
+  else if(str8_match(cmd, str8_lit("mouse"), 0) || str8_match(cmd, str8_lit("click"), 0) || str8_match(cmd, str8_lit("double_click"), 0) ||
+          str8_match(cmd, str8_lit("ctrl_click"), 0))
   {
     U64 used = 0;
     Vec2F32 pos = {0};
     if(rad_script_target(scratch.arena, args, args_count, &used, &pos, &error))
     {
       rad_script_push_input(RAD_ScriptInputKind_MouseMove, pos);
-      U64 click_count = (str8_match(cmd, str8_lit("click"), 0) ? 1 : str8_match(cmd, str8_lit("double_click"), 0) ? 2 : 0);
+      U64 click_count = (str8_match(cmd, str8_lit("mouse"), 0) ? 0 : str8_match(cmd, str8_lit("double_click"), 0) ? 2 : 1);
+      WM_Modifiers modifiers = (str8_match(cmd, str8_lit("ctrl_click"), 0) ? WM_Modifier_Ctrl : 0);
       for EachIndex(idx, click_count)
       {
-        rad_script_push_input(RAD_ScriptInputKind_MousePress, pos);
-        rad_script_push_input(RAD_ScriptInputKind_MouseRelease, pos);
+        rad_script_push_input(RAD_ScriptInputKind_MousePress, pos)->modifiers = modifiers;
+        rad_script_push_input(RAD_ScriptInputKind_MouseRelease, pos)->modifiers = modifiers;
       }
     }
   }

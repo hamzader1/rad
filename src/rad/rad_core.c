@@ -3961,6 +3961,30 @@ rad_exec_cmd(RAD_Cmd *cmd)
       RAD_CodeViewState *cv = &rad_view_state_from_cfg(tab)->cv;
       cv->goto_line_num = Max(1, cmd->params.line_num);
       cv->goto_column_num = cmd->params.column_num;
+      cv->goto_column_in_bytes = cmd->params.column_in_bytes;
+    }break;
+
+    //- rad: language server: definition (the tab's cursor, or a given
+    // offset: Ctrl+click); back to where the last jumps came from
+    case RAD_CmdKind_GoToDefinition:
+    {
+      CFG_Node *tab = cfg_node_from_id(cmd->params.tab);
+      if(tab == &cfg_nil_node)
+      {
+        tab = tab_cfg;
+      }
+      RAD_Document *doc = rad_document_from_tab(tab);
+      if(doc != 0 && window != &cfg_nil_node)
+      {
+        RAD_CodeViewState *cv = &rad_view_state_from_cfg(tab)->cv;
+        U64 off = (cmd->params.has_text_offset ? cmd->params.text_offset : cv->cursor);
+        rad_lsp_goto_definition(window, tab, doc, off);
+      }
+    }break;
+    case RAD_CmdKind_NavigateBack:
+    if(window != &cfg_nil_node)
+    {
+      rad_lsp_navigate_back(window);
     }break;
   }
   scratch_end(scratch);

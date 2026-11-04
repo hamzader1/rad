@@ -32,7 +32,7 @@ optimized build in `build\release\rad.exe` at the end of every milestone.
 | 6. Editor essentials                 | Done. 13 scripts, 210 checks, all pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 7. Rust syntax highlighting          | Done. Rust lexing in the `text` layer (see below, `docs/notes/04-syntax-highlighting.md`); 14 scripts, 242 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 8. Cargo integration                 | Done. `json` layer; cargo runner (Build, Check, Run, Test, Stop; Debug/Release), Output + Problems tabs, diagnostics in the editor, clickable locations, Run in a terminal window, top-bar run toolbar with the user's icons (see journal). 18 scripts, 368 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
-| 9. LSP client                        | In progress: `lsp` layer; rust-analyzer started per Cargo workspace, documents synced, diagnostics in Problems and the editor (see journal). Next: hover, go to definition, completion. |
+| 9. LSP client                        | In progress: `lsp` layer; rust-analyzer started per Cargo workspace, documents synced, diagnostics in Problems and the editor, hover, go to definition (see journal). Next: completion. |
 | 10. Remove debugger, rebrand         | Not started. |
 | 11-13. Mac foundation, Mac UI, debugging | Not started. |
 
@@ -343,6 +343,20 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-04 (milestone 9, step 4: go to definition)
+- Go To Definition (F12, Ctrl+click, as in VS2022) sends
+  textDocument/definition (pending edits first); the answer (Location,
+  Location[] or LocationLink[]: the first one) opens the file through
+  GoToLocation, at the UTF-8 column (`column_in_bytes`). Navigate Backward
+  (Alt+Left) returns to where the jump started (64-entry stack). "No
+  definition found." in the bottom bar otherwise.
+- Library sources (`.rustup/toolchains`, `.cargo/registry`, `.cargo/git`)
+  never start a server: they attach to the server that answered (or the
+  first one), so std files get hover and further jumps.
+- Script `lsp_definition` (14); fields lsp_servers, cursor_line_text;
+  command ctrl_click. 21 scripts pass (`file_watch` failed once on its
+  sleep timing under load, then passed 3 of 3: flaky, not this change).
 
 ### 2026-11-04 (milestone 9, step 3: hover)
 - Hover (Quick Info): the mouse resting 500 ms on a token (the code slice

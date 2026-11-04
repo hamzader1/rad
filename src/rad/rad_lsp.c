@@ -258,8 +258,20 @@ rad_lsp_server_from_root(String8 root)
 internal RAD_LspServer *
 rad_lsp_server_from_path(String8 path)
 {
-  // NOTE(rad): the server whose root holds `path`
+  // NOTE(rad): the server whose root holds `path`; else one that has a
+  // document with that path open (library files)
   RAD_LspServer *result = 0;
+  for(RAD_LspServer *s = rad_lsp->first_server; s != 0 && result == 0; s = s->next)
+  {
+    for(RAD_LspDoc *ld = s->first_doc; ld != 0; ld = ld->next)
+    {
+      if(str8_match(ld->path, path, StringMatchFlag_CaseInsensitive|StringMatchFlag_SlashInsensitive))
+      {
+        result = s;
+        break;
+      }
+    }
+  }
   for(RAD_LspServer *s = rad_lsp->first_server; s != 0; s = s->next)
   {
     if(path.size > s->root.size &&
@@ -436,8 +448,29 @@ rad_lsp_document_saved(RAD_Document *doc)
   }
 }
 
-internal String8
-rad_lsp_doc_root(RAD_Document *doc)
+internal B32
+rad_lsp_path_is_external(String8 path)
+{
+  // NOTE(rad): library sources a definition jump can open: the toolchain's
+  // std (rust-src), crates.io and git dependencies
+  Temp scratch = scratch_begin(0, 0);
+  String8 p = lower_from_str8(scratch.arena, path);
+  for EachIndex(idx, p.size)
+  {
+    if(p.str[idx] == '\\')
+    {
+      p.str[idx] = '/';
+    }
+  }
+  B32 result = (str8_find_needle(p, 0, str8_lit("/.rustup/toolchains/"), 0) < p.size ||
+                str8_find_needle(p, 0, str8_lit("/.cargo/registry/"), 0) < p.size ||
+                str8_find_needle(p, 0, str8_lit("/.cargo/git/"), 0) < p.size);
+  scratch_end(scratch);
+  return result;
+}
+
+internal RAD_LspDocRoot *
+rad_lsp_doc_root_entry(RAD_Document *doc)
 {
   // NOTE(rad): cached per document (one look at the disk per open file)
   RAD_LspDocRoot *entry = 0;
@@ -453,10 +486,11 @@ rad_lsp_doc_root(RAD_Document *doc)
   {
     entry = push_array(rad_lsp->arena, RAD_LspDocRoot, 1);
     entry->doc_id = doc->id;
-    entry->root = rad_lsp_root_from_path(rad_lsp->arena, doc->path);
+    entry->external = rad_lsp_path_is_external(doc->path);
+    entry->root = (entry->external ? str8_zero() : rad_lsp_root_from_path(rad_lsp->arena, doc->path));
     SLLStackPush(rad_lsp->first_doc_root, entry);
   }
-  return entry->root;
+  return entry;
 }
 
 ////////////////////////////////
@@ -666,6 +700,10 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
           s->state = RAD_LspServerState_Ready;
         }
       }
+      else if(rad_lsp->definition.pending && rad_lsp->definition.server == s && m.id == rad_lsp->definition.request_id)
+      {
+        rad_lsp_take_definition(s, &m);
+      }
       else if(rad_lsp->hover.requested && !rad_lsp->hover.answered &&
               rad_lsp->hover.server == s && m.id == rad_lsp->hover.request_id)
       {
@@ -838,6 +876,99 @@ rad_lsp_hover_from_mouse(RAD_Document *doc, Rng1U64 token_range, U64 char_off)
   return (h->answered ? h->text : str8_zero());
 }
 
+internal void
+rad_lsp_goto_definition(CFG_Node *window, CFG_Node *tab, RAD_Document *doc, U64 off)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RAD_LspDefinition *d = &rad_lsp->definition;
+  RAD_LspServer *s = 0;
+  String8 params = rad_lsp_position_params(scratch.arena, doc, off, &s);
+  if(params.size == 0)
+  {
+    rad_set_error(str8_lit("Go To Definition needs rust-analyzer running for this file (it starts when a .rs file of a Cargo project is open)."));
+  }
+  else
+  {
+    arena_clear(d->arena);
+    d->pending = 1;
+    d->server = s;
+    d->window = window->id;
+    d->request_id = lsp_client_request(s->client, str8_lit("textDocument/definition"), params);
+
+    // rad: where the jump starts (Navigate Backward)
+    d->from_path = push_str8_copy(d->arena, doc->path);
+    d->from_line = 1;
+    d->from_column = 1;
+    Access *access = access_open();
+    TB_Text text = tb_text_from_buffer(scratch.arena, access, doc->buffer);
+    access_close(access);
+    if(text.base_info.lines_count != 0)
+    {
+      RAD_CodeViewState *cv = &rad_view_state_from_cfg(tab)->cv;
+      rad_line_column_from_offset(&text.patched, cv->cursor, &d->from_line, &d->from_column);
+    }
+  }
+  scratch_end(scratch);
+}
+
+internal void
+rad_lsp_take_definition(RAD_LspServer *s, LSP_Message *m)
+{
+  // NOTE(rad): Location | Location[] | LocationLink[] | null -> the first one
+  Temp scratch = scratch_begin(0, 0);
+  RAD_LspDefinition *d = &rad_lsp->definition;
+  d->pending = 0;
+  JSON_Value *loc = (m->result->kind == JSON_ValueKind_Array ? m->result->first : m->result);
+  JSON_Value *uri = json_value_from_key(loc, str8_lit("uri"));
+  JSON_Value *range = json_value_from_key(loc, str8_lit("range"));
+  if(uri->kind != JSON_ValueKind_String)
+  {
+    uri = json_value_from_key(loc, str8_lit("targetUri"));
+    range = json_value_from_key(loc, str8_lit("targetSelectionRange"));
+  }
+  String8 path = rad_lsp_path_from_uri(scratch.arena, json_string_from_value(uri));
+  CFG_Node *window = cfg_node_from_id(d->window);
+  if(path.size == 0)
+  {
+    rad_set_error(str8_lit("No definition found."));
+  }
+  else if(window != &cfg_nil_node)
+  {
+    JSON_Value *start = json_value_from_key(range, str8_lit("start"));
+    S64 line = json_s64_from_value(json_value_from_key(start, str8_lit("line"))) + 1;
+    S64 column = json_s64_from_value(json_value_from_key(start, str8_lit("character"))) + 1;
+
+    // rad: remember where it came from
+    if(rad_lsp->nav_count == RAD_LSP_NAV_MAX)
+    {
+      MemoryCopy(&rad_lsp->nav[0], &rad_lsp->nav[1], sizeof(rad_lsp->nav[0])*(RAD_LSP_NAV_MAX-1));
+      rad_lsp->nav_count -= 1;
+    }
+    RAD_LspNavEntry *e = &rad_lsp->nav[rad_lsp->nav_count];
+    rad_lsp->nav_count += 1;
+    e->path_size = Min(d->from_path.size, sizeof(e->path));
+    MemoryCopy(e->path, d->from_path.str, e->path_size);
+    e->line = d->from_line;
+    e->column = d->from_column;
+
+    rad_cmd(RAD_CmdKind_GoToLocation, .window = window->id, .file_path = path,
+            .line_num = line, .column_num = column, .column_in_bytes = s->utf8_positions);
+  }
+  scratch_end(scratch);
+}
+
+internal void
+rad_lsp_navigate_back(CFG_Node *window)
+{
+  if(rad_lsp->nav_count != 0)
+  {
+    rad_lsp->nav_count -= 1;
+    RAD_LspNavEntry *e = &rad_lsp->nav[rad_lsp->nav_count];
+    rad_cmd(RAD_CmdKind_GoToLocation, .window = window->id, .file_path = str8(e->path, e->path_size),
+            .line_num = e->line, .column_num = e->column);
+  }
+}
+
 ////////////////////////////////
 //~ rad: Language Server Functions
 
@@ -848,6 +979,7 @@ rad_lsp_init(void)
   rad_lsp = push_array(arena, RAD_LspState, 1);
   rad_lsp->arena = arena;
   rad_lsp->hover.arena = arena_alloc();
+  rad_lsp->definition.arena = arena_alloc();
   Arena *problems_arena = arena_alloc();
   rad_problems = push_array(problems_arena, RAD_Problems, 1);
   rad_problems->arena = arena_alloc();
@@ -895,15 +1027,21 @@ rad_lsp_tick(void)
     {
       continue;
     }
-    String8 root = rad_lsp_doc_root(doc);
-    if(root.size == 0)
+    RAD_LspDocRoot *root_entry = rad_lsp_doc_root_entry(doc);
+    String8 root = root_entry->root;
+    RAD_LspServer *s = 0;
+    if(root_entry->external)
     {
-      continue;
+      // rad: a library file: the server that jumped there (or the first)
+      s = (rad_lsp->definition.server != 0 ? rad_lsp->definition.server : rad_lsp->first_server);
     }
-    RAD_LspServer *s = rad_lsp_server_from_root(root);
-    if(s == 0 && !rad_lsp->not_found && !rad_lsp->disabled)
+    else if(root.size != 0)
     {
-      s = rad_lsp_server_start(root);
+      s = rad_lsp_server_from_root(root);
+      if(s == 0 && !rad_lsp->not_found && !rad_lsp->disabled)
+      {
+        s = rad_lsp_server_start(root);
+      }
     }
     if(s == 0 || s->state == RAD_LspServerState_Ended)
     {

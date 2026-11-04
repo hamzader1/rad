@@ -1085,6 +1085,10 @@ RAD_CmdTable:
   {ShowProblems           show_problems        "Problems"             WarningSmall      Null       0      0      0      Null     0         0           0         0 }
   {ClearOutput            clear_output         "Clear Output"         Trash             Null       0      0      0      Null     0         0           0         0 }
 
+  //- rad: language server (Visual Studio's keys)
+  {GoToDefinition         goto_definition      "Go To Definition"     Target            F12        0      0      0      Null     0         0           0         0 }
+  {NavigateBack           navigate_back        "Navigate Backward"    LeftArrow         Left       0      0      alt    Null     0         0           0         0 }
+
   //- rad: locations (internal; no default bindings)
   {GoToLocation           goto_location        "Go To Location"       Null              Null       0      0      0      Null     0         0           0         0 }
 }

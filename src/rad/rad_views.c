@@ -1025,8 +1025,10 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
   {
     S64 line_num = cv->goto_line_num;
     S64 column_num = cv->goto_column_num;
+    B32 column_in_bytes = cv->goto_column_in_bytes;
     cv->goto_line_num = 0;
     cv->goto_column_num = 0;
+    cv->goto_column_in_bytes = 0;
     line_num = Clamp(1, line_num, (S64)text_patched.line_map.total_line_count);
     Rng1U64 range = txt_range_from_line_num(&text_patched.line_map, line_num);
     cv->cursor = cv->mark = range.min;
@@ -1034,7 +1036,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     // rad: not in raddbg: a column too (Go To Location: 1-based, characters)
     if(column_num > 1)
     {
-      cv->cursor = cv->mark = rad_offset_from_line_column(&text_patched, line_num, column_num, 0);
+      cv->cursor = cv->mark = rad_offset_from_line_column(&text_patched, line_num, column_num, column_in_bytes);
       cv->preferred_column = (S64)(cv->cursor - range.min);
     }
     cv->center_cursor = !cv->force_contain_only && (!cv->contain_cursor || (line_num < target_visible_line_num_range.min+4 || target_visible_line_num_range.max-4 < line_num));
@@ -1067,6 +1069,12 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       {
         rad_markdown_ui(hover_text, ui_top_font_size()*45.f, 24);
       }
+    }
+
+    //- rad: not in raddbg: Ctrl+click on a token -> Go To Definition
+    if(ui_pressed(sig.base) && (sig.base.event_flags & WM_Modifier_Ctrl) && sig.mouse_over_text)
+    {
+      rad_cmd(RAD_CmdKind_GoToDefinition, .tab = tab->id, .has_text_offset = 1, .text_offset = sig.mouse_char_off);
     }
 
     //- rad: double-click -> remember where (the Output view goes to the

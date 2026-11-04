@@ -1,0 +1,43 @@
+#! timeout: 300
+# Go To Definition (F12, Ctrl+click) and Navigate Backward (Alt+Left), as
+# in Visual Studio. A definition in std opens rust-src's file in a new tab;
+# that file goes to the same rust-analyzer (no second server).
+
+lsp on
+open_folder ../fixtures/cargo_run
+wait_idle
+open ../fixtures/cargo_run/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+
+# F12 on `add` in `add(2, 3)` (line 8) -> `fn add` (line 1, column 4)
+click code 8 30
+wait_idle
+key f12
+wait_until 15000 cursor_line == 1
+expect cursor_col == 4
+expect tab == "main.rs"
+
+# Alt+Left: back to the call
+key alt+left
+wait_until 5000 cursor_line == 8
+expect cursor_col == 30
+
+# Ctrl+click `println` (line 6) -> std's macro, in a new tab
+ctrl_click code 6 7
+wait_until 15000 tab == "macros.rs"
+wait_idle
+expect cursor_line_text == "macro_rules! println {"
+expect lsp_servers == 1
+key alt+left
+wait_until 5000 tab == "main.rs"
+expect cursor_line == 6
+
+# nothing to go to (inside a string literal)
+click code 6 20
+wait_idle
+key f12
+wait_until 15000 error == "No definition found."
+expect tab == "main.rs"
+quit

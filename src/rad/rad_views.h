@@ -52,6 +52,7 @@ struct RAD_CodeViewState
   // rad: per-frame command info
   S64 goto_line_num;
   S64 goto_column_num;
+  B32 goto_column_in_bytes;
   U8 find_text_buffer[1024];
   U64 find_text_size;
   B32 find_text_backward;
