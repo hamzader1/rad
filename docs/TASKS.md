@@ -73,11 +73,15 @@ them), then layout (C), tabs (D), the gutter (E), drag and drop (F).
   drag below the last line goes to the end of the last line.
   **[suggestion]** Setting "Scroll past end" (default on, as VS2022 lets
   the last line scroll up to the top).
-- [ ] **A7. Completion inserts functions without `()`.** Advertise
+- [x] **A7. Completion inserts functions without `()`.** Advertise
   `snippetSupport`, turn the snippet into text (`$0`, `${1:x}`, `$1`), put
   the cursor at the first tab stop (inside the parentheses).
   **[suggestion]** Tab stop navigation (Tab to the next argument) as a later
   step; first just the cursor inside `()`.
+  Done 2026-11-04: rust-analyzer gets `completion.callable.snippets =
+  add_parentheses` (no argument placeholders); `name()` puts the cursor
+  after, `name(…)` inside; generic types in type position get `<>`. Typing
+  the closing bracket right before the inserted one steps over it.
 - [ ] **A8. Completion documentation and icons.** Documentation of the
   selected item beside the list (completionItem/resolve, same markdown
   reduction as hover). A kind icon per row, from raddbg's icon font

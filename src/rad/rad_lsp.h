@@ -227,6 +227,8 @@ struct RAD_LspCompletionItem
   B32 has_edit;
   RAD_LspTextEdit edit;         // else: `insert_text` replaces the typed word
   String8 insert_text;
+  U64 edit_cursor;              // where the cursor goes in edit.text / insert_text (a
+  U64 insert_cursor;            // snippet's first tab stop; else the end)
   RAD_LspTextEdit *more_edits;  // additionalTextEdits
   U64 more_edits_count;
   String8 resolve_json;         // the item as sent, if it has edits to resolve (`data`)

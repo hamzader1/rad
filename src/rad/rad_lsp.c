@@ -354,11 +354,15 @@ rad_lsp_server_start(String8 root)
                               "\"publishDiagnostics\":{\"versionSupport\":true},"
                               "\"hover\":{\"contentFormat\":[\"markdown\",\"plaintext\"]},"
                               "\"definition\":{\"linkSupport\":false},"
-                              "\"completion\":{\"completionItem\":{\"snippetSupport\":false,"
+                              "\"completion\":{\"completionItem\":{\"snippetSupport\":true,"
                               "\"resolveSupport\":{\"properties\":[\"additionalTextEdits\"]}}}"
                               "},"
                               "\"experimental\":{\"serverStatusNotification\":true}"
-                              "}}",
+                              "},"
+                              // rad: a function's completion inserts `name($0)` / `name()$0`
+                              // (no argument placeholders: rad has no tab stop navigation)
+                              "\"initializationOptions\":{\"completion\":{\"callable\":{\"snippets\":\"add_parentheses\"}}}"
+                              "}",
                               get_process_info()->pid, uri_json, uri_json, name_json);
     s->initialize_id = lsp_client_request(s->client, str8_lit("initialize"), init);
     s->state = RAD_LspServerState_Starting;
@@ -1057,6 +1061,86 @@ rad_lsp_text_edit_from_json(Arena *arena, RAD_LspServer *s, RAD_LspSnapshot *sna
   return result;
 }
 
+internal String8
+rad_lsp_text_from_snippet(Arena *arena, String8 snippet, U64 *cursor_out)
+{
+  // NOTE(rad): LSP snippet syntax -> plain text. Tab stops ($1, ${1}) are
+  // dropped, placeholders (${1:text}, nested) keep their text, a choice
+  // (${1|a,b|}) its first option, a variable ($NAME, ${NAME:default}) its
+  // default; \$ \} \\ are escapes. The cursor goes to the lowest tab stop
+  // above 0, else to $0, else to the end. The text is never longer.
+  U8 *out = push_array_no_zero(arena, U8, snippet.size+1);
+  U64 out_size = 0;
+  U64 best_stop = max_U64;
+  U64 best_pos = 0;
+  B32 has_zero = 0;
+  U64 zero_pos = 0;
+  U64 depth = 0;
+  for(U64 i = 0; i < snippet.size;)
+  {
+    U8 c = snippet.str[i];
+    if(c == '\\' && i+1 < snippet.size && (snippet.str[i+1] == '$' || snippet.str[i+1] == '}' || snippet.str[i+1] == '\\' ||
+                                            snippet.str[i+1] == ',' || snippet.str[i+1] == '|'))
+    {
+      out[out_size++] = snippet.str[i+1];
+      i += 2;
+    }
+    else if(c == '$' && i+1 < snippet.size && (char_is_digit(snippet.str[i+1], 10) || snippet.str[i+1] == '{' ||
+                                              char_is_alpha(snippet.str[i+1]) || snippet.str[i+1] == '_'))
+    {
+      B32 braced = (snippet.str[i+1] == '{');
+      U64 j = i + 1 + braced;
+      U64 num_start = j;
+      while(j < snippet.size && char_is_digit(snippet.str[j], 10)) { j += 1; }
+      B32 is_stop = (j > num_start);
+      U64 stop = (is_stop ? u64_from_str8(str8_substr(snippet, r1u64(num_start, j)), 10) : 0);
+      if(!is_stop)
+      {
+        while(j < snippet.size && (char_is_alpha(snippet.str[j]) || char_is_digit(snippet.str[j], 10) || snippet.str[j] == '_')) { j += 1; }
+      }
+      if(is_stop)
+      {
+        if(stop == 0 && !has_zero) { has_zero = 1; zero_pos = out_size; }
+        if(stop != 0 && stop < best_stop) { best_stop = stop; best_pos = out_size; }
+      }
+      if(!braced)
+      {
+        i = j;
+      }
+      else if(j < snippet.size && snippet.str[j] == ':')
+      {
+        depth += 1;
+        i = j + 1;
+      }
+      else if(j < snippet.size && snippet.str[j] == '|')
+      {
+        U64 k = j + 1;
+        while(k < snippet.size && snippet.str[k] != ',' && snippet.str[k] != '|') { out[out_size++] = snippet.str[k]; k += 1; }
+        while(k < snippet.size && !(snippet.str[k] == '|' && k+1 < snippet.size && snippet.str[k+1] == '}')) { k += 1; }
+        i = Min(k + 2, snippet.size);
+      }
+      else
+      {
+        while(j < snippet.size && snippet.str[j] != '}') { j += 1; }
+        i = Min(j + 1, snippet.size);
+      }
+    }
+    else if(c == '}' && depth > 0)
+    {
+      depth -= 1;
+      i += 1;
+    }
+    else
+    {
+      out[out_size++] = c;
+      i += 1;
+    }
+  }
+  *cursor_out = (best_stop != max_U64 ? best_pos : has_zero ? zero_pos : out_size);
+  String8 result = str8(out, out_size);
+  return result;
+}
+
 internal void
 rad_lsp_take_completion(RAD_LspServer *s, LSP_Message *m)
 {
@@ -1108,6 +1192,14 @@ rad_lsp_take_completion(RAD_LspServer *s, LSP_Message *m)
       {
         item->has_edit = 1;
         item->edit = rad_lsp_text_edit_from_json(c->arena, s, snap, edit);
+      }
+      item->edit_cursor = item->edit.text.size;
+      item->insert_cursor = item->insert_text.size;
+      if(json_s64_from_value(json_value_from_key(it, str8_lit("insertTextFormat"))) == 2)
+      {
+        // rad: a snippet: plain text, the cursor at its first tab stop
+        item->insert_text = rad_lsp_text_from_snippet(c->arena, item->insert_text, &item->insert_cursor);
+        item->edit.text = rad_lsp_text_from_snippet(c->arena, item->edit.text, &item->edit_cursor);
       }
       if(!json_value_is_nil(json_value_from_key(it, str8_lit("data"))))
       {

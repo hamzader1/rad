@@ -39,7 +39,7 @@ wait_idle
 expect completion_cursor == 41
 expect completion_selected_visible == 1
 expect completion_top > 1
-key page_down 20
+key page_down 60
 wait_idle
 expect completion_cursor > 60
 expect completion_below == 0
@@ -47,7 +47,7 @@ expect completion_selected_visible == 1
 key up 30
 wait_idle
 expect completion_selected_visible == 1
-key page_up 20
+key page_up 60
 wait_idle
 expect completion_cursor == 1
 expect completion_top == 1

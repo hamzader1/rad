@@ -287,8 +287,11 @@ Milestone 6 details (each item with its script):
   existing server by that path test, never start one.
 - LSP hover: markdown is reduced to code blocks (code font, lexed) and
   wrapped paragraphs; links, emphasis, tables are dropped as plain text.
-- LSP completion: no snippets (a method inserts its name, no parentheses),
-  no documentation beside the list, no kind icons; import items show
+- LSP completion: snippets become plain text (the cursor at the first tab
+  stop; no Tab between arguments; rust-analyzer is asked for
+  `add_parentheses`, so no argument placeholders). Labels show rust-
+  analyzer's `()`/`(…)`/`<…>`. No documentation beside the list, no kind
+  icons; import items show
   rust-analyzer's "(use path)" in the label; an import's `use` line is a
   second undo step (it arrives after the commit). A word start opens the
   list only when it is the only character typed in its frame. Filtering:
@@ -376,6 +379,21 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-04 (tasks A7: functions complete with their parentheses)
+- initialize: `snippetSupport: true` and `initializationOptions.completion.
+  callable.snippets = "add_parentheses"` (rad answers
+  workspace/configuration with null, so rust-analyzer reads these).
+- `rad_lsp_text_from_snippet`: snippet -> text (tab stops dropped,
+  placeholders/choices/variables keep their text, escapes); the cursor goes
+  to the lowest tab stop > 0, else $0, else the end.
+- Commit puts the cursor there; if it is right before a closing bracket the
+  item inserted (`)`, `>`, `]`, `}`), typing that bracket steps over it
+  (until the cursor leaves the brackets).
+- With snippets, rust-analyzer also sends postfix items (`.if`, `.match`,
+  ...): u32's list is ~280 rows. `lsp_completion` updated (labels `total()`,
+  `new()`, `HashMap<…>`), new checks for `scale(…)` and the step-over; the
+  fixture got `fn scale` after `main`. 26 scripts pass.
 
 ### 2026-11-04 (tasks A4-A6: Ctrl+click links, last line, editor fills panel)
 - A4: with Ctrl held, the identifier/keyword under the mouse gets a box

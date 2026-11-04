@@ -427,7 +427,7 @@ rad_document_apply_edits(RAD_Document *doc, U64 version, RAD_LspTextEdit *edits,
 }
 
 internal void
-rad_code_view_completion_commit(Arena *arena, RAD_Document *doc, TB_Buffer *buffer, TXT_TextInfo *text_info, String8 text_data, TXT_Patched *text_patched, U64 *cursor)
+rad_code_view_completion_commit(Arena *arena, RAD_Document *doc, TB_Buffer *buffer, TXT_TextInfo *text_info, String8 text_data, TXT_Patched *text_patched, U64 *cursor, RAD_CodeViewState *cv)
 {
   // NOTE(rad): the selected item: its edit (from where the word started,
   // over what was typed since the request) and its additional edits (a `use`
@@ -449,6 +449,7 @@ rad_code_view_completion_commit(Arena *arena, RAD_Document *doc, TB_Buffer *buff
 
     //- rad: the main edit, in the current text
     RAD_LspTextEdit main_edit = {r1u64(Min(c->word_start, *cursor), *cursor), item->insert_text};
+    U64 main_cursor = item->insert_cursor;
     if(item->has_edit)
     {
       U64 min = item->edit.range.min;
@@ -459,8 +460,10 @@ rad_code_view_completion_commit(Arena *arena, RAD_Document *doc, TB_Buffer *buff
       {
         main_edit.range = r1u64(min, Max(max, *cursor));
         main_edit.text = item->edit.text;
+        main_cursor = item->edit_cursor;
       }
     }
+    main_cursor = Min(main_cursor, main_edit.text.size);
 
     //- rad: the additional edits that still map (and do not overlap it)
     U64 edits_count = 0;
@@ -508,7 +511,22 @@ rad_code_view_completion_commit(Arena *arena, RAD_Document *doc, TB_Buffer *buff
       }
     }
     tb_buffer_close_undo_group(buffer);
-    *cursor = (U64)((S64)main_edit.range.min + shift) + main_edit.text.size;
+    U64 main_start = (U64)((S64)main_edit.range.min + shift);
+    *cursor = main_start + main_cursor;
+
+    //- rad: the cursor is right before a closing bracket the item inserted (a
+    // function's `)`, a generic type's `>`): typing it will step over it
+    cv->typeover_armed = 0;
+    if(main_cursor < main_edit.text.size &&
+       (main_edit.text.str[main_cursor] == ')' || main_edit.text.str[main_cursor] == '>' ||
+        main_edit.text.str[main_cursor] == ']' || main_edit.text.str[main_cursor] == '}'))
+    {
+      cv->typeover_armed = 1;
+      cv->typeover_char = main_edit.text.str[main_cursor];
+      cv->typeover_min = main_start;
+      cv->typeover_off = *cursor;
+      cv->typeover_version = buffer->version;
+    }
     scratch_end(scratch);
   }
   rad_lsp_completion_close();
@@ -848,7 +866,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
   UI_Focus(UI_FocusKind_On) view_focused = ui_is_focus_active();
   if(cmp->active && cmp->tab == tab->id && cmp->commit_requested && cv->editable && text_is_ready)
   {
-    rad_code_view_completion_commit(scratch.arena, rad_document_from_tab(tab), buffer, text_info, text_data, &text_patched, &cv->cursor);
+    rad_code_view_completion_commit(scratch.arena, rad_document_from_tab(tab), buffer, text_info, text_data, &text_patched, &cv->cursor, cv);
     cv->mark = cv->cursor;
     cmp_shown = 0;
     snap[Axis2_X] = snap[Axis2_Y] = 1;
@@ -871,7 +889,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
         B32 is_cancel = (evt->kind == UI_EventKind_Press && evt->slot == UI_EventActionSlot_Cancel);
         if(is_commit)
         {
-          rad_code_view_completion_commit(scratch.arena, rad_document_from_tab(tab), buffer, text_info, text_data, &text_patched, cursor);
+          rad_code_view_completion_commit(scratch.arena, rad_document_from_tab(tab), buffer, text_info, text_data, &text_patched, cursor, cv);
           *mark = *cursor;
           U64 line_num = txt_line_num_from_off(&text_patched.line_map, *cursor);
           Rng1U64 line_range = txt_range_from_line_num(&text_patched.line_map, line_num);
@@ -1115,6 +1133,24 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
         *mark = *cursor;
       }
 
+      //- rad: not in raddbg: typing the closing bracket a completion inserted,
+      // right before it, steps over it (Visual Studio)
+      String8 typeover_string = str8(&cv->typeover_char, 1);
+      if(cv->editable && cv->typeover_armed && evt->kind == UI_EventKind_Text && !(evt->flags & UI_EventFlag_Paste) &&
+         str8_match(evt->string, typeover_string, 0) && str8_match(single_line_op.replace, typeover_string, 0) &&
+         replaced_range.min == replaced_range.max && start_cursor == start_mark)
+      {
+        U64 off = cv->typeover_off;
+        if(tb_buffer_map_offset(buffer, cv->typeover_version, &off) && off == replaced_range.min && off < text_patched.size &&
+           str8_match(memory_map_data_from_range(scratch.arena, &text_patched.memory_map, r1u64(off, off+1)), typeover_string, 0))
+        {
+          replaced_range = r1u64(off, off);
+          single_line_op.replace = str8_zero();
+          *cursor = *mark = off+1;
+        }
+        cv->typeover_armed = 0;
+      }
+
       //- rad: push patch if we have one (same as raddbg, plus undo history);
       // moving the cursor without editing ends the current undo group
       if(cv->editable && (replaced_range.max != replaced_range.min || single_line_op.replace.size != 0))
@@ -1159,6 +1195,22 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       {
         snap[Axis2_Y] = 1;
       }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: not in raddbg: the `)` step-over ends once the cursor leaves the
+  // parentheses (or the text is no longer the one it was armed in)
+  //
+  if(cv->typeover_armed)
+  {
+    U64 min = cv->typeover_min;
+    U64 max = cv->typeover_off;
+    if(!tb_buffer_map_offset_side(buffer, cv->typeover_version, &min, Side_Min) ||
+       !tb_buffer_map_offset(buffer, cv->typeover_version, &max) ||
+       cv->cursor < min || max < cv->cursor || cv->cursor != cv->mark)
+    {
+      cv->typeover_armed = 0;
     }
   }
 
