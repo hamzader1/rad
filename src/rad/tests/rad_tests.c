@@ -32,6 +32,7 @@
 #include "text/text.h"
 #include "text_buffer/text_buffer.h"
 #include "json/json.h"
+#include "lsp/lsp.h"
 
 #include "base/base_inc.c"
 #include "win32/win32_inc.c"
@@ -41,6 +42,7 @@
 #include "text/text.c"
 #include "text_buffer/text_buffer.c"
 #include "json/json.c"
+#include "lsp/lsp.c"
 
 ////////////////////////////////
 //~ rad: Helpers
@@ -1273,6 +1275,159 @@ test_json(void)
 }
 
 ////////////////////////////////
+//~ rad: LSP Framing + Messages
+
+internal void
+test_lsp_expect_bodies(char *test_name, String8 stream, U64 chunk_size, String8 *expected, U64 expected_count, B32 expect_failed)
+{
+  // NOTE(rad): feeds `stream` in chunks of `chunk_size` bytes (0 = all at
+  // once), taking messages after every chunk
+  Temp scratch = scratch_begin(0, 0);
+  LSP_FrameParser p = {0};
+  lsp_frame_parser_init(&p);
+  U64 got_count = 0;
+  B32 good = 1;
+  U64 step = (chunk_size == 0 ? Max(stream.size, 1) : chunk_size);
+  for(U64 off = 0; off < stream.size; off += step)
+  {
+    lsp_frame_parser_push(&p, str8_substr(stream, r1u64(off, Min(off+step, stream.size))));
+    for(String8 body = {0}; lsp_frame_parser_next(&p, scratch.arena, &body);)
+    {
+      if(got_count >= expected_count || !str8_match(body, expected[got_count], 0))
+      {
+        good = 0;
+      }
+      got_count += 1;
+    }
+  }
+  test_checks += 1;
+  if(!good || got_count != expected_count || !!p.failed != !!expect_failed)
+  {
+    printf("FAIL %s (chunks of %I64u): %I64u messages (expected %I64u), failed %i (expected %i), bodies %s\n",
+           test_name, chunk_size, got_count, expected_count, p.failed, expect_failed, good ? "ok" : "differ");
+    test_failures += 1;
+  }
+  lsp_frame_parser_release(&p);
+  scratch_end(scratch);
+}
+
+internal void
+test_lsp(void)
+{
+  Temp scratch = scratch_begin(0, 0);
+
+  //- rad: framing: one message, then three in one stream, fed whole and
+  // in every chunk size from 1 byte up
+  {
+    String8 bodies[] =
+    {
+      str8_lit("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":null}"),
+      str8_lit("{\"x\":\"a\\r\\n\\r\\nb\"}"),
+      str8_lit(""),
+      str8_lit("{\"jsonrpc\":\"2.0\",\"method\":\"$/progress\",\"params\":{\"value\":{\"kind\":\"end\"}}}"),
+    };
+    String8List stream_parts = {0};
+    str8_list_pushf(scratch.arena, &stream_parts, "Content-Length: %I64u\r\n\r\n%S", bodies[0].size, bodies[0]);
+    str8_list_pushf(scratch.arena, &stream_parts, "content-length:%I64u\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n%S", bodies[1].size, bodies[1]);
+    str8_list_pushf(scratch.arena, &stream_parts, "Content-Length: 0\r\n\r\n");
+    str8_list_pushf(scratch.arena, &stream_parts, "Content-Length:  %I64u \r\n\r\n%S", bodies[3].size, bodies[3]);
+    String8 stream = str8_list_join(scratch.arena, &stream_parts, 0);
+    test_lsp_expect_bodies("lsp_one", lsp_frame_from_body(scratch.arena, bodies[0]), 0, bodies, 1, 0);
+    for(U64 chunk_size = 0; chunk_size <= stream.size; chunk_size += 1)
+    {
+      test_lsp_expect_bodies("lsp_stream", stream, chunk_size, bodies, ArrayCount(bodies), 0);
+    }
+    test_lsp_expect_bodies("lsp_partial", str8_prefix(stream, stream.size-1), 7, bodies, ArrayCount(bodies)-1, 0);
+  }
+
+  //- rad: framing: a large body, in reads of 64 KB (as the reader thread)
+  {
+    U64 size = MB(3) + 17;
+    U8 *big = push_array(scratch.arena, U8, size);
+    for EachIndex(idx, size) { big[idx] = 'a' + (idx % 26); }
+    String8 bodies[] = {str8(big, size), str8_lit("{}")};
+    String8List stream_parts = {0};
+    str8_list_push(scratch.arena, &stream_parts, lsp_frame_from_body(scratch.arena, bodies[0]));
+    str8_list_push(scratch.arena, &stream_parts, lsp_frame_from_body(scratch.arena, bodies[1]));
+    test_lsp_expect_bodies("lsp_big", str8_list_join(scratch.arena, &stream_parts, 0), KB(64), bodies, 2, 0);
+  }
+
+  //- rad: framing: broken headers -> failed, nothing after them
+  {
+    String8 ok_body = str8_lit("{}");
+    struct {char *name; char *stream; U64 expected_count;} cases[] =
+    {
+      {"lsp_no_length",      "Content-Type: x\r\n\r\n{}", 0},
+      {"lsp_bad_length",     "Content-Length: 1x\r\n\r\n{}", 0},
+      {"lsp_negative",       "Content-Length: -2\r\n\r\n{}", 0},
+      {"lsp_no_colon",       "Content-Length 2\r\n\r\n{}", 0},
+      {"lsp_empty_header",   "\r\n\r\n{}", 0},
+      {"lsp_two_lengths",    "Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}", 0},
+      {"lsp_too_big",        "Content-Length: 999999999999\r\n\r\n{}", 0},
+      {"lsp_after_good_one", "Content-Length: 2\r\n\r\n{}Content-Length: \r\n\r\n", 1},
+    };
+    for EachElement(idx, cases)
+    {
+      test_lsp_expect_bodies(cases[idx].name, str8_cstring(cases[idx].stream), 0, &ok_body, cases[idx].expected_count, 1);
+      test_lsp_expect_bodies(cases[idx].name, str8_cstring(cases[idx].stream), 1, &ok_body, cases[idx].expected_count, 1);
+    }
+
+    // rad: a header that never ends
+    U64 size = LSP_MAX_HEADER_SIZE + 64;
+    U8 *junk = push_array(scratch.arena, U8, size);
+    MemorySet(junk, 'x', size);
+    test_lsp_expect_bodies("lsp_endless_header", str8(junk, size), 100, &ok_body, 0, 1);
+  }
+
+  //- rad: messages
+  {
+    LSP_Message m = lsp_message_from_body(scratch.arena, str8_lit("{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"a\":1}}"));
+    test_expect("lsp_response", "kind", m.kind == LSP_MessageKind_Response);
+    test_expect("lsp_response", "id", m.id == 7 && str8_match(m.id_text, str8_lit("7"), 0));
+    test_expect("lsp_response", "result", json_s64_from_value(json_value_from_key(m.result, str8_lit("a"))) == 1);
+    test_expect("lsp_response", "no error", json_value_is_nil(m.error));
+
+    m = lsp_message_from_body(scratch.arena, str8_lit("{\"jsonrpc\":\"2.0\",\"id\":8,\"result\":null}"));
+    test_expect("lsp_null_result", "kind", m.kind == LSP_MessageKind_Response && m.id == 8);
+    test_expect("lsp_null_result", "result is null, not missing", !json_value_is_nil(m.result) && m.result->kind == JSON_ValueKind_Null);
+
+    m = lsp_message_from_body(scratch.arena, str8_lit("{\"jsonrpc\":\"2.0\",\"id\":9,\"error\":{\"code\":-32601,\"message\":\"no\"}}"));
+    test_expect("lsp_error", "kind", m.kind == LSP_MessageKind_Response && m.id == 9);
+    test_expect("lsp_error", "error", json_s64_from_value(json_value_from_key(m.error, str8_lit("code"))) == -32601);
+    test_expect("lsp_error", "no result", json_value_is_nil(m.result));
+
+    m = lsp_message_from_body(scratch.arena, str8_lit("{\"jsonrpc\":\"2.0\",\"id\":\"ab\\\"c\",\"method\":\"window/workDoneProgress/create\",\"params\":{\"token\":\"t\"}}"));
+    test_expect("lsp_server_request", "kind", m.kind == LSP_MessageKind_Request);
+    test_expect("lsp_server_request", "method", str8_match(m.method, str8_lit("window/workDoneProgress/create"), 0));
+    test_expect("lsp_server_request", "string id kept as JSON", str8_match(m.id_text, str8_lit("\"ab\\\"c\""), 0) && m.id == 0);
+    test_expect("lsp_server_request", "params", str8_match(json_string_from_value(json_value_from_key(m.params, str8_lit("token"))), str8_lit("t"), 0));
+
+    m = lsp_message_from_body(scratch.arena, str8_lit("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{}}"));
+    test_expect("lsp_notification", "kind", m.kind == LSP_MessageKind_Notification && m.id_text.size == 0);
+
+    m = lsp_message_from_body(scratch.arena, str8_lit("[1,2]"));
+    test_expect("lsp_not_a_message", "array", m.kind == LSP_MessageKind_Null);
+    m = lsp_message_from_body(scratch.arena, str8_lit("{\"jsonrpc\":"));
+    test_expect("lsp_not_a_message", "broken JSON", m.kind == LSP_MessageKind_Null);
+
+    //- rad: what we send parses back to what was meant
+    String8 body = lsp_request_body(scratch.arena, 12, str8_lit("text\"Document/hover"), str8_lit("{\"p\":[1]}"));
+    m = lsp_message_from_body(scratch.arena, body);
+    test_expect("lsp_request_body", "round trip", m.kind == LSP_MessageKind_Request && m.id == 12 &&
+                str8_match(m.method, str8_lit("text\"Document/hover"), 0) &&
+                json_s64_from_value(json_value_from_index(json_value_from_key(m.params, str8_lit("p")), 0)) == 1);
+    body = lsp_request_body(scratch.arena, 13, str8_lit("shutdown"), str8_zero());
+    test_expect("lsp_request_body", "no params", str8_match(body, str8_lit("{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"shutdown\"}"), 0));
+    body = lsp_notification_body(scratch.arena, str8_lit("exit"), str8_zero());
+    test_expect("lsp_notification_body", "no params", str8_match(body, str8_lit("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"), 0));
+    body = lsp_response_body(scratch.arena, str8_lit("\"x\""), str8_zero());
+    test_expect("lsp_response_body", "null result", str8_match(body, str8_lit("{\"jsonrpc\":\"2.0\",\"id\":\"x\",\"result\":null}"), 0));
+  }
+
+  scratch_end(scratch);
+}
+
+////////////////////////////////
 //~ rad: Entry Point
 
 internal void
@@ -1292,6 +1447,10 @@ entry_point(CmdLine *cmd_line)
   //- rad: json parsing and writing
   test_json();
   test_section_end("json: values, escapes, errors, random", &section_start_us);
+
+  //- rad: LSP framing and messages
+  test_lsp();
+  test_section_end("lsp: framing, messages", &section_start_us);
 
   //- rad: hand-written cases
   {
