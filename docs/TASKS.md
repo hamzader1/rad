@@ -339,8 +339,14 @@ tree, each with a header (title, X), no "+", no zoom button.
   LSP `textDocument/codeAction`.
 - [ ] **G5. Navigation bar** under the tabs (`TN8f33D5`: type and member
   dropdowns) from `textDocument/documentSymbol`.
-- [ ] **G6. Semantic token colors** from rust-analyzer (functions, macros,
-  types colored like VS2022).
+- [x] **G6. Semantic token colors** from rust-analyzer (functions, macros,
+  types colored like VS2022). Done 2026-11-04 (script `lsp_semantic`):
+  `textDocument/semanticTokens/full` after each sync and on the server's
+  refresh; rust-analyzer's token types on the theme's code color slots as
+  Zed maps them (the user's theme came from Zed); new slots for type
+  parameters, lifetimes, fields and `unsafe` (vsa's semantic rules), with
+  fallbacks for themes that lack them. Not done: delta requests (full
+  answers each time).
 - [x] **G7. The user's theme** (`.dev_hints/vsa.json`, from their Zed
   config) as a theme preset, the default. Done 2026-11-04: preset "VSA
   (Dark)" (`vsa`), first in `RAD_ThemePresetTable` (so the default):

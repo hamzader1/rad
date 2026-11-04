@@ -35,12 +35,14 @@ key_up ctrl
 wait_frames 3
 expect ctrl_link == ""
 
-# Ctrl+click `add`: the cursor stays on line 3 until the jump to `fn add`
+# Ctrl+click `add`: the cursor does not go to the click (line 8); it stays
+# on line 3 until the jump to `fn add` (which can come within 2 frames: the
+# server has analyzed the file for its semantic tokens)
 key_down ctrl
 mouse code 8 30
 click code 8 30
 wait_frames 2
-expect cursor_line == 3
+expect cursor_line != 8
 wait_until 15000 cursor_line == 1
 expect cursor_col == 4
 expect mark_line == 1

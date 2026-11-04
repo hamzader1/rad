@@ -382,6 +382,22 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (task G6: semantic tokens)
+- rad_lsp.c "Semantic Tokens": legend from the initialize answer
+  (`sem_type_slots`: type index -> slot + 1; `sem_unsafe_mask`); a request
+  per sent version (`sem_asked`, `sem_request_version`; ContentModified ->
+  again after 0.5 s; `workspace/semanticTokens/refresh` -> again); the
+  answer -> offsets in the snapshot of that version (`sem_tokens`);
+  `rad_lsp_token_colors_from_document` carries them to the buffer's
+  version once per version (start: default side, end: Side_Min).
+- Code slice: `token_colors` (sorted); a lexer token that starts at one
+  takes its slot (not comments or strings).
+- `RAD_CodeColorTable`: CodeTypeParameter, CodeLifetime, CodeProperty,
+  CodeUnsafe; vsa has them, other presets fall back (rad_window_frame).
+- `lsp_ctrl_link`: its "cursor still on line 3 after 2 frames" check was
+  a race (the definition can come within 2 frames now); it checks that
+  the cursor did not go to the click instead.
+
 ### 2026-11-04 (task G7: the user's theme)
 - `RAD_ThemePresetTable`: `Vsa` first (default index 0; settings store the
   preset by name, so older user files keep theirs). Generated from the

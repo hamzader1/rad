@@ -1949,6 +1949,11 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     code_slice_params.search_query              = search_query;
     code_slice_params.line_num_width_px         = line_num_width_px;
     code_slice_params.fold_width_px             = fold_width_px;
+    if(cv->editable)
+    {
+      // rad: not in raddbg: rust-analyzer's semantic tokens
+      code_slice_params.token_colors = rad_lsp_token_colors_from_document(rad_document_from_tab(tab), &code_slice_params.token_colors_count);
+    }
     code_slice_params.priority_margin_width_px  = priority_margin_width_px;
     code_slice_params.catchall_margin_width_px  = catchall_margin_width_px;
     code_slice_params.line_text_max_width_px    = (F32)line_size_x;

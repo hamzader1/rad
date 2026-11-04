@@ -146,6 +146,8 @@
 //   editor_font_size            the editor view's font size (code font setting)
 //   panel_tabs <n>              editor panel n's tab names, space-separated
 //   drag_active                 1 while a tab or file is being dragged
+//   semantic_count              the editor document's semantic tokens (rust-analyzer)
+//   semantic_slot <line> <col>  code color slot of the one starting there ("" if none)
 //   fold_count                  folded ranges in the editor view
 //   line_hidden <line>          1 if the line is folded away
 //   ui_font_size                the window's font size (UI font setting)

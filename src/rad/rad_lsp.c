@@ -360,12 +360,17 @@ rad_lsp_server_launch(RAD_LspServer *s)
                               "\"capabilities\":{"
                               "\"general\":{\"positionEncodings\":[\"utf-8\",\"utf-16\"]},"
                               "\"window\":{\"workDoneProgress\":true},"
-                              "\"workspace\":{\"workspaceFolders\":true},"
+                              "\"workspace\":{\"workspaceFolders\":true,\"semanticTokens\":{\"refreshSupport\":true}},"
                               "\"textDocument\":{"
                               "\"synchronization\":{\"didSave\":true},"
                               "\"publishDiagnostics\":{\"versionSupport\":true},"
                               "\"hover\":{\"contentFormat\":[\"markdown\",\"plaintext\"]},"
                               "\"definition\":{\"linkSupport\":false},"
+                              "\"semanticTokens\":{\"requests\":{\"full\":true},\"formats\":[\"relative\"],"
+                              "\"tokenTypes\":[\"namespace\",\"type\",\"class\",\"enum\",\"interface\",\"struct\",\"typeParameter\",\"parameter\",\"variable\","
+                              "\"property\",\"enumMember\",\"function\",\"method\",\"macro\",\"keyword\",\"comment\",\"string\",\"number\",\"operator\",\"decorator\"],"
+                              "\"tokenModifiers\":[\"declaration\",\"definition\",\"readonly\",\"static\",\"mutable\",\"unsafe\"],"
+                              "\"overlappingTokenSupport\":false,\"multilineTokenSupport\":false},"
                               "\"completion\":{\"completionItem\":{\"snippetSupport\":true,"
                               "\"resolveSupport\":{\"properties\":[\"additionalTextEdits\"]}}}"
                               "},"
@@ -513,6 +518,14 @@ rad_lsp_doc_release(RAD_LspServer *s, RAD_LspDoc *ld)
     {
       arena_release(ld->snapshots[idx].arena);
     }
+  }
+  if(ld->sem_arena != 0)
+  {
+    arena_release(ld->sem_arena);
+  }
+  if(ld->sem_mapped_arena != 0)
+  {
+    arena_release(ld->sem_mapped_arena);
   }
   arena_release(ld->arena);
 }
@@ -778,6 +791,7 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
         {
           String8 encoding = json_string_from_value(json_value_from_key(json_value_from_key(m.result, str8_lit("capabilities")), str8_lit("positionEncoding")));
           s->utf8_positions = str8_match(encoding, str8_lit("utf-8"), 0);
+          rad_lsp_take_semantic_legend(s, json_value_from_key(json_value_from_key(m.result, str8_lit("capabilities")), str8_lit("semanticTokensProvider")));
           lsp_client_notify(s->client, str8_lit("initialized"), str8_lit("{}"));
           s->state = RAD_LspServerState_Ready;
         }
@@ -794,6 +808,9 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
       {
         rad_lsp_take_resolve(s, &m);
       }
+      else if(rad_lsp_take_semantic_tokens(s, &m))
+      {
+      }
       else if(rad_lsp->hover.requested && !rad_lsp->hover.answered &&
               rad_lsp->hover.server == s && m.id == rad_lsp->hover.request_id)
       {
@@ -807,6 +824,15 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
       case LSP_MessageKind_Request:
       {
         String8 result = str8_lit("null");
+        if(str8_match(m.method, str8_lit("workspace/semanticTokens/refresh"), 0))
+        {
+          // rad: the server knows more now (indexing done): ask again
+          for(RAD_LspDoc *ld = s->first_doc; ld != 0; ld = ld->next)
+          {
+            ld->sem_asked = 0;
+          }
+          rad_request_frame();
+        }
         if(str8_match(m.method, str8_lit("workspace/configuration"), 0))
         {
           U64 count = json_value_from_key(m.params, str8_lit("items"))->child_count;
@@ -849,6 +875,210 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
     temp_end(temp);
   }
   scratch_end(scratch);
+}
+
+////////////////////////////////
+//~ rad: Semantic Tokens (not in raddbg)
+//
+// NOTE(rad): rust-analyzer's view of each identifier (function, type,
+// lifetime, ...) colors it with one of the theme's code color slots; the
+// lexer's color stays for the rest (strings, comments, punctuation) and
+// until an answer comes. Answers are for a sent version; the buffer's change
+// log carries them to the current text, so typing does not flash colors.
+
+internal U8
+rad_lsp_semantic_slot_from_type_name(String8 name)
+{
+  // rad: slot + 1 (0: no color of its own). Zed's mapping of
+  // rust-analyzer's types (the user's theme came from Zed): macros as
+  // functions, builtin types as types, enum variants as types
+  struct {char *name; RAD_CodeColorSlot slot;} map[] =
+  {
+    {"function", RAD_CodeColorSlot_CodeSymbol},   {"method", RAD_CodeColorSlot_CodeSymbol},
+    {"macro", RAD_CodeColorSlot_CodeSymbol},      {"procMacro", RAD_CodeColorSlot_CodeSymbol},
+    {"type", RAD_CodeColorSlot_CodeType},         {"class", RAD_CodeColorSlot_CodeType},
+    {"enum", RAD_CodeColorSlot_CodeType},         {"interface", RAD_CodeColorSlot_CodeType},
+    {"struct", RAD_CodeColorSlot_CodeType},       {"typeAlias", RAD_CodeColorSlot_CodeType},
+    {"union", RAD_CodeColorSlot_CodeType},        {"builtinType", RAD_CodeColorSlot_CodeType},
+    {"selfTypeKeyword", RAD_CodeColorSlot_CodeType}, {"enumMember", RAD_CodeColorSlot_CodeType},
+    {"typeParameter", RAD_CodeColorSlot_CodeTypeParameter},
+    {"lifetime", RAD_CodeColorSlot_CodeLifetime},
+    {"parameter", RAD_CodeColorSlot_CodeLocal},   {"variable", RAD_CodeColorSlot_CodeLocal},
+    {"property", RAD_CodeColorSlot_CodeProperty},
+    {"const", RAD_CodeColorSlot_CodeRegister},    {"static", RAD_CodeColorSlot_CodeRegister},
+    {"constParameter", RAD_CodeColorSlot_CodeRegister}, {"boolean", RAD_CodeColorSlot_CodeRegister},
+    {"attribute", RAD_CodeColorSlot_CodeMeta},    {"builtinAttribute", RAD_CodeColorSlot_CodeMeta},
+    {"derive", RAD_CodeColorSlot_CodeMeta},       {"deriveHelper", RAD_CodeColorSlot_CodeMeta},
+    {"decorator", RAD_CodeColorSlot_CodeMeta},
+    {"keyword", RAD_CodeColorSlot_CodeKeyword},   {"selfKeyword", RAD_CodeColorSlot_CodeKeyword},
+  };
+  U8 result = 0;
+  for EachElement(idx, map)
+  {
+    if(str8_match(name, str8_cstring(map[idx].name), 0))
+    {
+      result = (U8)(map[idx].slot + 1);
+      break;
+    }
+  }
+  return result;
+}
+
+internal void
+rad_lsp_take_semantic_legend(RAD_LspServer *s, JSON_Value *provider)
+{
+  // NOTE(rad): capabilities.semanticTokensProvider: {legend: {tokenTypes,
+  // tokenModifiers}, full: true|{delta}}
+  MemoryZeroArray(s->sem_type_slots);
+  s->sem_unsafe_mask = 0;
+  s->sem_supported = 0;
+  JSON_Value *legend = json_value_from_key(provider, str8_lit("legend"));
+  JSON_Value *types = json_value_from_key(legend, str8_lit("tokenTypes"));
+  JSON_Value *mods = json_value_from_key(legend, str8_lit("tokenModifiers"));
+  JSON_Value *full = json_value_from_key(provider, str8_lit("full"));
+  if(types->kind == JSON_ValueKind_Array && (full->kind == JSON_ValueKind_Object || json_b32_from_value(full)))
+  {
+    s->sem_supported = 1;
+    U64 idx = 0;
+    for(JSON_Value *t = types->first; t != &json_value_nil && idx < ArrayCount(s->sem_type_slots); t = t->next, idx += 1)
+    {
+      s->sem_type_slots[idx] = rad_lsp_semantic_slot_from_type_name(json_string_from_value(t));
+    }
+    idx = 0;
+    for(JSON_Value *m = mods->first; m != &json_value_nil && idx < 64; m = m->next, idx += 1)
+    {
+      if(str8_match(json_string_from_value(m), str8_lit("unsafe"), 0))
+      {
+        s->sem_unsafe_mask |= (1ull << idx);
+      }
+    }
+  }
+}
+
+internal B32
+rad_lsp_take_semantic_tokens(RAD_LspServer *s, LSP_Message *m)
+{
+  // NOTE(rad): {data: [deltaLine, deltaStart, length, type, modifiers]*},
+  // relative to the previous token; positions in the text of the version it
+  // was asked for (its snapshot)
+  RAD_LspDoc *ld = 0;
+  for(RAD_LspDoc *d = s->first_doc; d != 0; d = d->next)
+  {
+    if(d->sem_request_id != 0 && d->sem_request_id == m->id)
+    {
+      ld = d;
+      break;
+    }
+  }
+  if(ld != 0)
+  {
+    ld->sem_request_id = 0;
+    RAD_LspSnapshot *snap = rad_lsp_snapshot_from_version(ld, ld->sem_request_version);
+    JSON_Value *data = json_value_from_key(m->result, str8_lit("data"));
+    if(!json_value_is_nil(m->error) && json_s64_from_value(json_value_from_key(m->error, str8_lit("code"))) == -32801)
+    {
+      // rad: ContentModified: the text changed meanwhile; ask again
+      ld->sem_asked = 0;
+      ld->sem_retry_us = now_time_us() + 500000;
+    }
+    else if(snap != 0 && data->kind == JSON_ValueKind_Array)
+    {
+      if(ld->sem_arena == 0)
+      {
+        ld->sem_arena = arena_alloc();
+        ld->sem_mapped_arena = arena_alloc();
+      }
+      arena_clear(ld->sem_arena);
+      U64 max_count = data->child_count/5;
+      ld->sem_tokens = push_array_no_zero(ld->sem_arena, RAD_TokenColor, max_count);
+      U64 count = 0;
+      S64 line = 0;
+      S64 start = 0;
+      JSON_Value *v = data->first;
+      for(U64 idx = 0; idx < max_count && v != &json_value_nil; idx += 1)
+      {
+        S64 fields[5] = {0};
+        for EachElement(f, fields)
+        {
+          fields[f] = json_s64_from_value(v);
+          v = v->next;
+        }
+        if(fields[0] != 0)
+        {
+          start = 0;
+        }
+        line += fields[0];
+        start += fields[1];
+        U64 type = (U64)fields[3];
+        U64 slot = (type < ArrayCount(s->sem_type_slots) ? s->sem_type_slots[type] : 0);
+        if((U64)fields[4] & s->sem_unsafe_mask)
+        {
+          slot = RAD_CodeColorSlot_CodeUnsafe+1;
+        }
+        if(slot != 0)
+        {
+          U64 off_min = rad_lsp_offset_from_position(snap->text, snap->line_starts, snap->line_count, line, start, s->utf8_positions);
+          U64 off_max = rad_lsp_offset_from_position(snap->text, snap->line_starts, snap->line_count, line, start + fields[2], s->utf8_positions);
+          if(off_min < off_max)
+          {
+            ld->sem_tokens[count].range = r1u64(off_min, off_max);
+            ld->sem_tokens[count].slot = slot-1;
+            count += 1;
+          }
+        }
+      }
+      ld->sem_count = count;
+      ld->sem_version = ld->sem_request_version;
+      ld->sem_valid = 1;
+      ld->sem_mapped_valid = 0;
+      rad_request_frame();
+    }
+  }
+  return (ld != 0);
+}
+
+internal RAD_TokenColor *
+rad_lsp_token_colors_from_document(RAD_Document *doc, U64 *count_out)
+{
+  // NOTE(rad): the document's semantic tokens in its current text (sorted);
+  // carried once per buffer version. None when the log cannot carry them
+  // (a reload), until the next answer.
+  RAD_TokenColor *result = 0;
+  U64 count = 0;
+  RAD_LspServer *s = (doc != 0 ? rad_lsp_server_from_path(doc->path) : 0);
+  RAD_LspDoc *ld = (s != 0 ? rad_lsp_doc_from_id(s, doc->id) : 0);
+  if(ld != 0 && ld->sem_valid)
+  {
+    U64 version = doc->buffer->version;
+    if(!ld->sem_mapped_valid || ld->sem_mapped_version != version)
+    {
+      arena_clear(ld->sem_mapped_arena);
+      ld->sem_mapped = push_array_no_zero(ld->sem_mapped_arena, RAD_TokenColor, ld->sem_count+1);
+      U64 n = 0;
+      B32 good = 1;
+      for(U64 idx = 0; idx < ld->sem_count && good; idx += 1)
+      {
+        RAD_TokenColor t = ld->sem_tokens[idx];
+        if(ld->sem_version != version)
+        {
+          good = (tb_buffer_map_offset(doc->buffer, ld->sem_version, &t.range.min) &&
+                  tb_buffer_map_offset_side(doc->buffer, ld->sem_version, &t.range.max, Side_Min));
+        }
+        if(good && t.range.min < t.range.max)
+        {
+          ld->sem_mapped[n] = t;
+          n += 1;
+        }
+      }
+      ld->sem_mapped_count = (good ? n : 0);
+      ld->sem_mapped_version = version;
+      ld->sem_mapped_valid = 1;
+    }
+    result = ld->sem_mapped;
+    count = ld->sem_mapped_count;
+  }
+  *count_out = count;
+  return result;
 }
 
 ////////////////////////////////
@@ -1667,6 +1897,21 @@ rad_lsp_tick(void)
       else if(changed)
       {
         rad_request_frame();
+      }
+      if(!changed && s->sem_supported && ld->opened && ld->sem_request_id == 0 && !ld->sem_asked && now_us < ld->sem_retry_us)
+      {
+        rad_request_frame();
+      }
+      else if(!changed && s->sem_supported && ld->opened && ld->sem_request_id == 0 &&
+              (!ld->sem_asked || ld->sem_request_version != ld->sent_version))
+      {
+        // rad: semantic tokens for the text the server has
+        Temp scratch = scratch_begin(0, 0);
+        ld->sem_request_id = lsp_client_request(s->client, str8_lit("textDocument/semanticTokens/full"),
+                                                push_str8f(scratch.arena, "{\"textDocument\":{\"uri\":%S}}", json_escaped_from_str8(scratch.arena, ld->uri)));
+        ld->sem_request_version = ld->sent_version;
+        ld->sem_asked = 1;
+        scratch_end(scratch);
       }
       if(!changed && ld->saved_pending)
       {

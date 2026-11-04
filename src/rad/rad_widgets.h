@@ -108,6 +108,14 @@ struct RAD_CodeSliceUnderline
   Vec4F32 color;
 };
 
+// NOTE(rad): a color for a range of the text (semantic tokens), by slot
+typedef struct RAD_TokenColor RAD_TokenColor;
+struct RAD_TokenColor
+{
+  Rng1U64 range;
+  U64 slot;                     // RAD_CodeColorSlot
+};
+
 typedef struct RAD_CodeSliceParams RAD_CodeSliceParams;
 struct RAD_CodeSliceParams
 {
@@ -129,6 +137,8 @@ struct RAD_CodeSliceParams
   DR_FStrList *line_annotations;
   RAD_CodeSliceUnderline *first_underline;
   DR_FStrList *line_margin_fstrs; // rad: drawn in the catchall margin
+  RAD_TokenColor *token_colors; // rad: sorted by range.min; a lexer token starting at one takes its color
+  U64 token_colors_count;
   S64 *line_nums;       // rad: per visible row, its line number (folds hide lines); 0 = rows are lines
   U8 *line_fold_kinds;  // rad: per visible row: 0 none, 1 a foldable range starts here, 2 folded here
 

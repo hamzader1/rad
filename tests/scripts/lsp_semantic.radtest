@@ -1,0 +1,32 @@
+#! timeout: 300
+# Semantic tokens (task G6): rust-analyzer's view of each identifier colors
+# it (types, functions, fields, locals) with the theme's code color slots;
+# while typing, the last answer is carried over the edits (the buffer's
+# change log) until the next one comes. The fixture is never saved.
+
+lsp on
+open_folder ../fixtures/lsp_complete
+wait_idle
+open ../fixtures/lsp_complete/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+wait_until 30000 semantic_count > 0
+
+# struct Counter / count: u32 / fn increment / let mut counter
+expect semantic_slot 1 8 == "code_type"
+expect semantic_slot 2 5 == "code_property"
+expect semantic_slot 2 12 == "code_type"
+expect semantic_slot 10 8 == "code_symbol"
+expect semantic_slot 20 13 == "code_local"
+
+# a line typed above: the colors move with their text at once
+click code 1 1
+key return
+wait_frames 2
+expect semantic_slot 2 8 == "code_type"
+expect semantic_slot 11 8 == "code_symbol"
+key ctrl+z
+wait_idle
+expect line 1 == "struct Counter {"
+quit

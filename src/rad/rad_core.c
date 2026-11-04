@@ -2312,6 +2312,23 @@ rad_window_frame(RAD_Window *ws)
     {
       ws->theme_code_colors[s] = ui_color_from_name(rad_code_color_slot_name_table[s]);
     }
+    {
+      // rad: semantic-token slots a theme has no color for -> a related one
+      struct {RAD_CodeColorSlot slot; RAD_CodeColorSlot fallback;} fallbacks[] =
+      {
+        {RAD_CodeColorSlot_CodeTypeParameter, RAD_CodeColorSlot_CodeType},
+        {RAD_CodeColorSlot_CodeLifetime,      RAD_CodeColorSlot_CodeKeyword},
+        {RAD_CodeColorSlot_CodeProperty,      RAD_CodeColorSlot_CodeLocal},
+        {RAD_CodeColorSlot_CodeUnsafe,        RAD_CodeColorSlot_CodeKeyword},
+      };
+      for EachElement(idx, fallbacks)
+      {
+        if(ws->theme_code_colors[fallbacks[idx].slot].w == 0)
+        {
+          ws->theme_code_colors[fallbacks[idx].slot] = ws->theme_code_colors[fallbacks[idx].fallback];
+        }
+      }
+    }
 
     ////////////////////////////
     //- rad: calculate top-level rectangles/sizes

@@ -175,6 +175,10 @@ RAD_ThemePresetTable:
       theme_color:{tags: code_string, value: 0xd69d85ff}
       theme_color:{tags: code_meta, value: 0xd6abdbff}
       theme_color:{tags: code_comment, value: 0x57a64aff}
+      theme_color:{tags: code_type_parameter, value: 0x4fcab1ff}
+      theme_color:{tags: code_lifetime, value: 0xfa4934ff}
+      theme_color:{tags: code_property, value: 0xc8c8c8ff}
+      theme_color:{tags: code_unsafe, value: 0xe74c3cff}
       theme_color:{tags: line_info_0, value: 0x3c2d25ff}
       theme_color:{tags: line_info_1, value: 0x3c3925ff}
       theme_color:{tags: line_info_2, value: 0x2e4837ff}
@@ -1072,6 +1076,12 @@ RAD_CodeColorTable:
   {CodeComment               "code_comment"}
   {CodeLineNumbers           "code_line_numbers"}
   {CodeLineNumbersSelected   "code_line_numbers_selected"}
+  //- rad: semantic tokens only (rust-analyzer; not in raddbg): a theme that
+  // has no color for one uses a related slot's (rad_window_frame)
+  {CodeTypeParameter         "code_type_parameter"}
+  {CodeLifetime              "code_lifetime"}
+  {CodeProperty              "code_property"}
+  {CodeUnsafe                "code_unsafe"}
 }
 
 @enum RAD_CodeColorSlot:

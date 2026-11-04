@@ -379,6 +379,41 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       result = 1;
     }
   }
+  else if(str8_match(name, str8_lit("semantic_count"), 0) || str8_match(name, str8_lit("semantic_slot"), 0))
+  {
+    // rad: the editor document's semantic tokens: how many; the color slot of
+    // the one starting at <line> <col> ("" if none)
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    result = rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out);
+    U64 count = 0;
+    RAD_TokenColor *colors = (result ? rad_lsp_token_colors_from_document(doc, &count) : 0);
+    S64 line_num = 0;
+    S64 col = 0;
+    if(result && str8_match(name, str8_lit("semantic_count"), 0))
+    {
+      value = push_str8f(arena, "%I64u", count);
+    }
+    else if(result && args_count >= 3 && try_s64_from_str8_c_rules(args[1], &line_num) && try_s64_from_str8_c_rules(args[2], &col) && line_num >= 1 && col >= 1)
+    {
+      U64 off = txt_range_from_line_num(&text.patched.line_map, (U64)line_num).min + (U64)(col-1);
+      value = str8_lit("");
+      for EachIndex(idx, count)
+      {
+        if(colors[idx].range.min == off)
+        {
+          value = rad_code_color_slot_name_table[colors[idx].slot];
+          break;
+        }
+      }
+    }
+    else if(result)
+    {
+      *error_out = str8_lit("semantic_slot: needs <line> <col>");
+      result = 0;
+    }
+  }
   else if(str8_match(name, str8_lit("drag_active"), 0))
   {
     value = push_str8f(arena, "%i", (int)rad_drag_is_active());

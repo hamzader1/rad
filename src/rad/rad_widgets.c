@@ -1678,8 +1678,23 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
             token_string = str8_substr(line_string, token_range);
           }
 
-          // rad: token -> token color
+          // rad: token -> token color (rad: a semantic token starting there
+          // wins: functions, types, ... as the language server sees them)
           RAD_CodeColorSlot token_color_slot = rad_code_color_slot_from_txt_token_kind(token->kind);
+          if(params->token_colors_count != 0 && token->kind != TXT_TokenKind_LineComment && token->kind != TXT_TokenKind_BlockComment &&
+             token->kind != TXT_TokenKind_String && token->kind != TXT_TokenKind_Char)
+          {
+            U64 lo = 0, hi = params->token_colors_count;
+            for(; lo < hi;)
+            {
+              U64 mid = (lo+hi)/2;
+              if(params->token_colors[mid].range.min < token->range.min) { lo = mid+1; } else { hi = mid; }
+            }
+            if(lo < params->token_colors_count && params->token_colors[lo].range.min == token->range.min)
+            {
+              token_color_slot = (RAD_CodeColorSlot)params->token_colors[lo].slot;
+            }
+          }
           Vec4F32 token_color = rad_rgba_from_code_color_slot(token_color_slot);
 
           // rad: scope endpoints enclosing cursor -> highlight

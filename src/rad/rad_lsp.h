@@ -82,6 +82,24 @@ struct RAD_LspDoc
   B32 saved_pending;            // send didSave after the next sync
   RAD_LspSnapshot snapshots[RAD_LSP_SNAPSHOT_COUNT];
   U64 snapshot_next;
+
+  //- rad: semantic tokens (textDocument/semanticTokens/full, asked after
+  // each sync): the answer for `sem_version` (offsets in that text), and the
+  // same carried to the buffer's `sem_mapped_version` by its change log
+  S64 sem_request_id;           // 0: none in flight
+  U64 sem_request_version;
+  B32 sem_asked;                // asked for sem_request_version (answered or not)
+  U64 sem_retry_us;             // ContentModified: not asked again before this
+  Arena *sem_arena;
+  RAD_TokenColor *sem_tokens;
+  U64 sem_count;
+  U64 sem_version;
+  B32 sem_valid;
+  Arena *sem_mapped_arena;
+  RAD_TokenColor *sem_mapped;
+  U64 sem_mapped_count;
+  U64 sem_mapped_version;
+  B32 sem_mapped_valid;
 };
 
 typedef struct RAD_LspFileDiags RAD_LspFileDiags;
@@ -132,6 +150,12 @@ struct RAD_LspServer
   U64 messages_received;
   U64 auto_restart_us[RAD_LSP_AUTO_RESTART_MAX]; // when it was restarted after a crash (0: never)
   U64 restarts;                 // restarts so far (command or crash)
+
+  //- rad: semantic tokens legend (initialize answer): token type index ->
+  // code color slot + 1 (0: keep the lexer's color); the `unsafe` modifier
+  B32 sem_supported;
+  U8 sem_type_slots[128];
+  U64 sem_unsafe_mask;
 };
 
 typedef struct RAD_LspDocRoot RAD_LspDocRoot;
@@ -385,6 +409,9 @@ internal void rad_lsp_goto_definition(CFG_Node *window, CFG_Node *tab, RAD_Docum
 internal void rad_lsp_take_definition(RAD_LspServer *s, LSP_Message *m);
 internal void rad_lsp_navigate_back(CFG_Node *window);
 internal B32 rad_lsp_path_is_external(String8 path);
+internal RAD_TokenColor *rad_lsp_token_colors_from_document(RAD_Document *doc, U64 *count_out);
+internal void rad_lsp_take_semantic_legend(RAD_LspServer *s, JSON_Value *provider);
+internal B32 rad_lsp_take_semantic_tokens(RAD_LspServer *s, LSP_Message *m);
 
 ////////////////////////////////
 //~ rad: Completion Functions
