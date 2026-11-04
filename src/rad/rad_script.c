@@ -898,6 +898,25 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   {
     value = (rad_lsp->hover.answered ? rad_lsp->hover.text : str8_zero());
   }
+  else if(str8_match(name, str8_lit("hover_shown"), 0) || str8_match(name, str8_lit("hover_covers_token"), 0))
+  {
+    // rad: the tooltip built in the last frame; whether its box (last
+    // layout) overlaps the hovered token's line
+    RAD_LspHover *h = &rad_lsp->hover;
+    B32 shown = (h->shown_frame != 0 && h->shown_frame+1 >= rad_state->frame_index);
+    B32 covers = 0;
+    if(shown && str8_match(name, str8_lit("hover_covers_token"), 0))
+    {
+      Rng2F32 tip = ui_state->tooltip_root->rect;
+      Rng2F32 overlap = intersect_2f32(tip, h->shown_line_rect);
+      covers = (overlap.x1 > overlap.x0 && overlap.y1 > overlap.y0);
+      value = push_str8f(arena, "%i", covers);
+    }
+    else
+    {
+      value = push_str8f(arena, "%i", shown);
+    }
+  }
 
   //- rad: the completion list (shown: built in the last frame)
   else if(str8_match(name, str8_lit("completion_open"), 0) || str8_match(name, str8_lit("completion_count"), 0) ||

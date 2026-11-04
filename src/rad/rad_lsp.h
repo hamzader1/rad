@@ -216,6 +216,10 @@ struct RAD_LspHover
   B32 answered;
   Arena *arena;
   String8 text;                 // (arena) markdown; empty: nothing to show
+  U64 shown_frame;              // rad: last frame its tooltip was built (scripts)
+  Rng2F32 shown_line_rect;      // rad: the token's line then (window pixels)
+  B32 shown_capped;             // rad: its lines were cut to fit the window
+  F32 natural_height;           // rad: its height uncut (0: not known yet)
 };
 
 // NOTE(rad): Go To Definition: one request at a time (a newer one wins)

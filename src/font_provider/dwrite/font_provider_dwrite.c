@@ -382,6 +382,59 @@ fp_font_open(String8 path)
     }
   }
   
+  //- rad: not a file, nor one in the font folders? -> a font family name
+  // ("Cascadia Code"): the system collection's regular face of it
+  if(font.file == 0 && path.size != 0)
+  {
+    IDWriteFontCollection *collection = 0;
+    error = IDWriteFactory_GetSystemFontCollection(fp_dwrite_state->factory, &collection, 0);
+    if(collection != 0)
+    {
+      String16 name16 = str16_from_8(scratch.arena, path);
+      UINT32 family_idx = 0;
+      BOOL exists = 0;
+      error = IDWriteFontCollection_FindFamilyName(collection, (WCHAR *)name16.str, &family_idx, &exists);
+      IDWriteFontFamily *family = 0;
+      if(SUCCEEDED(error) && exists)
+      {
+        error = IDWriteFontCollection_GetFontFamily(collection, family_idx, &family);
+      }
+      IDWriteFont *dw_font = 0;
+      if(family != 0)
+      {
+        error = IDWriteFontFamily_GetFirstMatchingFont(family, 400, 5, 0, &dw_font); // normal weight, stretch, style
+      }
+      IDWriteFontFace *face = 0;
+      if(dw_font != 0)
+      {
+        error = IDWriteFont_CreateFontFace(dw_font, &face);
+      }
+      if(face != 0)
+      {
+        UINT32 file_count = 0;
+        IDWriteFontFace_GetFiles(face, &file_count, 0);
+        if(file_count != 0)
+        {
+          IDWriteFontFile **files = push_array(scratch.arena, IDWriteFontFile *, file_count);
+          IDWriteFontFace_GetFiles(face, &file_count, files);
+          font.file = files[0];
+          font.face = face;
+          for(UINT32 idx = 1; idx < file_count; idx += 1)
+          {
+            IDWriteFontFile_Release(files[idx]);
+          }
+        }
+        else
+        {
+          IDWriteFontFace_Release(face);
+        }
+      }
+      if(dw_font != 0) { IDWriteFont_Release(dw_font); }
+      if(family != 0) { IDWriteFontFamily_Release(family); }
+      IDWriteFontCollection_Release(collection);
+    }
+  }
+  
   //- rjf: handlify & return
   FP_Handle handle = {0};
   if(font.file != 0)

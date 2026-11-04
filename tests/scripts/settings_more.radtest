@@ -54,6 +54,16 @@ expect setting code_font == "consola.ttf"
 expect font_custom code == 1
 expect font_custom main == 0
 
+# a family name, as typed (case does not matter)
+key return
+wait_frames 2
+key ctrl+a
+text "cascadia code"
+key return
+wait_idle
+expect setting code_font == "cascadia code"
+expect font_custom code == 1
+
 # a font that does not open: the built-in one
 key return
 wait_frames 2

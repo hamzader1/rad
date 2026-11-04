@@ -772,7 +772,8 @@ rad_icon_from_lsp_completion_kind(S64 kind, RAD_IconKind *icon_out, RAD_CodeColo
     case 2: case 3: case 4:                   {icon = RAD_IconKind_SymbolMethod;     color = RAD_CodeColorSlot_CodeSymbol;}break;  // method, function, constructor
     case 5: case 10:                          {icon = RAD_IconKind_SymbolField;      color = RAD_CodeColorSlot_CodeLocal;}break;   // field, property
     case 6:                                   {icon = RAD_IconKind_SymbolVariable;   color = RAD_CodeColorSlot_CodeLocal;}break;   // variable
-    case 7: case 8: case 22:                  {icon = RAD_IconKind_SymbolClass;      color = RAD_CodeColorSlot_CodeType;}break;    // class, interface, struct
+    case 7: case 22:                          {icon = RAD_IconKind_SymbolClass;      color = RAD_CodeColorSlot_CodeType;}break;    // class, struct
+    case 8:                                   {icon = RAD_IconKind_SymbolInterface;  color = RAD_CodeColorSlot_CodeType;}break;    // interface (trait)
     case 13:                                  {icon = RAD_IconKind_SymbolEnum;       color = RAD_CodeColorSlot_CodeType;}break;    // enum
     case 25:                                  {icon = RAD_IconKind_SymbolParameter;  color = RAD_CodeColorSlot_CodeType;}break;    // type parameter
     case 9:                                   {icon = RAD_IconKind_Module;           color = RAD_CodeColorSlot_CodeDefault;}break; // module
@@ -800,7 +801,8 @@ rad_icon_from_lsp_symbol_kind(S64 kind, RAD_IconKind *icon_out, RAD_CodeColorSlo
     case 6: case 9: case 12:          {icon = RAD_IconKind_SymbolMethod;     color = RAD_CodeColorSlot_CodeSymbol;}break;   // method, constructor, function
     case 7: case 8:                   {icon = RAD_IconKind_SymbolField;      color = RAD_CodeColorSlot_CodeProperty;}break; // property, field
     case 13:                          {icon = RAD_IconKind_SymbolVariable;   color = RAD_CodeColorSlot_CodeLocal;}break;    // variable
-    case 5: case 11: case 19: case 23:{icon = RAD_IconKind_SymbolClass;      color = RAD_CodeColorSlot_CodeType;}break;     // class, interface, object (impl), struct
+    case 5: case 19: case 23:         {icon = RAD_IconKind_SymbolClass;      color = RAD_CodeColorSlot_CodeType;}break;     // class, object (impl), struct
+    case 11:                          {icon = RAD_IconKind_SymbolInterface;  color = RAD_CodeColorSlot_CodeType;}break;     // interface (trait)
     case 10:                          {icon = RAD_IconKind_SymbolEnum;       color = RAD_CodeColorSlot_CodeType;}break;     // enum
     case 22:                          {icon = RAD_IconKind_SymbolEnumMember; color = RAD_CodeColorSlot_CodeType;}break;     // enum member
     case 14:                          {icon = RAD_IconKind_SymbolConstant;   color = RAD_CodeColorSlot_CodeRegister;}break; // constant
@@ -1215,8 +1217,12 @@ rad_completion_popup_ui(RAD_Window *ws, CFG_Node *window)
                 DR_FStrParams space_params = {rad_font_from_slot(RAD_FontSlot_Code), rad_raster_flags_from_slot(RAD_FontSlot_Code), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
                 dr_fstrs_push_new(scratch.arena, &fstrs, &space_params, str8_lit("  "));
               }
-              DR_FStrList label_fstrs = rad_fstrs_from_code_string_lang(scratch.arena, 1.f, ui_color_from_name(str8_lit("text")), TXT_LangKind_Rust, item->label);
-              dr_fstrs_concat_in_place(&fstrs, &label_fstrs);
+              // rad: the label in the theme's text color (user, 2026-11-04: not
+              // the code colors: a variable would look like the theme's variables)
+              {
+                DR_FStrParams label_params = {rad_font_from_slot(RAD_FontSlot_Code), rad_raster_flags_from_slot(RAD_FontSlot_Code), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+                dr_fstrs_push_new(scratch.arena, &fstrs, &label_params, item->label);
+              }
               if(item->detail.size != 0)
               {
                 Vec4F32 weak_color = {0};
@@ -2834,15 +2840,90 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     }
 
     //- rad: not in raddbg: hover (Quick Info): the mouse rests on a token
-    // -> the file's language server -> its answer in a tooltip
+    // -> the file's language server -> its answer in a tooltip, anchored to
+    // the token (VS2022): below its line, or above when it does not fit
+    // there, so it never covers the token. Not while Ctrl is held: that is
+    // the Ctrl+click link (user, 2026-11-04: the docs got in its way)
     {
       RAD_Document *hover_doc = rad_document_from_tab(tab);
       B32 mouse_on_token = (hover_doc != 0 && text_is_ready && sig.mouse_over_text &&
+                            !(sig.base.event_flags & WM_Modifier_Ctrl) &&
                             ui_hovering(sig.base) && !ui_dragging(sig.base) && !ui_any_ctx_menu_is_open());
       String8 hover_text = (mouse_on_token ? rad_lsp_hover_from_mouse(hover_doc, sig.mouse_token_range, sig.mouse_char_off) : str8_zero());
-      if(hover_text.size != 0) UI_Tooltip
+      if(hover_text.size != 0)
       {
-        rad_markdown_ui(hover_text, ui_top_font_size()*45.f, 24);
+        // rad: the token's box (window pixels); the tooltip's height from a
+        // frame where it was not cut
+        RAD_LspHover *h = &rad_lsp->hover;
+        if(h->shown_frame != 0 && h->shown_frame+1 == rad_state->frame_index && !h->shown_capped)
+        {
+          h->natural_height = dim_2f32(ui_state->tooltip_root->rect).y;
+        }
+        U64 max_lines = 24;
+        B32 capped = 0;
+        UI_Box *anchor_box = &ui_nil_box;
+        S64 line_num = (S64)txt_line_num_from_off(&text_patched.line_map, sig.mouse_token_range.min);
+        S64 line_row = rad_fold_row_from_line(folds.v, folds.count, line_num);
+        if(visible_line_num_range.min <= line_row && line_row <= visible_line_num_range.max)
+        {
+          Rng1U64 line_range = txt_range_from_line_num(&text_patched.line_map, (U64)line_num);
+          String8 prefix = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, r1u64(line_range.min, Max(line_range.min, sig.mouse_token_range.min)));
+          F32 x = sig.text_rect.x0 + sig.text_x_off + fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, prefix).x;
+          F32 line_y0 = sig.text_rect.y0 + (F32)(line_row - visible_line_num_range.min)*code_line_height;
+          F32 line_y1 = line_y0 + code_line_height;
+          F32 gap = ui_top_font_size()*0.5f;
+          Rng2F32 window_rect = wm_client_rect_from_window(ui_window());
+          F32 room_below = window_rect.y1 - (line_y1 + gap);
+          F32 room_above = (line_y0 - gap*0.5f) - window_rect.y0;
+          F32 tip_height = h->natural_height;
+          B32 above = 0;
+          if(tip_height == 0 || tip_height <= room_below)
+          {
+            // rad: below (the default; also before its height is known)
+          }
+          else if(tip_height <= room_above)
+          {
+            above = 1;
+          }
+          else
+          {
+            // rad: fits on neither side: the roomier one, its lines cut to fit
+            // (bound: 2em lines + 0.5em spacers; 1em padding top and bottom
+            // and a divider)
+            above = (room_above > room_below);
+            F32 tip_em = ui_bottom_font_size();
+            F32 room = (above ? room_above : room_below);
+            max_lines = (U64)Clamp(2.f, floor_f32((room - tip_em*3.f) / (tip_em*2.5f)), 24.f);
+            capped = 1;
+            tip_height = (h->shown_capped ? dim_2f32(ui_state->tooltip_root->rect).y : room);
+          }
+          F32 anchor_y0 = line_y0;
+          F32 anchor_y1 = line_y1;
+          if(above)
+          {
+            // rad: the tooltip starts gap below the anchor's bottom
+            anchor_y1 = anchor_y0 = line_y0 - gap*0.5f - tip_height - gap;
+          }
+          rad_lsp->hover.shown_line_rect = r2f32p(sig.text_rect.x0, line_y0, sig.text_rect.x1, line_y1);
+          UI_Parent(ui_root_from_state(ui_state)) UI_Focus(UI_FocusKind_Off)
+          {
+            ui_set_next_fixed_x(floor_f32(x));
+            ui_set_next_fixed_y(floor_f32(anchor_y0));
+            ui_set_next_fixed_width(1.f);
+            ui_set_next_fixed_height(floor_f32(anchor_y1 - anchor_y0));
+            anchor_box = ui_build_box_from_stringf(UI_BoxFlag_Floating, "###hover_anchor_%p", cv);
+          }
+        }
+        UI_Tooltip
+        {
+          rad_markdown_ui(hover_text, ui_top_font_size()*45.f, max_lines);
+        }
+        h->shown_frame = rad_state->frame_index;
+        h->shown_capped = capped;
+        if(!ui_box_is_nil(anchor_box))
+        {
+          ui_state->tooltip_anchor_key = anchor_box->key;
+        }
       }
     }
 

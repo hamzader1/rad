@@ -1,0 +1,31 @@
+#! timeout: 300
+# Hover placement (user, 2026-11-04: the docs covered the token, in the way
+# of Ctrl+click): `println` docs are too tall for either side of line 22, so
+# the tooltip goes on the roomier side, its lines cut, never over the token;
+# Ctrl+click on the token then goes to the definition.
+
+lsp on
+open_folder ../fixtures/lsp_complete
+wait_idle
+open ../fixtures/lsp_complete/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+click code 1 1
+wait_idle
+
+mouse code 22 6
+wait_until 15000 hover_shown == 1
+wait_frames 4
+expect hover_covers_token == 0
+wait_frames 4
+expect hover_covers_token == 0
+
+key_down ctrl
+wait_frames 3
+expect hover_shown == 0
+expect ctrl_link == "println"
+click code 22 6
+wait_until 15000 tab == "macros.rs"
+key_up ctrl
+quit

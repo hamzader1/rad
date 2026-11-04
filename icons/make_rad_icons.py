@@ -44,6 +44,7 @@ ICONS = [
     ('symbol-parameter.svg',   '`',  'rad_symbol_parameter'),
     # past ASCII: private-use codepoints (UTF-8 in RAD_IconTable)
     ('screwdriver.svg',        '\ue000', 'rad_screwdriver'),
+    ('symbol-interface.svg',   '\ue001', 'rad_symbol_interface'),
 ]
 
 # 16 SVG units -> 1060 font units (the font has 1000/em), the box centered

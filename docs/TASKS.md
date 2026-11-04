@@ -381,6 +381,31 @@ tree, each with a header (title, X), no "+", no zoom button.
   font weights (functions at 600: raddbg draws one weight); vsa's
   semantic rules (unsafe, typeParameter, lifetime) come with G6.
 
+## H. Feedback on G (user, 2026-11-04)
+
+- [x] **H1. Completion labels in one color.** The labels were drawn with
+  the code colors (a variable looked like the theme's variables). Done
+  2026-11-04: the theme's text color (light on dark themes, dark on light
+  ones); the kind icon keeps its color. Traits (Interface) now use the
+  user's new `icons/symbol-interface.svg` (U+E001), in the completion list
+  and the navigation bar.
+- [x] **H2. Hover vs Ctrl+click.** "Once we hover, the documentation
+  appears first so a click does not take me to the definition." Found:
+  the tooltip followed the mouse, and tall docs (`println!`) were pushed
+  back into the window over the hovered token. Done 2026-11-04 (scripts
+  `lsp_hover`, `lsp_hover_place`): the tooltip is anchored to the token
+  (VS2022's Quick Info): below its line, above when it fits only there,
+  else on the roomier side with its lines cut; never over the token. Not
+  shown while Ctrl is held (the link is the hint). Not reproduced with
+  injected input: a Ctrl+click that does nothing; the click itself was
+  never blocked by the tooltip (tooltips take no input). If it still
+  happens, note the file, the line and whether the docs were showing.
+- [x] **H3. Font settings by family name.** "Cascadia Code" did not open:
+  the setting took a file name only. Done 2026-11-04 (script
+  `settings_more`): a name that is no file is looked up as a family in
+  the system font collection (DirectWrite, regular face; case does not
+  matter). File names and paths still work.
+
 ## Decisions (user, 2026-11-04)
 
 1. Tool windows are not draggable. The explorer is fixed on the left; a

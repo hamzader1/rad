@@ -1,7 +1,9 @@
 #! timeout: 300
 # Hover (Quick Info): the mouse resting on a token for half a second asks
 # rust-analyzer; its answer shows in a tooltip while the mouse stays on the
-# token, and goes when the mouse leaves it.
+# token, and goes when the mouse leaves it. The tooltip is anchored to the
+# token (below or above its line, never over it); not shown while Ctrl is
+# held (the Ctrl+click link).
 
 lsp on
 open_folder ../fixtures/cargo_run
@@ -15,11 +17,24 @@ wait_until 180000 lsp_busy == 0
 mouse code 8 30
 wait_until 15000 hover_has "fn add(a: i32, b: i32) -> i32" == 1
 expect hover_has "cargo_run" == 1
+wait_frames 3
+expect hover_shown == 1
+expect hover_covers_token == 0
+
+# Ctrl held: no tooltip (the link is the hint); released: back
+key_down ctrl
+wait_frames 3
+expect hover_shown == 0
+expect ctrl_link == "add"
+key_up ctrl
+wait_until 15000 hover_shown == 1
 
 # `println` (line 6): a macro, with its documentation
 mouse code 6 7
 wait_until 15000 hover_has "macro_rules! println" == 1
 expect hover_has "Prints to the standard output" == 1
+wait_frames 3
+expect hover_covers_token == 0
 
 # off the text (past the end of a line): nothing
 mouse code 4 1

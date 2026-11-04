@@ -194,6 +194,8 @@
 //   ctrl_link                   the identifier highlighted under the mouse while
 //                               Ctrl is held (Go To Definition link), "" if none
 //   hover_text                  the hover tooltip's text (markdown; "" when none)
+//   hover_shown                 1 if the hover tooltip was built last frame
+//   hover_covers_token          1 if it overlaps the hovered token's line
 //   hover_has "<text>"          1 if it contains the text
 //   completion_open             1 if the completion list is shown
 //   completion_count            its rows; completion_row <n>: row n's label

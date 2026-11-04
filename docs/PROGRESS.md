@@ -382,6 +382,21 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (tasks H1-H3: feedback on G)
+- H1: completion rows push the label as one plain fstr (`text` color).
+  Icon `SymbolInterface` (U+E001, `symbol-interface.svg`) for completion
+  kind 8 and symbol kind 11; `data/rad_icons.ttf` has 97 glyphs.
+- H2: the hover tooltip anchors through `ui_state->tooltip_anchor_key` to
+  a floating 1px box at the token (root parent, window pixels); side and
+  line cap from `RAD_LspHover.natural_height` (measured on uncut frames,
+  so the choice is stable). Ctrl held -> no hover. Script fields
+  `hover_shown`, `hover_covers_token`.
+- H3: `fp_font_open` (dwrite) falls back to
+  `IDWriteFactory_GetSystemFontCollection` + `FindFamilyName` +
+  `GetFirstMatchingFont(400, 5, 0)`; the face's first file becomes the
+  handle's file (vtable wrappers added in `font_provider_dwrite.h`).
+- All 40 scripts pass.
+
 ### 2026-11-04 (task G5: navigation bar)
 - rad_lsp.c "Document Symbols": `textDocument/documentSymbol` per sent
   version (like semantic tokens); the hierarchy flattened in document
