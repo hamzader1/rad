@@ -2362,6 +2362,7 @@ rad_window_frame(RAD_Window *ws)
       UI_Focus(ui_any_ctx_menu_is_open() || ws->menu_bar_focused ? UI_FocusKind_Off : UI_FocusKind_Null)
     {
       rad_completion_popup_ui(ws, window);
+      rad_signature_popup_ui(ws, window);
     }
 
     ////////////////////////////
@@ -5854,6 +5855,18 @@ rad_exec_cmd(RAD_Cmd *cmd)
     case RAD_CmdKind_RestartLanguageServer:
     {
       rad_lsp_restart_all();
+    }break;
+
+    //- rad: language server: signature help at the cursor (the tab's code
+    // view asks when built)
+    case RAD_CmdKind_ParameterInfo:
+    {
+      RAD_Document *doc = rad_document_from_tab(tab_cfg);
+      if(doc != 0)
+      {
+        rad_view_state_from_cfg(tab_cfg)->cv.parameter_info = 1;
+        rad_request_frame();
+      }
     }break;
 
     //- rad: language server: completion list for the word before the cursor

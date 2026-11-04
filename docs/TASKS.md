@@ -334,7 +334,14 @@ tree, each with a header (title, X), no "+", no zoom button.
   the last 9 free ASCII codepoints (`aymbol-constant.svg` renamed to
   `symbol-constant.svg`); kinds without one of the user's icons (module,
   snippet, file, folder) keep raddbg's.
-- [ ] **G3. Signature help** popup when typing `(` (follows A7).
+- [x] **G3. Signature help** popup when typing `(` (follows A7).
+  Done 2026-11-04 (script `lsp_signature`): `(` / `,` or Parameter Info
+  (Ctrl+Shift+Space, VS2022) -> `textDocument/signatureHelp`; above the
+  cursor's line in the completion documentation box's look, the active
+  parameter underlined in code colors, the rest weak, its documentation
+  below; asked again on every cursor or text change while shown; closed
+  by an empty answer (outside the call), Esc, a selection. Not done:
+  cycling overloads with Up/Down (Rust has none; "n of m" is shown).
 - [ ] **G4. Code actions / quick fixes** (the screwdriver in `tIHhIDuW`):
   LSP `textDocument/codeAction`.
 - [ ] **G5. Navigation bar** under the tabs (`TN8f33D5`: type and member

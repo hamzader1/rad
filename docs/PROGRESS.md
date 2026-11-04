@@ -382,6 +382,18 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (task G3: signature help)
+- rad_lsp.c "Signature Help": `RAD_LspSignature` (one at a time; the last
+  asked version + cursor); `rad_lsp_take_signature` finds the active
+  parameter's label in the signature label after its `(` (no label
+  offsets asked for).
+- rad_views.c: `rad_code_view_completion_update` starts / re-asks / closes
+  it; the code view records its anchor (the cursor's line); Esc closes it
+  when no completion list takes Esc; `rad_signature_popup_ui` (built with
+  the completion popup, before the panels).
+- Command ParameterInfo (Ctrl+Shift+Space); script fields
+  `signature_open`, `signature_label`, `signature_param`.
+
 ### 2026-11-04 (task G6: semantic tokens)
 - rad_lsp.c "Semantic Tokens": legend from the initialize answer
   (`sem_type_slots`: type index -> slot + 1; `sem_unsafe_mask`); a request

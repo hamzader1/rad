@@ -379,6 +379,26 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       result = 1;
     }
   }
+  else if(str8_match(name, str8_lit("signature_open"), 0) || str8_match(name, str8_lit("signature_label"), 0) ||
+          str8_match(name, str8_lit("signature_param"), 0))
+  {
+    // rad: signature help: shown (answered); its label; the active parameter
+    RAD_LspSignature *sh = &rad_lsp->signature;
+    B32 shown = (sh->active && sh->answered && sh->label.size != 0);
+    if(str8_match(name, str8_lit("signature_open"), 0))
+    {
+      value = push_str8f(arena, "%i", (int)shown);
+    }
+    else if(str8_match(name, str8_lit("signature_label"), 0))
+    {
+      value = (shown ? push_str8_copy(arena, sh->label) : str8_zero());
+    }
+    else
+    {
+      value = (shown ? push_str8_copy(arena, str8_substr(sh->label, sh->param_range)) : str8_zero());
+    }
+    result = 1;
+  }
   else if(str8_match(name, str8_lit("semantic_count"), 0) || str8_match(name, str8_lit("semantic_slot"), 0))
   {
     // rad: the editor document's semantic tokens: how many; the color slot of

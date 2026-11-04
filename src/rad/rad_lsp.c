@@ -435,6 +435,10 @@ rad_lsp_server_restart(RAD_LspServer *s)
   {
     MemoryZeroStruct(&rad_lsp->resolve);
   }
+  if(rad_lsp->signature.server == s)
+  {
+    rad_lsp_signature_close();
+  }
   s->restarts += 1;
   rad_lsp_server_launch(s);
   rad_request_frame();
@@ -808,6 +812,10 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
       {
         rad_lsp_take_resolve(s, &m);
       }
+      else if(rad_lsp->signature.request_id != 0 && rad_lsp->signature.server == s && m.id == rad_lsp->signature.request_id)
+      {
+        rad_lsp_take_signature(s, &m);
+      }
       else if(rad_lsp_take_semantic_tokens(s, &m))
       {
       }
@@ -875,6 +883,135 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
     temp_end(temp);
   }
   scratch_end(scratch);
+}
+
+////////////////////////////////
+//~ rad: Signature Help (not in raddbg)
+
+internal void
+rad_lsp_signature_close(void)
+{
+  RAD_LspSignature *sh = &rad_lsp->signature;
+  Arena *arena = sh->arena;
+  U64 open_gen = sh->open_gen;
+  if(arena != 0)
+  {
+    arena_clear(arena);
+  }
+  MemoryZeroStruct(sh);
+  sh->arena = arena;
+  sh->open_gen = open_gen;
+}
+
+internal B32
+rad_lsp_signature_request(CFG_Node *window, CFG_Node *tab, RAD_Document *doc, U64 off, U8 trigger_char)
+{
+  // NOTE(rad): asks for the signature of the call around `off` (starts the
+  // popup, or asks again for the shown one); 0 if no ready server has the
+  // document open
+  Temp scratch = scratch_begin(0, 0);
+  RAD_LspSignature *sh = &rad_lsp->signature;
+  RAD_LspServer *s = 0;
+  String8 params = rad_lsp_position_params(scratch.arena, doc, off, &s);
+  B32 result = (params.size != 0 && params.str[params.size-1] == '}');
+  if(result)
+  {
+    B32 retrigger = (sh->active && sh->tab == tab->id && sh->doc_id == doc->id);
+    if(!retrigger)
+    {
+      rad_lsp_signature_close();
+      sh->active = 1;
+      sh->window = window->id;
+      sh->tab = tab->id;
+      sh->doc_id = doc->id;
+      sh->open_gen += 1;
+    }
+    // rad: context: invoked (1), trigger character (2), content change (3)
+    String8 context = (trigger_char != 0 ? push_str8f(scratch.arena, "{\"triggerKind\":2,\"triggerCharacter\":\"%c\",\"isRetrigger\":%s}", trigger_char, retrigger ? "true" : "false") :
+                       retrigger ? str8_lit("{\"triggerKind\":3,\"isRetrigger\":true}") :
+                       str8_lit("{\"triggerKind\":1,\"isRetrigger\":false}"));
+    String8 body = push_str8f(scratch.arena, "%S,\"context\":%S}", str8_chop(params, 1), context);
+    sh->server = s;
+    sh->request_id = lsp_client_request(s->client, str8_lit("textDocument/signatureHelp"), body);
+    sh->request_version = doc->buffer->version;
+    sh->request_off = off;
+  }
+  scratch_end(scratch);
+  return result;
+}
+
+internal void
+rad_lsp_take_signature(RAD_LspServer *s, LSP_Message *m)
+{
+  // NOTE(rad): SignatureHelp {signatures: [{label, documentation,
+  // parameters: [{label: string}], activeParameter}], activeSignature,
+  // activeParameter}; null or no signatures: not in a call (closes)
+  RAD_LspSignature *sh = &rad_lsp->signature;
+  sh->request_id = 0;
+  JSON_Value *signatures = json_value_from_key(m->result, str8_lit("signatures"));
+  if(!sh->active)
+  {
+  }
+  else if(signatures->kind != JSON_ValueKind_Array || signatures->child_count == 0)
+  {
+    rad_lsp_signature_close();
+  }
+  else
+  {
+    if(sh->arena == 0)
+    {
+      sh->arena = arena_alloc();
+    }
+    arena_clear(sh->arena);
+    S64 active_sig = json_s64_from_value(json_value_from_key(m->result, str8_lit("activeSignature")));
+    active_sig = Clamp(0, active_sig, (S64)signatures->child_count-1);
+    JSON_Value *sig = signatures->first;
+    for(S64 idx = 0; idx < active_sig && sig->next != &json_value_nil; idx += 1)
+    {
+      sig = sig->next;
+    }
+    sh->signatures_count = signatures->child_count;
+    sh->signature_idx = (U64)active_sig;
+    sh->label = push_str8_copy(sh->arena, json_string_from_value(json_value_from_key(sig, str8_lit("label"))));
+
+    //- rad: documentation: a string or MarkupContent
+    JSON_Value *doc = json_value_from_key(sig, str8_lit("documentation"));
+    sh->documentation = push_str8_copy(sh->arena, str8_skip_chop_whitespace(doc->kind == JSON_ValueKind_String ? doc->string : json_string_from_value(json_value_from_key(doc, str8_lit("value")))));
+
+    //- rad: the active parameter (the signature's, else the answer's); its
+    // label is found in the signature label after the `(` (rad does not ask
+    // for label offsets)
+    JSON_Value *active_param_value = json_value_from_key(sig, str8_lit("activeParameter"));
+    if(json_value_is_nil(active_param_value))
+    {
+      active_param_value = json_value_from_key(m->result, str8_lit("activeParameter"));
+    }
+    S64 active_param = json_s64_from_value(active_param_value);
+    JSON_Value *parameters = json_value_from_key(sig, str8_lit("parameters"));
+    sh->param_range = r1u64(0, 0);
+    if(parameters->kind == JSON_ValueKind_Array && 0 <= active_param && active_param < (S64)parameters->child_count)
+    {
+      U64 search_from = str8_find_needle(sh->label, 0, str8_lit("("), 0);
+      search_from = (search_from < sh->label.size ? search_from+1 : 0);
+      S64 idx = 0;
+      for(JSON_Value *p = parameters->first; p != &json_value_nil; p = p->next, idx += 1)
+      {
+        String8 plabel = json_string_from_value(json_value_from_key(p, str8_lit("label")));
+        U64 pos = (plabel.size != 0 ? str8_find_needle(sh->label, search_from, plabel, 0) : sh->label.size);
+        if(pos < sh->label.size)
+        {
+          if(idx == active_param)
+          {
+            sh->param_range = r1u64(pos, pos + plabel.size);
+            break;
+          }
+          search_from = pos + plabel.size;
+        }
+      }
+    }
+    sh->answered = 1;
+  }
+  rad_request_frame();
 }
 
 ////////////////////////////////

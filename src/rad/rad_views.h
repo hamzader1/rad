@@ -103,6 +103,9 @@ struct RAD_CodeViewState
   // rad: Complete Word (Ctrl+Space) asked for; the view starts it when built
   B32 complete_word;
 
+  // rad: Parameter Info (Ctrl+Shift+Space) asked for (signature help)
+  B32 parameter_info;
+
   // rad: a completion left the cursor before the closing bracket it inserted:
   // typing that bracket there steps over it (offsets in the text of `typeover_version`; off once
   // the cursor leaves [typeover_min, typeover_off])
@@ -346,6 +349,7 @@ internal B32 rad_char_is_word(U8 c);
 internal void rad_code_view_completion_commit(Arena *arena, RAD_Document *doc, TB_Buffer *buffer, TXT_TextInfo *text_info, String8 text_data, TXT_Patched *text_patched, U64 *cursor, RAD_CodeViewState *cv);
 internal void rad_code_view_completion_update(CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer *buffer, TXT_Patched *text, B32 focused, B32 typed, U8 typed_char, B32 moved);
 internal void rad_completion_popup_ui(RAD_Window *ws, CFG_Node *window);
+internal void rad_signature_popup_ui(RAD_Window *ws, CFG_Node *window);
 
 ////////////////////////////////
 //~ rad: Text View

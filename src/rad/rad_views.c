@@ -660,6 +660,39 @@ rad_code_view_completion_update(CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer 
     }
   }
 
+  //- rad: signature help (Parameter Info): `(` or `,` typed, or asked for;
+  // shown: asked again when the cursor or the text changed; closed by a
+  // selection, another document, or the view losing the keyboard
+  {
+    RAD_LspSignature *sh = &rad_lsp->signature;
+    B32 sh_here = (sh->active && sh->tab == tab->id);
+    B32 parameter_info = cv->parameter_info;
+    cv->parameter_info = 0;
+    if(sh_here && (doc == 0 || !cv->editable || doc->id != sh->doc_id || !focused || cv->cursor != cv->mark))
+    {
+      rad_lsp_signature_close();
+      sh_here = 0;
+    }
+    if(doc != 0 && cv->editable && focused && cv->cursor == cv->mark)
+    {
+      if(typed && (typed_char == '(' || typed_char == ','))
+      {
+        rad_lsp_signature_request(window, tab, doc, cursor, typed_char);
+      }
+      else if(parameter_info)
+      {
+        if(!rad_lsp_signature_request(window, tab, doc, cursor, 0))
+        {
+          rad_set_error(str8_lit("Parameter Info needs rust-analyzer running for this file (it starts when a .rs file of a Cargo project is open)."));
+        }
+      }
+      else if(sh_here && sh->request_id == 0 && (sh->request_off != cursor || sh->request_version != buffer->version))
+      {
+        rad_lsp_signature_request(window, tab, doc, cursor, 0);
+      }
+    }
+  }
+
   //- rad: the selected item's import edit is asked for while it is selected
   // (one request at a time), so its commit has the `use` line at once
   if(c->active && c->tab == tab->id && doc != 0 && rad_lsp->resolve.request_id == 0 &&
@@ -702,6 +735,123 @@ rad_icon_from_lsp_completion_kind(S64 kind, RAD_IconKind *icon_out, RAD_CodeColo
   }
   *icon_out = icon;
   *color_out = color;
+}
+
+internal void
+rad_signature_popup_ui(RAD_Window *ws, CFG_Node *window)
+{
+  // NOTE(rad): not in raddbg: signature help (VS2022's Parameter Info),
+  // above the cursor's line (below it when it does not fit), in the look of
+  // the completion list's documentation box: the signature in code colors,
+  // the active parameter underlined, the rest weak; its documentation below
+  RAD_LspSignature *sh = &rad_lsp->signature;
+  if(sh->active && sh->window == window->id && sh->anchor_frame+1 < rad_state->frame_index)
+  {
+    // rad: its view was not built last frame
+    rad_lsp_signature_close();
+  }
+  if(sh->active && sh->answered && sh->window == window->id && sh->label.size != 0)
+    RAD_Font(RAD_FontSlot_Code)
+    UI_TagF("floating")
+  {
+    Temp scratch = scratch_begin(0, 0);
+    Rng2F32 window_rect = wm_client_rect_from_window(ws->os);
+    F32 max_width_px = floor_f32(ui_top_font_size()*60.f);
+    F32 pad_px = floor_f32(ui_top_font_size()*0.75f);
+
+    //- rad: the signature: code colors, the active parameter underlined
+    DR_FStrList fstrs = {0};
+    {
+      Vec4F32 weak_color = {0};
+      UI_TagF("weak") weak_color = ui_color_from_name(str8_lit("text"));
+      TXT_TokenArray tokens = txt_token_array_from_data__rust(scratch.arena, (TXT_TokenPt){0}, sh->label, 0);
+      for EachIndex(idx, tokens.count)
+      {
+        TXT_Token *token = &tokens.v[idx];
+        String8 token_string = str8_substr(sh->label, token->range);
+        B32 in_param = (sh->param_range.min < sh->param_range.max &&
+                        sh->param_range.min <= token->range.min && token->range.max <= sh->param_range.max);
+        DR_FStrParams params = {rad_font_from_slot(RAD_FontSlot_Code), rad_raster_flags_from_slot(RAD_FontSlot_Code), weak_color, ui_top_font_size()};
+        if(in_param)
+        {
+          params.color = rad_rgba_from_code_color_slot(rad_code_color_slot_from_txt_token_kind(token->kind));
+          params.underline_thickness = floor_f32(ui_top_font_size()*0.1f) + 1.f;
+        }
+        dr_fstrs_push(scratch.arena, &fstrs, &(DR_FStr){token_string, params});
+      }
+      if(sh->signatures_count > 1)
+      {
+        DR_FStrParams params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), weak_color, ui_top_font_size()};
+        dr_fstrs_push_new(scratch.arena, &fstrs, &params, push_str8f(scratch.arena, "   %I64u of %I64u", sh->signature_idx+1, sh->signatures_count));
+      }
+    }
+    F32 label_width_px = dr_dim_from_fstrs(ui_top_tab_size(), &fstrs).x;
+    F32 width_px = Min(max_width_px, label_width_px + 2*pad_px);
+    F32 x = sh->anchor_line_rect.x0 - pad_px;
+    if(x + width_px > window_rect.x1)
+    {
+      x = Max(window_rect.x0, window_rect.x1 - width_px);
+    }
+    F32 open_t = ui_anim(ui_key_from_stringf(ui_key_zero(), "signature_open_%I64x", sh->open_gen), 1.f,
+                         .rate = rad_state->menu_animation_rate,
+                         .initial = 0.f);
+
+    //- rad: build (above the line: placed by last frame's height)
+    UI_Box *box = &ui_nil_box;
+    UI_Box *prev_box = ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "floating_view_container_signature"));
+    F32 height_px = (ui_box_is_nil(prev_box) ? floor_f32(ui_top_font_size()*3.f) : dim_2f32(prev_box->rect).y);
+    F32 y = sh->anchor_line_rect.y0 - height_px - floor_f32(ui_top_font_size()*0.25f);
+    if(y < window_rect.y0)
+    {
+      y = sh->anchor_line_rect.y1 + floor_f32(ui_top_font_size()*0.25f);
+    }
+    ui_set_next_fixed_x(x);
+    ui_set_next_fixed_y(y);
+    ui_set_next_pref_width(ui_children_sum(1));
+    ui_set_next_pref_height(ui_children_sum(1));
+    ui_set_next_child_layout_axis(Axis2_Y);
+    UI_Squish(0.1f-0.1f*open_t)
+      UI_Transparency(1.f-open_t)
+      UI_CornerRadius(ui_top_font_size()*0.15f)
+      UI_Focus(UI_FocusKind_Off)
+    {
+      box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|
+                                      UI_BoxFlag_DrawBackground|
+                                      UI_BoxFlag_DrawBackgroundBlur|
+                                      UI_BoxFlag_DisableFocusOverlay|
+                                      UI_BoxFlag_DrawDropShadow|
+                                      UI_BoxFlag_SquishAnchored,
+                                      "floating_view_container_signature");
+    }
+    UI_Parent(box) UI_Focus(UI_FocusKind_Off)
+    {
+      UI_PrefWidth(ui_px(0, 1)) ui_spacer(ui_em(0.5f, 1.f));
+      ui_set_next_pref_width(ui_children_sum(1));
+      ui_set_next_pref_height(ui_children_sum(1));
+      UI_Row
+      {
+        UI_PrefHeight(ui_px(0, 1)) ui_spacer(ui_px(pad_px, 1.f));
+        ui_set_next_pref_width(ui_children_sum(1));
+        ui_set_next_pref_height(ui_children_sum(1));
+        UI_Column UI_PrefHeight(ui_px(floor_f32(ui_top_font_size()*1.75f), 1.f))
+        {
+          UI_PrefWidth(ui_px(width_px - 2*pad_px, 1.f))
+          {
+            UI_Box *label_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|UI_BoxFlag_DisableTextTrunc, "###signature_label");
+            ui_box_equip_display_fstrs(label_box, &fstrs);
+          }
+          if(sh->documentation.size != 0) RAD_Font(RAD_FontSlot_Main)
+          {
+            rad_markdown_ui(sh->documentation, width_px - 2*pad_px, 6);
+          }
+        }
+        UI_PrefHeight(ui_px(0, 1)) ui_spacer(ui_px(pad_px, 1.f));
+      }
+      UI_PrefWidth(ui_px(0, 1)) ui_spacer(ui_em(0.5f, 1.f));
+    }
+    sh->layout_rect = box->rect;
+    scratch_end(scratch);
+  }
 }
 
 internal void
@@ -1446,6 +1596,14 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
           ui_eat_event(evt);
           continue;
         }
+      }
+      //- rad: not in raddbg: Esc closes signature help
+      if(!cmp_shown && rad_lsp->signature.active && rad_lsp->signature.tab == tab->id &&
+         evt->kind == UI_EventKind_Press && evt->slot == UI_EventActionSlot_Cancel)
+      {
+        rad_lsp_signature_close();
+        ui_eat_event(evt);
+        continue;
       }
       if(cmp_eat_newline && evt->kind == UI_EventKind_Text && str8_match(evt->string, str8_lit("\n"), 0))
       {
@@ -2331,6 +2489,27 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
           F32 y = sig.text_rect.y0 + (F32)(line_row - visible_line_num_range.min)*code_line_height;
           cmp->anchor_line_rect = r2f32p(x, y, x + code_line_height, y + code_line_height);
           cmp->anchor_frame = rad_state->frame_index;
+        }
+      }
+    }
+
+    //- rad: not in raddbg: signature help: placed over the cursor's line
+    // (next frame)
+    {
+      RAD_LspSignature *sh = &rad_lsp->signature;
+      if(sh->active && sh->tab == tab->id && text_is_ready)
+      {
+        S64 line_num = (S64)txt_line_num_from_off(&text_patched.line_map, cv->cursor);
+        S64 line_row = rad_fold_row_from_line(folds.v, folds.count, line_num);
+        if(visible_line_num_range.min <= line_row && line_row <= visible_line_num_range.max)
+        {
+          Rng1U64 line_range = txt_range_from_line_num(&text_patched.line_map, (U64)line_num);
+          String8 prefix = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, r1u64(line_range.min, Max(line_range.min, cv->cursor)));
+          F32 advance = fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, prefix).x;
+          F32 x = sig.text_rect.x0 + sig.text_x_off + advance;
+          F32 y = sig.text_rect.y0 + (F32)(line_row - visible_line_num_range.min)*code_line_height;
+          sh->anchor_line_rect = r2f32p(x, y, x + code_line_height, y + code_line_height);
+          sh->anchor_frame = rad_state->frame_index;
         }
       }
     }

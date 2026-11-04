@@ -1,0 +1,41 @@
+#! timeout: 300
+# Signature help (task G3, VS2022's Parameter Info): `(` in a call shows the
+# signature above the line with the active parameter; `,` moves to the
+# next one; leaving the call closes it; Parameter Info (Ctrl+Shift+Space)
+# asks for it; Esc closes it. The fixture is never saved.
+
+lsp on
+open_folder ../fixtures/lsp_complete
+wait_idle
+open ../fixtures/lsp_complete/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+
+click code 23 1
+wait_idle
+text "    scale("
+wait_until 15000 signature_open == 1
+expect signature_label == "fn scale(value: u32, factor: u32) -> u32"
+expect signature_param == "value: u32"
+expect completion_open == 0
+
+# `,`: the next parameter
+text "2, "
+wait_until 15000 signature_param == "factor: u32"
+
+# `)` leaves the call: closed
+text "3)"
+wait_until 15000 signature_open == 0
+
+# Parameter Info inside the call; Esc closes it
+key left
+wait_frames 2
+cmd parameter_info
+wait_until 15000 signature_open == 1
+expect signature_param == "factor: u32"
+key esc
+wait_frames 3
+expect signature_open == 0
+expect line 23 == "    scale(2, 3)"
+quit

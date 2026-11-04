@@ -333,6 +333,36 @@ struct RAD_LspCompletion
   Rng2F32 layout_first_row_rect;
 };
 
+// NOTE(rad): signature help (VS2022's Parameter Info): `(` or `,` typed in
+// a call (or Parameter Info, Ctrl+Shift+Space) -> textDocument/signatureHelp
+// at the cursor -> the signature above the line, the active parameter
+// underlined; asked again whenever the cursor or the text changes while it
+// is shown (one request at a time). An empty answer (the cursor left the
+// call), Esc, a selection or the view losing the keyboard closes it.
+typedef struct RAD_LspSignature RAD_LspSignature;
+struct RAD_LspSignature
+{
+  B32 active;
+  CFG_ID window;
+  CFG_ID tab;
+  U64 doc_id;
+  RAD_LspServer *server;
+  S64 request_id;               // 0: none in flight
+  U64 request_version;          // what was asked last (buffer version, cursor)
+  U64 request_off;
+  U64 open_gen;
+  Arena *arena;
+  B32 answered;
+  String8 label;                // (arena) the active signature
+  Rng1U64 param_range;          // the active parameter, in label (empty: none)
+  String8 documentation;        // (arena) markdown or plain text
+  U64 signatures_count;
+  U64 signature_idx;
+  U64 anchor_frame;             // the code view records where the cursor is
+  Rng2F32 anchor_line_rect;     // window pixels: the cursor's line, from the cursor
+  Rng2F32 layout_rect;          // (scripts)
+};
+
 typedef struct RAD_LspState RAD_LspState;
 struct RAD_LspState
 {
@@ -351,6 +381,7 @@ struct RAD_LspState
   U64 nav_count;
   RAD_LspCompletion completion;
   RAD_LspResolve resolve;
+  RAD_LspSignature signature;
 };
 
 ////////////////////////////////
@@ -425,6 +456,13 @@ internal B32 rad_lsp_completion_is_shown(CFG_ID tab);
 internal void rad_lsp_completion_resolve(RAD_Document *doc, U64 item_idx, B32 for_commit);
 internal void rad_lsp_take_resolve(RAD_LspServer *s, LSP_Message *m);
 internal void rad_document_apply_edits(RAD_Document *doc, U64 version, RAD_LspTextEdit *edits, U64 edits_count, U64 join_step); // (rad_views.c)
+
+////////////////////////////////
+//~ rad: Signature Help Functions
+
+internal B32 rad_lsp_signature_request(CFG_Node *window, CFG_Node *tab, RAD_Document *doc, U64 off, U8 trigger_char);
+internal void rad_lsp_take_signature(RAD_LspServer *s, LSP_Message *m);
+internal void rad_lsp_signature_close(void);
 
 ////////////////////////////////
 //~ rad: Problems Functions
