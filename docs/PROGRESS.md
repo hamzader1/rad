@@ -382,6 +382,15 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (task E1: glyph margins)
+- `rad_code_slice`: raddbg's priority and catchall margins
+  (`RAD_CodeSliceFlag_PriorityMargin/CatchallMargin`, widths 3.5 glyph
+  advances, as raddbg's RD_CodeViewBuildFlag_Margins) before the line
+  numbers; the line numbers and their background move right by them; the
+  cursor's scroll-into-view counts them. Text tabs only (not Output).
+- Catchall margin content: `line_margin_fstrs`, filled by the code view
+  with the icon of each line's worst diagnostic (error > warning > info).
+
 ### 2026-11-04 (tasks D1-D3: compact tabs, overflow, pinning)
 - Tab widths from `rad_tab_width_target_px`; the X only on the selected
   and hovered tab (room kept); pin button on pinned and selected tabs;

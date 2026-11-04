@@ -253,12 +253,17 @@ tree, each with a header (title, X), no "+", no zoom button.
 
 ## E. Editor gutter
 
-- [ ] **E1. Glyph margin** between the panel edge and the line numbers
+- [x] **E1. Glyph margin** between the panel edge and the line numbers
   (`oxg7eMtQ`), for breakpoints later. raddbg's code slice has this
   ("priority" and "catchall" margins, cut from the port); bring them back
   with raddbg's sizes. **[suggestion]** Until breakpoints exist, show the
   diagnostic icon of a line there, and VS2022's change bar (unsaved /
   saved changes) at its right edge.
+  Done 2026-11-04 (checked on a screenshot; the 32 scripts still pass):
+  raddbg's priority and catchall margins are back in text tabs (3.5 glyph
+  advances each, floating when scrolled sideways, as raddbg); the priority
+  margin is empty (breakpoints later); the catchall margin shows the icon
+  of the line's worst diagnostic. Not done: the change bar.
 - [ ] **E2. Code folding.** A fold margin between line numbers and text: a
   down arrow appears on hover at the first line of a block, tooltip "Click
   to collapse the range"; collapsed blocks show one line with a "..."

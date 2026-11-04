@@ -1139,13 +1139,68 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
   }
 
   //////////////////////////////
+  //- rad: build priority margin (raddbg: thread instruction pointers; rad:
+  // empty, for breakpoints later)
+  //
+  F32 margins_width_px = params->priority_margin_width_px + params->catchall_margin_width_px;
+  if(params->flags & RAD_CodeSliceFlag_PriorityMargin) UI_Focus(UI_FocusKind_Off) UI_Parent(top_container_box) ProfScope("build priority margins")
+  {
+    if(params->margin_float_off_px != 0)
+    {
+      ui_set_next_pref_width(ui_px(params->priority_margin_width_px, 1));
+      ui_set_next_pref_height(ui_px(slice_height_px, 1.f));
+      ui_build_box_from_key(0, ui_key_zero());
+      ui_set_next_fixed_x(floor_f32(params->margin_float_off_px));
+    }
+    ui_set_next_pref_width(ui_px(params->priority_margin_width_px, 1));
+    ui_set_next_pref_height(ui_px(slice_height_px, 1.f));
+    ui_set_next_child_layout_axis(Axis2_Y);
+    ui_build_box_from_string(UI_BoxFlag_Clickable*!!(params->flags & RAD_CodeSliceFlag_Clickable), str8_lit("priority_margin_container"));
+  }
+
+  //////////////////////////////
+  //- rad: build catchall margin (raddbg: breakpoints, watch pins; rad: the
+  // line's diagnostic icon)
+  //
+  if(params->flags & RAD_CodeSliceFlag_CatchallMargin) UI_Focus(UI_FocusKind_Off) UI_Parent(top_container_box) ProfScope("build catchall margins")
+    UI_TagF("floating")
+  {
+    if(params->margin_float_off_px != 0)
+    {
+      ui_set_next_pref_width(ui_px(params->catchall_margin_width_px, 1));
+      ui_set_next_pref_height(ui_px(slice_height_px, 1.f));
+      ui_build_box_from_key(0, ui_key_zero());
+      ui_set_next_fixed_x(floor_f32(params->margin_float_off_px + params->priority_margin_width_px));
+    }
+    ui_set_next_pref_width(ui_px(params->catchall_margin_width_px, 1));
+    ui_set_next_pref_height(ui_px(slice_height_px, 1.f));
+    ui_set_next_child_layout_axis(Axis2_Y);
+    UI_Box *catchall_margin_container_box = ui_build_box_from_string(UI_BoxFlag_DrawSideRight|UI_BoxFlag_DrawSideLeft|UI_BoxFlag_Clickable*!!(params->flags & RAD_CodeSliceFlag_Clickable), str8_lit("catchall_margin_container"));
+    UI_Parent(catchall_margin_container_box) UI_PrefHeight(ui_px(params->line_height_px, 1.f))
+    {
+      U64 line_idx = 0;
+      for(S64 line_num = params->line_num_range.min;
+          line_num <= params->line_num_range.max;
+          line_num += 1, line_idx += 1)
+      {
+        ui_set_next_text_alignment(UI_TextAlign_Center);
+        UI_Box *line_margin_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText, "###line_margin_%I64x", line_num);
+        if(params->line_margin_fstrs != 0 && params->line_margin_fstrs[line_idx].node_count != 0)
+        {
+          ui_box_equip_display_fstrs(line_margin_box, &params->line_margin_fstrs[line_idx]);
+        }
+      }
+    }
+  }
+
+  //////////////////////////////
   //- rad: build line numbers
   //
   if(params->flags & RAD_CodeSliceFlag_LineNums) UI_Parent(top_container_box) ProfScope("build line numbers") UI_Focus(UI_FocusKind_Off)
     UI_TagF("floating")
   {
     Rng1U64 select_rng = r1u64(*cursor, *mark);
-    ui_set_next_fixed_x(floor_f32(params->margin_float_off_px));
+    ui_set_next_fixed_x(floor_f32(params->margin_float_off_px + margins_width_px));
     ui_set_next_pref_width(ui_px(params->line_num_width_px, 1.f));
     ui_set_next_pref_height(ui_px(slice_height_px, 1.f));
     ui_set_next_flags(UI_BoxFlag_DrawSideRight);
@@ -1174,7 +1229,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
   {
     UI_Parent(top_container_box) UI_TagF("floating")
     {
-      ui_set_next_pref_width(ui_px(params->line_num_width_px, 1));
+      ui_set_next_pref_width(ui_px(margins_width_px + params->line_num_width_px, 1));
       ui_set_next_pref_height(ui_px(slice_height_px, 1.f));
       ui_set_next_fixed_x(floor_f32(params->margin_float_off_px));
       ui_build_box_from_key(UI_BoxFlag_DrawBackgroundBlur|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawDropShadow, ui_key_zero());

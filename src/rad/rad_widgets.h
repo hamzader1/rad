@@ -96,6 +96,8 @@ enum
   RAD_CodeSliceFlag_Clickable = (1<<0),
   RAD_CodeSliceFlag_LineNums  = (1<<1),
   RAD_CodeSliceFlag_CtrlLinks = (1<<2), // rad: Ctrl+hover/click on an identifier (Go To Definition)
+  RAD_CodeSliceFlag_PriorityMargin = (1<<3), // rad: raddbg's margins (empty: breakpoints later)
+  RAD_CodeSliceFlag_CatchallMargin = (1<<4), // rad: ...the line's diagnostic icon
 };
 
 typedef struct RAD_CodeSliceUnderline RAD_CodeSliceUnderline;
@@ -126,6 +128,7 @@ struct RAD_CodeSliceParams
   Vec4F32 *line_bg_colors;
   DR_FStrList *line_annotations;
   RAD_CodeSliceUnderline *first_underline;
+  DR_FStrList *line_margin_fstrs; // rad: drawn in the catchall margin
 
   // rad: visual parameters
   FNT_Tag font;
@@ -133,6 +136,8 @@ struct RAD_CodeSliceParams
   F32 tab_size;
   String8 search_query;
   F32 line_height_px;
+  F32 priority_margin_width_px;
+  F32 catchall_margin_width_px;
   F32 line_num_width_px;
   F32 line_text_max_width_px;
   F32 margin_float_off_px;

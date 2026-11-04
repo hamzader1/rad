@@ -1389,6 +1389,18 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
   {
     line_num_width_px = floor_f32(big_glyph_advance * (log10(visible_line_num_range.max) + 3));
   }
+
+  // NOTE(rad): raddbg's margins (RD_CodeViewBuildFlag_Margins), in text tabs:
+  // the priority margin (breakpoints later), the catchall margin (the line's
+  // diagnostic icon); same sizes as raddbg
+  B32 do_margins = str8_match(tab->string, str8_lit("text"), 0);
+  F32 priority_margin_width_px = 0;
+  F32 catchall_margin_width_px = 0;
+  if(do_margins)
+  {
+    priority_margin_width_px = floor_f32(big_glyph_advance*3.5f);
+    catchall_margin_width_px = floor_f32(big_glyph_advance*3.5f);
+  }
   Rng1U64 visible_byte_range = r1u64(txt_range_from_line_num(&text_patched.line_map, visible_line_num_range.min).min,
                                      txt_range_from_line_num(&text_patched.line_map, visible_line_num_range.max).max);
   String8 visible_data = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, visible_byte_range);
@@ -1458,7 +1470,13 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     code_slice_params.line_height_px            = code_line_height;
     code_slice_params.search_query              = search_query;
     code_slice_params.line_num_width_px         = line_num_width_px;
+    code_slice_params.priority_margin_width_px  = priority_margin_width_px;
+    code_slice_params.catchall_margin_width_px  = catchall_margin_width_px;
     code_slice_params.line_text_max_width_px    = (F32)line_size_x;
+    if(do_margins)
+    {
+      code_slice_params.flags |= RAD_CodeSliceFlag_PriorityMargin|RAD_CodeSliceFlag_CatchallMargin;
+    }
     code_slice_params.margin_float_off_px       = scroll_pos.x.idx + floor_f32(scroll_pos.x.off);
     code_slice_params.min_height_px             = code_area_dim.y + 2*code_line_height;
     if(cv->editable)
@@ -1542,6 +1560,8 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       }
       code_slice_params.line_bg_colors   = push_array(scratch.arena, Vec4F32, visible_line_count);
       code_slice_params.line_annotations = push_array(scratch.arena, DR_FStrList, visible_line_count);
+      code_slice_params.line_margin_fstrs = push_array(scratch.arena, DR_FStrList, visible_line_count);
+      U8 *line_margin_severity = push_array(scratch.arena, U8, visible_line_count);
       RAD_CodeSliceUnderline *last_underline = 0;
       DR_FStrParams fstr_params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), weak_text_color, code_font_size};
       for EachIndex(diag_idx, rad_problems->count)
@@ -1581,6 +1601,17 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
           if(is_error)
           {
             code_slice_params.line_bg_colors[line_idx] = error_line_color;
+          }
+          // rad: margin icon: the line's worst diagnostic
+          U8 severity = (is_error ? 3 : is_warning ? 2 : 1);
+          if(severity > line_margin_severity[line_idx])
+          {
+            line_margin_severity[line_idx] = severity;
+            MemoryZeroStruct(&code_slice_params.line_margin_fstrs[line_idx]);
+            dr_fstrs_push_new(scratch.arena, &code_slice_params.line_margin_fstrs[line_idx], &fstr_params, rad_icon_kind_text_table[icon_kind],
+                              .font = rad_font_from_slot(RAD_FontSlot_Icons),
+                              .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons),
+                              .color = icon_color);
           }
           if(fstrs->node_count != 0)
           {
@@ -1905,7 +1936,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     {
       Rng1U64 cursor_line_range = txt_range_from_line_num(&text_patched.line_map, cursor_line_num);
       String8 cursor_line = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, cursor_line_range);
-      S64 cursor_off = (S64)(fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, str8_prefix(cursor_line, cursor-cursor_line_range.min)).x + line_num_width_px);
+      S64 cursor_off = (S64)(fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, str8_prefix(cursor_line, cursor-cursor_line_range.min)).x + priority_margin_width_px + catchall_margin_width_px + line_num_width_px);
       Rng1S64 visible_pixel_range =
       {
         scroll_pos.x.idx,
@@ -1913,7 +1944,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       };
       Rng1S64 cursor_pixel_range =
       {
-        cursor_off - (S64)(big_glyph_advance*4) - (S64)(line_num_width_px),
+        cursor_off - (S64)(big_glyph_advance*4) - (S64)(priority_margin_width_px + catchall_margin_width_px + line_num_width_px),
         cursor_off + (S64)(big_glyph_advance*4),
       };
       S64 min_delta = Min(0, cursor_pixel_range.min - visible_pixel_range.min);
