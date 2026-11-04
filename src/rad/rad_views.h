@@ -80,6 +80,8 @@ struct RAD_CodeViewState
   FNT_Tag layout_font;
   F32 layout_font_size;
   F32 layout_tab_size;
+  B32 layout_link_hovered;   // rad: Ctrl held over an identifier (Go To Definition link)
+  Rng1U64 layout_link_range;
 };
 
 ////////////////////////////////

@@ -84,6 +84,8 @@
 //   problem <n>                 middle of visible Problems row n (1-based)
 //   completion <n>              middle of visible completion list row n (1-based)
 //   completion_list             middle of the completion list
+//   code_below <col>            under the editor's last line (2 lines down), at a
+//                               column as if on that line
 //   tab_code "<name>"           middle of the code view of the shown tab with that
 //                               name, in any panel (focused or not)
 //   toolbar <name>              a top bar button: cargo_run cargo_test cargo_check
@@ -129,6 +131,8 @@
 //   lsp_status                  its bottom bar text ("" when idle)
 //   lsp_servers                 language servers started so far
 //   cursor_line_text            the editor's line at the cursor
+//   ctrl_link                   the identifier highlighted under the mouse while
+//                               Ctrl is held (Go To Definition link), "" if none
 //   hover_text                  the hover tooltip's text (markdown; "" when none)
 //   hover_has "<text>"          1 if it contains the text
 //   completion_open             1 if the completion list is shown
@@ -254,6 +258,7 @@ struct RAD_ScriptState
   RAD_ScriptInput *first_input;
   RAD_ScriptInput *last_input;
   Vec2F32 mouse;
+  WM_Modifiers held_modifiers; // key_down of Ctrl/Shift/Alt: held for the next inputs until key_up
   U64 input_injected_us;
 
   //- rad: measurement

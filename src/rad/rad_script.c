@@ -367,7 +367,8 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
           str8_match(name, str8_lit("line_count"), 0) || str8_match(name, str8_lit("line"), 0) ||
           str8_match(name, str8_lit("token"), 0) ||
           str8_match(name, str8_lit("visible_first"), 0) || str8_match(name, str8_lit("visible_last"), 0) ||
-          str8_match(name, str8_lit("dirty"), 0) || str8_match(name, str8_lit("cursor_line_text"), 0))
+          str8_match(name, str8_lit("dirty"), 0) || str8_match(name, str8_lit("cursor_line_text"), 0) ||
+          str8_match(name, str8_lit("ctrl_link"), 0))
   {
     RAD_CodeViewState *cv = 0;
     RAD_Document *doc = 0;
@@ -390,6 +391,10 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       else if(str8_match(name, str8_lit("cursor_line_text"), 0))
       {
         value = memory_map_data_from_range(arena, &text.patched.memory_map, line_range);
+      }
+      else if(str8_match(name, str8_lit("ctrl_link"), 0))
+      {
+        value = (cv->layout_link_hovered ? memory_map_data_from_range(arena, &text.patched.memory_map, cv->layout_link_range) : str8_zero());
       }
       else if(str8_match(name, str8_lit("cursor_col"), 0) || str8_match(name, str8_lit("mark_col"), 0))
       {
@@ -955,6 +960,41 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
     }
   }
 
+  //- rad: below the editor's last line (the empty area under the text), at a
+  // column as if on the last line
+  else if(str8_match(kind, str8_lit("code_below"), 0))
+  {
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    S64 col = 0;
+    if(!rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out))
+    {
+    }
+    else if(args_count < 2 || !try_s64_from_str8_c_rules(args[1], &col) || col < 1)
+    {
+      *error_out = str8_lit("code_below: needs <col>");
+    }
+    else
+    {
+      S64 last_line = (S64)text.patched.line_map.total_line_count;
+      String8 line_text = rad_script_line_text(scratch.arena, &text, last_line);
+      String8 prefix = str8_prefix(line_text, (U64)col-1);
+      F32 advance = fnt_dim_from_tag_size_string(cv->layout_font, cv->layout_font_size, 0, cv->layout_tab_size, prefix).x;
+      pos.x = cv->layout_text_rect.x0 + cv->layout_text_x_off + advance + 1.f;
+      pos.y = cv->layout_text_rect.y0 + ((F32)(last_line - cv->layout_visible_lines.min) + 2.5f)*cv->layout_line_height;
+      if(last_line < cv->layout_visible_lines.min || cv->layout_visible_lines.max < last_line || pos.y >= cv->layout_code_rect.y1)
+      {
+        *error_out = str8_lit("code_below: no empty area under the last line");
+      }
+      else
+      {
+        args_used = 2;
+        result = 1;
+      }
+    }
+  }
+
   //- rad: the code view of a shown tab in any panel, by its name
   else if(str8_match(kind, str8_lit("tab_code"), 0))
   {
@@ -1272,6 +1312,7 @@ internal void
 rad_script_inject(RAD_ScriptInput *input)
 {
   WM_Window window = rad_state->first_window->os;
+  input->modifiers |= rad_script->held_modifiers;
   wm_sim_set_modifiers(input->modifiers);
   switch(input->kind)
   {
@@ -1310,6 +1351,14 @@ rad_script_inject(RAD_ScriptInput *input)
       evt->key = input->key;
       evt->modifiers = (input->modifiers & ~key_modifier);
       wm_sim_set_key_is_down(input->key, is_down);
+      if(is_down)
+      {
+        rad_script->held_modifiers |= key_modifier;
+      }
+      else
+      {
+        rad_script->held_modifiers &= ~key_modifier;
+      }
       wm_sim_set_modifiers(is_down ? (input->modifiers | key_modifier) : (input->modifiers & ~key_modifier));
     }break;
 
@@ -1861,7 +1910,7 @@ rad_script_tick(void)
   }
   U64 now_us = now_time_us();
   rad_script->input_injected_us = 0;
-  wm_sim_set_modifiers(0);
+  wm_sim_set_modifiers(rad_script->held_modifiers); // rad: keys held with key_down stay down
 
   //- rad: whole-script timeout
   if(now_us > rad_script->start_us + RAD_SCRIPT_TOTAL_TIMEOUT_US)

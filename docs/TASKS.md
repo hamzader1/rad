@@ -48,19 +48,26 @@ them), then layout (C), tabs (D), the gutter (E), drag and drop (F).
   keys, so Alt+Up/Down, Alt+Shift+arrows, Alt+click focused it). AltGr not
   tested (scripts cannot send it); if focus still jumps, tell what was
   pressed just before.
-- [ ] **A4. Ctrl+click and Ctrl+hover go to definition** (`tIHhIDuW`).
+- [x] **A4. Ctrl+click and Ctrl+hover go to definition** (`tIHhIDuW`).
   Holding Ctrl highlights the identifier under the mouse (VS2022: link
   color + underline, hand cursor); Ctrl+click goes to the definition of
   *that* identifier, not of the token at the cursor, and must not move the
   cursor somewhere else first.
   Done when: a script Ctrl+clicks a type while the cursor sits elsewhere
-  and lands on its definition; field `ctrl_hover_token` shows the hint.
-- [ ] **A5. Cursor precision / last line.** Dragging a selection from the
+  and lands on its definition; field `ctrl_link` shows the hint.
+  Done 2026-11-04 (script `lsp_ctrl_link`). The request already used the
+  mouse position; what was missing was the hint and that the press moved
+  the cursor first. Navigate Backward returns to the clicked identifier.
+  Not reproduced: a Ctrl+click that went to the wrong place. If it still
+  happens, note the file and line.
+- [x] **A5. Cursor precision / last line.** Dragging a selection from the
   last line up selects from the line before it (13 lines: 13 -> 1 selects
   12 -> 1). It must select all lines; deleting them leaves one empty line 1.
-  Cause: not checked yet. Write the failing script first (click/drag on
-  the last line, and on the empty area below it, see A6).
-- [ ] **A6. The editor must fill its panel** (`tdW501KQ`). Below the last
+  Cause (found, also in raddbg): the code slice clamped the mouse's line
+  index to dim-1 of an inclusive line range, so the last visible line was
+  unreachable whenever the file's end was on screen. Fixed; script
+  `editor_mouse`.
+- [x] **A6. The editor must fill its panel** (`tdW501KQ`). Below the last
   line there is an empty area that is not part of the editor. The text
   area and the line-number gutter go to the bottom of the panel; a click or
   drag below the last line goes to the end of the last line.

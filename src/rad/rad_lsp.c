@@ -913,8 +913,9 @@ rad_lsp_goto_definition(CFG_Node *window, CFG_Node *tab, RAD_Document *doc, U64 
     access_close(access);
     if(text.base_info.lines_count != 0)
     {
-      RAD_CodeViewState *cv = &rad_view_state_from_cfg(tab)->cv;
-      rad_line_column_from_offset(&text.patched, cv->cursor, &d->from_line, &d->from_column);
+      // rad: the jump starts at the asked offset (F12: the cursor; Ctrl+click:
+      // the clicked identifier, the cursor does not move there)
+      rad_line_column_from_offset(&text.patched, off, &d->from_line, &d->from_column);
     }
   }
   scratch_end(scratch);

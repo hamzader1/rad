@@ -76,6 +76,7 @@ enum
 {
   RAD_CodeSliceFlag_Clickable = (1<<0),
   RAD_CodeSliceFlag_LineNums  = (1<<1),
+  RAD_CodeSliceFlag_CtrlLinks = (1<<2), // rad: Ctrl+hover/click on an identifier (Go To Definition)
 };
 
 typedef struct RAD_CodeSliceUnderline RAD_CodeSliceUnderline;
@@ -116,6 +117,7 @@ struct RAD_CodeSliceParams
   F32 line_num_width_px;
   F32 line_text_max_width_px;
   F32 margin_float_off_px;
+  F32 min_height_px; // rad: not in raddbg: line numbers and the clickable text area reach at least this far down (fill the view)
 };
 
 typedef struct RAD_CodeSliceSignal RAD_CodeSliceSignal;
@@ -128,6 +130,10 @@ struct RAD_CodeSliceSignal
   B32 mouse_over_text;      // rad: over a character that is not whitespace
   U64 mouse_char_off;       // rad: that character
   Rng1U64 mouse_token_range; // rad: its token
+  B32 link_hovered;         // rad: Ctrl held over an identifier/keyword (RAD_CodeSliceFlag_CtrlLinks)
+  B32 link_pressed;         // rad: ...and pressed there (the cursor did not move)
+  U64 link_off;             // rad: the character under the mouse then
+  Rng1U64 link_range;       // rad: its token
 };
 
 ////////////////////////////////

@@ -1,0 +1,62 @@
+#! timeout: 300
+# Ctrl+hover and Ctrl+click (Visual Studio): with Ctrl held, the identifier
+# under the mouse is highlighted (hand cursor); a click goes to the
+# definition of that identifier, wherever the cursor is, and does not move
+# the cursor first (Navigate Backward returns to where it was).
+
+lsp on
+open_folder ../fixtures/cargo_run
+wait_idle
+open ../fixtures/cargo_run/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+
+# cursor on line 3; Ctrl held over `add` (line 8): highlighted
+click code 3 1
+wait_idle
+mouse code 8 30
+key_down ctrl
+wait_frames 3
+expect ctrl_link == "add"
+expect cursor_line == 3
+# over a string literal or a symbol: no link
+mouse code 6 20
+wait_frames 3
+expect ctrl_link == ""
+mouse code 8 33
+wait_frames 3
+expect ctrl_link == ""
+# Ctrl let go: no link
+mouse code 8 30
+wait_frames 3
+expect ctrl_link == "add"
+key_up ctrl
+wait_frames 3
+expect ctrl_link == ""
+
+# Ctrl+click `add`: the cursor stays on line 3 until the jump to `fn add`
+key_down ctrl
+mouse code 8 30
+click code 8 30
+wait_frames 2
+expect cursor_line == 3
+wait_until 15000 cursor_line == 1
+expect cursor_col == 4
+expect mark_line == 1
+key_up ctrl
+wait_idle
+
+# Navigate Backward: back to where the jump started (the clicked identifier)
+key alt+left
+wait_until 5000 cursor_line == 8
+expect cursor_col == 30
+
+# a Ctrl+press that is not on a link is a normal click
+key_down ctrl
+click code 6 20
+key_up ctrl
+wait_idle
+expect cursor_line == 6
+expect cursor_col == 20
+quit

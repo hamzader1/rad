@@ -1,0 +1,53 @@
+# Mouse precision at the end of a file: the last line can be clicked and
+# dragged from (the mouse's line index was clamped one line short, so with
+# the whole file on screen a drag from the last line started on the line
+# before it). The editor fills its panel: a click or drag below the last
+# line goes to the last line. The fixture is not saved.
+
+open ../fixtures/edit.txt
+wait_idle
+expect line_count == 4
+expect line 3 == "gamma"
+
+# a click on the last line (empty, after the final newline)
+click code 4 1
+wait_idle
+expect cursor_line == 4
+click code 3 4
+wait_idle
+expect cursor_line == 3
+expect cursor_col == 4
+
+# drag from the last line up to line 1: everything
+drag code 4 1 code 1 1
+wait_idle
+expect cursor_line == 1
+expect cursor_col == 1
+expect mark_line == 4
+
+# below the last line: the last line, at that column
+click code 1 1
+wait_idle
+click code_below 1
+wait_idle
+expect cursor_line == 4
+expect cursor_col == 1
+
+# drag from below the last line up to the start of line 2
+drag code_below 1 code 2 1
+wait_idle
+expect mark_line == 4
+expect cursor_line == 2
+
+# select all lines from the end and delete: one empty line is left
+drag code_below 1 code 1 1
+wait_idle
+key backspace
+wait_idle
+expect line_count == 1
+expect line 1 == ""
+expect cursor_line == 1
+key ctrl+z
+wait_idle
+expect line_count == 4
+quit

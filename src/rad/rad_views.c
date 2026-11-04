@@ -1282,6 +1282,11 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     code_slice_params.line_num_width_px         = line_num_width_px;
     code_slice_params.line_text_max_width_px    = (F32)line_size_x;
     code_slice_params.margin_float_off_px       = scroll_pos.x.idx + floor_f32(scroll_pos.x.off);
+    code_slice_params.min_height_px             = code_area_dim.y + 2*code_line_height;
+    if(cv->editable)
+    {
+      code_slice_params.flags |= RAD_CodeSliceFlag_CtrlLinks;
+    }
 
     // rad: fill line text / ranges
     {
@@ -1623,11 +1628,14 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       }
     }
 
-    //- rad: not in raddbg: Ctrl+click on a token -> Go To Definition
-    if(ui_pressed(sig.base) && (sig.base.event_flags & WM_Modifier_Ctrl) && sig.mouse_over_text)
+    //- rad: not in raddbg: Ctrl+click on an identifier -> Go To Definition
+    // of that identifier (the cursor stays where it was until the jump)
+    if(sig.link_pressed)
     {
-      rad_cmd(RAD_CmdKind_GoToDefinition, .tab = tab->id, .has_text_offset = 1, .text_offset = sig.mouse_char_off);
+      rad_cmd(RAD_CmdKind_GoToDefinition, .tab = tab->id, .has_text_offset = 1, .text_offset = sig.link_off);
     }
+    cv->layout_link_hovered = sig.link_hovered;
+    cv->layout_link_range   = sig.link_range;
 
     //- rad: double-click -> remember where (the Output view goes to the
     // location written there)

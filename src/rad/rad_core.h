@@ -289,6 +289,9 @@ struct RAD_State
   // explorer opens files)
   CFG_ID last_editor_panel;
 
+  // rad: the code slice whose Ctrl+press started on a link (no selection drag until release)
+  UI_Key code_slice_link_press_key;
+
   //- rad: tab file paths by file name (this frame; for tab titles)
   U64 ambiguous_path_slots_count;
   RAD_AmbiguousPathNode **ambiguous_path_slots;

@@ -377,6 +377,24 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (tasks A4-A6: Ctrl+click links, last line, editor fills panel)
+- A4: with Ctrl held, the identifier/keyword under the mouse gets a box
+  (selection color + focus border, as in the user's image) and the hand
+  cursor (`RAD_CodeSliceFlag_CtrlLinks`, editable views). A Ctrl+press on
+  it does not move the cursor or select; it sends Go To Definition for that
+  identifier, and the jump's origin (Navigate Backward) is the identifier.
+- A5: the code slice clamped the mouse's line index one line short (also
+  in raddbg, `raddbg_widgets.c` "mouse y => index"), so the file's last
+  line could not be clicked or dragged from while the end was on screen.
+  The same off-by-one in the hover lookup and the selection corners.
+- A6: the slice is at least as tall as the view (`min_height_px`): line
+  numbers and the clickable text area reach the panel bottom; a click or
+  drag below the last line lands on the last line.
+- Script mode: keys held with `key_down` stay held for later inputs and
+  frames (the tick reset modifiers to 0). Field `ctrl_link`, target
+  `code_below <col>`. Scripts `lsp_ctrl_link` (16), `editor_mouse` (16).
+  26 scripts pass. Screenshot checked.
+
 ### 2026-11-04 (tasks A3: panel focus, Alt; fixed script window size)
 - Clicking into a panel's code now focuses that panel (raddbg's code view
   does `FocusPanel` on press; the port had dropped it).

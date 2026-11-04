@@ -842,6 +842,10 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
     highlight_color = ui_color_from_name(str8_lit("border"));
   }
 
+  //- rad: not in raddbg: the slice can be taller than its lines (the view
+  // fills its panel; a click below the last line goes to that line)
+  F32 slice_height_px = Max(params->line_height_px*(dim_1s64(params->line_num_range)+1), params->min_height_px);
+
   //////////////////////////////
   //- rad: build top-level container
   //
@@ -862,7 +866,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
     Rng1U64 select_rng = r1u64(*cursor, *mark);
     ui_set_next_fixed_x(floor_f32(params->margin_float_off_px));
     ui_set_next_pref_width(ui_px(params->line_num_width_px, 1.f));
-    ui_set_next_pref_height(ui_px(params->line_height_px*(dim_1s64(params->line_num_range)+1), 1.f));
+    ui_set_next_pref_height(ui_px(slice_height_px, 1.f));
     ui_set_next_flags(UI_BoxFlag_DrawSideRight);
     UI_Column
       UI_PrefHeight(ui_px(params->line_height_px, 1.f))
@@ -890,7 +894,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
     UI_Parent(top_container_box) UI_TagF("floating")
     {
       ui_set_next_pref_width(ui_px(params->line_num_width_px, 1));
-      ui_set_next_pref_height(ui_px(params->line_height_px*(dim_1s64(params->line_num_range)+1), 1.f));
+      ui_set_next_pref_height(ui_px(slice_height_px, 1.f));
       ui_set_next_fixed_x(floor_f32(params->margin_float_off_px));
       ui_build_box_from_key(UI_BoxFlag_DrawBackgroundBlur|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawDropShadow, ui_key_zero());
     }
@@ -903,7 +907,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
   UI_Parent(top_container_box) UI_Focus(UI_FocusKind_Off)
   {
     ui_set_next_hover_cursor(WM_Cursor_IBar);
-    ui_set_next_pref_height(ui_px(params->line_height_px*(dim_1s64(params->line_num_range)+1), 1.f));
+    ui_set_next_pref_height(ui_px(slice_height_px, 1.f));
     text_container_box = ui_build_box_from_string(UI_BoxFlag_Clickable*!!(params->flags & RAD_CodeSliceFlag_Clickable), str8_lit("text_container"));
   }
 
@@ -918,7 +922,10 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
 
     // rad: mouse y => index
     S64 mouse_y_line_idx_signed = ((mouse.y - text_container_box->rect.y0) / params->line_height_px);
-    mouse_y_line_idx_signed = Clamp(0, mouse_y_line_idx_signed, dim_1s64(params->line_num_range)-1);
+    // NOTE(rad): line_num_range is inclusive (dim+1 lines). raddbg clamps to
+    // dim-1 here, so the mouse never reached the last visible line: with the
+    // whole file on screen its last line could not be clicked or dragged from.
+    mouse_y_line_idx_signed = Clamp(0, mouse_y_line_idx_signed, dim_1s64(params->line_num_range));
     mouse_y_line_idx = (U64)mouse_y_line_idx_signed;
 
     // rad: index => line num
@@ -948,7 +955,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
   //
   Rng1U64 mouse_token_rng = r1u64(mouse_off, mouse_off);
   Rng1U64 mouse_line_rng = r1u64(mouse_off, mouse_off);
-  if(mouse_y_line_idx < (U64)dim_1s64(params->line_num_range))
+  if(mouse_y_line_idx <= (U64)dim_1s64(params->line_num_range))
   {
     TXT_TokenArray *line_tokens = &params->line_tokens[mouse_y_line_idx];
     Rng1U64 line_range = params->line_ranges[mouse_y_line_idx];
@@ -969,9 +976,10 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
   //- rad: not in raddbg: the character under the mouse (not the nearest
   // boundary) and its token, if not whitespace (language server hover)
   //
+  TXT_TokenKind mouse_token_kind = TXT_TokenKind_Null;
   {
     Vec2F32 mouse = ui_mouse();
-    S64 line_count = dim_1s64(params->line_num_range);
+    S64 line_count = dim_1s64(params->line_num_range)+1;
     S64 raw_line_idx = (S64)floor_f32((mouse.y - text_container_box->rect.y0) / params->line_height_px);
     if(contains_2f32(text_container_box->rect, mouse) && 0 <= raw_line_idx && raw_line_idx < line_count)
     {
@@ -993,6 +1001,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
             result.mouse_over_text = 1;
             result.mouse_char_off = char_off;
             result.mouse_token_range = intersect_1u64(token->range, line_range);
+            mouse_token_kind = token->kind;
             break;
           }
         }
@@ -1005,6 +1014,35 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
   //
   B32 search_query_invalidated = 0;
   UI_Signal text_container_sig = ui_signal_from_box(text_container_box);
+
+  //- rad: not in raddbg: Ctrl held over an identifier or keyword -> a link
+  // to its definition (Visual Studio's Ctrl+click): highlighted, hand
+  // cursor; a press there does not move the cursor or start a selection
+  B32 link_drag = ui_key_match(rad_state->code_slice_link_press_key, text_container_box->key);
+  B32 link_hovered = ((params->flags & RAD_CodeSliceFlag_CtrlLinks) && result.mouse_over_text &&
+                      (mouse_token_kind == TXT_TokenKind_Identifier || mouse_token_kind == TXT_TokenKind_Keyword) &&
+                      (text_container_sig.event_flags & (WM_Modifier_Ctrl|WM_Modifier_Shift|WM_Modifier_Alt)) == WM_Modifier_Ctrl &&
+                      ui_hovering(text_container_sig) && (!ui_dragging(text_container_sig) || ui_pressed(text_container_sig) || link_drag));
+  if(ui_pressed(text_container_sig))
+  {
+    link_drag = link_hovered;
+    rad_state->code_slice_link_press_key = (link_hovered ? text_container_box->key : ui_key_zero());
+    if(link_hovered)
+    {
+      result.link_pressed = 1;
+      result.link_off = result.mouse_char_off;
+    }
+  }
+  if(link_drag && !ui_dragging(text_container_sig))
+  {
+    rad_state->code_slice_link_press_key = ui_key_zero();
+  }
+  if(link_hovered)
+  {
+    text_container_box->hover_cursor = WM_Cursor_HandPoint;
+    result.link_hovered = 1;
+    result.link_range = result.mouse_token_range;
+  }
   {
     //- rad: determine mouse drag range
     Rng1U64 mouse_drag_rng = r1u64(mouse_off, mouse_off);
@@ -1018,7 +1056,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
     }
 
     //- rad: clicking/dragging over the text container
-    if(ui_dragging(text_container_sig))
+    if(ui_dragging(text_container_sig) && !link_drag)
     {
       if(ui_pressed(text_container_sig))
       {
@@ -1326,7 +1364,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
   if(params->flags & RAD_CodeSliceFlag_LineNums) UI_Parent(text_container_box) ProfScope("build line number interaction box") UI_Focus(UI_FocusKind_Off)
   {
     ui_set_next_pref_width(ui_px(params->line_num_width_px, 1.f));
-    ui_set_next_pref_height(ui_px(params->line_height_px*(dim_1s64(params->line_num_range)+1), 1.f));
+    ui_set_next_pref_height(ui_px(slice_height_px, 1.f));
     ui_build_box_from_key(0, ui_key_zero());
   }
 
@@ -1335,7 +1373,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
   //
   UI_Parent(text_container_box) ProfScope("build line text") UI_Focus(UI_FocusKind_Off)
   {
-    ui_set_next_pref_height(ui_px(params->line_height_px*(dim_1s64(params->line_num_range)+1), 1.f));
+    ui_set_next_pref_height(ui_px(slice_height_px, 1.f));
     UI_WidthFill
       UI_Column
       UI_PrefHeight(ui_px(params->line_height_px, 1.f))
@@ -1363,6 +1401,22 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
         DR_Bucket *line_bucket = dr_bucket_make();
         dr_push_bucket(line_bucket);
         ui_box_equip_display_fstrs(line_box, &line_fstrs);
+
+        // rad: not in raddbg: the Ctrl+hover link (Go To Definition target)
+        if(result.link_hovered && line_range.min <= result.link_range.min && result.link_range.max <= line_range.max)
+        {
+          F32 x0 = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, result.link_range.min - line_range.min)).x;
+          F32 x1 = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, result.link_range.max - line_range.min)).x;
+          Rng2F32 link_rect =
+          {
+            line_box->rect.x0+line_num_padding_px+x0-2.f,
+            floor_f32(line_box->rect.y0) + 1.f,
+            line_box->rect.x0+line_num_padding_px+x1+2.f,
+            ceil_f32(line_box->rect.y1) - 1.f,
+          };
+          dr_rect(link_rect, ui_color_from_name(str8_lit("selection")), params->font_size*0.2f, 0, 1.f);
+          dr_rect(link_rect, highlight_color, params->font_size*0.2f, 1.f, 1.f);
+        }
 
         // rad: extra rendering for strings that are currently being searched for
         if(!search_query_invalidated && params->search_query.size != 0)
@@ -1400,7 +1454,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
         // rad: extra rendering for list(text_range*color)
         {
           Rng1U64 prev_line_range = (line_idx > 0) ? params->line_ranges[line_idx-1] : r1u64(0, 0);
-          Rng1U64 next_line_range = (line_idx+1 < dim_1s64(params->line_num_range)) ? params->line_ranges[line_idx+1] : r1u64(0, 0);
+          Rng1U64 next_line_range = (line_idx+1 <= (U64)dim_1s64(params->line_num_range)) ? params->line_ranges[line_idx+1] : r1u64(0, 0);
           for(TxtRngColorPairNode *n = first_txt_rng_color_pair; n != 0; n = n->next)
           {
             Rng1U64 select_range = n->range;
