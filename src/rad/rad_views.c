@@ -121,6 +121,23 @@ rad_view_state_animate(void)
       }
     }
   }
+
+  //- rad: the completion list's scroll point. not a view state here (in
+  // raddbg the autocompletion lister is a view, so it eases with the loop
+  // above); without this, wheel and Up/Down stop moving its rows.
+  {
+    UI_ScrollPt *scroll_pt = &rad_lsp->completion.scroll_pt;
+    F32 scroll_diff = (-scroll_pt->off);
+    scroll_pt->off += scroll_diff*rad_state->scrolling_animation_rate;
+    if(abs_f32(scroll_diff) > 0.01f)
+    {
+      rad_request_frame();
+    }
+    else
+    {
+      scroll_pt->off = 0;
+    }
+  }
 }
 
 internal void

@@ -81,6 +81,7 @@
 //   output_text "<text>"        the first Output line containing it, at its start
 //   problem <n>                 middle of visible Problems row n (1-based)
 //   completion <n>              middle of visible completion list row n (1-based)
+//   completion_list             middle of the completion list
 //   toolbar <name>              a top bar button: cargo_run cargo_test cargo_check
 //                               cargo_build cargo_stop, configuration (the
 //                               Debug/Release box), or its open menu's rows
@@ -130,6 +131,9 @@
 //   completion_selected         the selected row's label; completion_cursor: its number
 //   completion_has "<label>"    1 if a row has that label
 //   completion_filter           the typed word it is filtered by
+//   completion_top completion_bottom   first/last row fully visible in it;
+//                               completion_below: rows under the last visible one;
+//                               completion_selected_visible: 1 if the selection is
 //   diag_count diag_errors diag_warnings   problems: the last cargo command's
 //                               diagnostics and the language servers', merged
 //   diag <n>                    "<kind> <path>:<line>:<col> <message>" (path

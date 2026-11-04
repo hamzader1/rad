@@ -1,0 +1,57 @@
+#! timeout: 300
+# The completion list scrolls with the mouse wheel and follows the selection
+# with Up/Down/PageDown to the last row and back (it used to stop after a
+# few rows: its scroll point was never eased). The fixture is never saved.
+
+lsp on
+open_folder ../fixtures/lsp_complete
+wait_idle
+open ../fixtures/lsp_complete/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+
+# u32's methods: a long list
+click code 23 1
+wait_idle
+text "    counter.count."
+wait_until 15000 completion_open == 1
+wait_idle
+expect completion_count > 60
+expect completion_top == 1
+expect completion_cursor == 1
+
+# wheel down: the rows move, the selection stays
+wheel 3 completion_list
+wait_idle
+expect completion_top > 1
+expect completion_cursor == 1
+wheel 200 completion_list
+wait_idle
+expect completion_below == 0
+wheel -400 completion_list
+wait_idle
+expect completion_top == 1
+
+# Down past the visible rows: the list follows the selection
+key down 40
+wait_idle
+expect completion_cursor == 41
+expect completion_selected_visible == 1
+expect completion_top > 1
+key page_down 20
+wait_idle
+expect completion_cursor > 60
+expect completion_below == 0
+expect completion_selected_visible == 1
+key up 30
+wait_idle
+expect completion_selected_visible == 1
+key page_up 20
+wait_idle
+expect completion_cursor == 1
+expect completion_top == 1
+key esc
+wait_idle
+expect completion_open == 0
+quit

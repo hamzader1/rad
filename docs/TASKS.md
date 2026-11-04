@@ -23,7 +23,7 @@ them), then layout (C), tabs (D), the gutter (E), drag and drop (F).
 - [x] **A1. Build button icon.** The user replaced `icons/build.svg`.
   Regenerate `data/rad_icons.ttf` (`python icons/make_rad_icons.py`),
   rebuild, check by screenshot.
-- [ ] **A2. Completion list does not scroll** with the wheel or arrow keys
+- [x] **A2. Completion list does not scroll** with the wheel or arrow keys
   (moves for a few items, then stops; dragging the scroll bar works).
   Cause (verified in code, same bug as the early scroll fix): the popup's
   scroll point (`c->scroll_pt`, `rad_completion_popup_ui`) is not in the
@@ -209,10 +209,9 @@ tree, each with a header (title, X), no "+", no zoom button.
 - **[suggestion]** Semantic token colors from rust-analyzer (functions,
   macros, types colored like VS2022).
 
-## Open questions for the user
+## Decisions (user, 2026-11-04)
 
-1. Should tool windows also dock elsewhere (explorer on the right, output
-   on the side) by dragging, or are the two dock areas fixed? Plan: fixed
-   first.
-2. Bottom tool window: tabs at the bottom (VS2022, as in `QJK3Syr5`) or at
-   the top like raddbg's panels? Plan: bottom, as the image shows.
+1. Tool windows are not draggable. The explorer is fixed on the left; a
+   setting moves it to the right (Explorer Side: Left / Right).
+2. The bottom tool window has its tabs at the bottom, as VS2022
+   (`QJK3Syr5`).

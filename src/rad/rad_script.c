@@ -604,7 +604,9 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   else if(str8_match(name, str8_lit("completion_open"), 0) || str8_match(name, str8_lit("completion_count"), 0) ||
           str8_match(name, str8_lit("completion_selected"), 0) || str8_match(name, str8_lit("completion_row"), 0) ||
           str8_match(name, str8_lit("completion_has"), 0) || str8_match(name, str8_lit("completion_cursor"), 0) ||
-          str8_match(name, str8_lit("completion_filter"), 0))
+          str8_match(name, str8_lit("completion_filter"), 0) || str8_match(name, str8_lit("completion_top"), 0) ||
+          str8_match(name, str8_lit("completion_bottom"), 0) || str8_match(name, str8_lit("completion_below"), 0) ||
+          str8_match(name, str8_lit("completion_selected_visible"), 0))
   {
     RAD_LspCompletion *c = &rad_lsp->completion;
     B32 shown = (c->active && c->rows_count != 0 && c->built_frame+1 >= rad_state->frame_index);
@@ -612,6 +614,31 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     if(str8_match(name, str8_lit("completion_open"), 0))
     {
       value = (shown ? str8_lit("1") : str8_lit("0"));
+    }
+    else if(str8_match(name, str8_lit("completion_top"), 0) || str8_match(name, str8_lit("completion_bottom"), 0) ||
+            str8_match(name, str8_lit("completion_below"), 0) || str8_match(name, str8_lit("completion_selected_visible"), 0))
+    {
+      // rad: first/last row fully inside the list, from the last frame's layout
+      S64 top = 0, bottom = 0;
+      F32 row_height = dim_2f32(c->layout_first_row_rect).y;
+      if(shown && row_height > 0)
+      {
+        for(S64 n = c->layout_first_row+1; n <= (S64)rows_count; n += 1)
+        {
+          F32 row_y0 = c->layout_first_row_rect.y0 + (F32)((n-1) - c->layout_first_row)*row_height;
+          if(row_y0 + row_height > c->layout_rect.y1 + 0.5f) { break; }
+          if(row_y0 >= c->layout_rect.y0 - 0.5f)
+          {
+            if(top == 0) { top = n; }
+            bottom = n;
+          }
+        }
+      }
+      S64 v = (str8_match(name, str8_lit("completion_top"), 0) ? top :
+               str8_match(name, str8_lit("completion_bottom"), 0) ? bottom :
+               str8_match(name, str8_lit("completion_below"), 0) ? (bottom != 0 ? (S64)rows_count - bottom : 0) :
+               (top != 0 && top <= c->cursor.y && c->cursor.y <= bottom));
+      value = push_str8f(arena, "%I64d", v);
     }
     else if(str8_match(name, str8_lit("completion_count"), 0))
     {
@@ -1119,6 +1146,22 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
         args_used = 2;
         result = 1;
       }
+    }
+  }
+
+  //- rad: the completion list as a whole (wheel target)
+  else if(str8_match(kind, str8_lit("completion_list"), 0))
+  {
+    RAD_LspCompletion *c = &rad_lsp->completion;
+    if(!c->active || c->rows_count == 0 || c->built_frame+1 < rad_state->frame_index)
+    {
+      *error_out = str8_lit("completion_list: no list shown");
+    }
+    else
+    {
+      pos = center_2f32(c->layout_rect);
+      args_used = 1;
+      result = 1;
     }
   }
 

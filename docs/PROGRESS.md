@@ -376,6 +376,18 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (tasks A2: completion list scrolling)
+- Bug (user): the completion list stopped scrolling after a few rows with
+  the wheel or Up/Down (dragging the bar worked). Cause: its scroll point
+  (`rad_lsp->completion.scroll_pt`) was not eased by
+  `rad_view_state_animate` (raddbg's lister is a view state; ours is not).
+- Script `lsp_completion_scroll` (20; fails 5 checks without the fix):
+  fields completion_top/bottom/below/selected_visible, target
+  `completion_list`. 23 scripts pass.
+- User decisions: tool windows are not draggable; the explorer is on the
+  left, a setting moves it right; the bottom window's tabs are at its
+  bottom (VS2022).
+
 ### 2026-11-04 (task list before milestone 10; build icon)
 - New `docs/TASKS.md`: the user's list (explorer and output as tool
   windows, View menu, settings, code-only zoom, compact tabs with pins and
