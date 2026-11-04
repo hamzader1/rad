@@ -380,17 +380,19 @@ rad_char_is_word(U8 c)
 }
 
 internal void
-rad_document_apply_edits(RAD_Document *doc, U64 version, RAD_LspTextEdit *edits, U64 edits_count)
+rad_document_apply_edits(RAD_Document *doc, U64 version, RAD_LspTextEdit *edits, U64 edits_count, U64 join_step)
 {
   // NOTE(rad): edits in the text of an older version (a language server's
   // answer): carried to the current text (an edit's start stays before what
-  // was inserted there), then applied from the end backwards, one undo step.
-  // The views map their cursors when next built.
+  // was inserted there), then applied from the end backwards, one undo step:
+  // `join_step` if it is still the last one (a completion's late `use` line);
+  // nothing if that step was undone. The views map their cursors when next
+  // built.
   Temp scratch = scratch_begin(0, 0);
   TB_Buffer *buffer = doc->buffer;
   Access *access = access_open();
   TB_Text text = tb_text_from_buffer(scratch.arena, access, buffer);
-  if(text.base_info.lines_count != 0)
+  if(text.base_info.lines_count != 0 && (join_step == 0 || tb_buffer_step_is_applied(buffer, join_step)))
   {
     RAD_LspTextEdit *mapped = push_array(scratch.arena, RAD_LspTextEdit, edits_count);
     U64 mapped_count = 0;
@@ -413,13 +415,16 @@ rad_document_apply_edits(RAD_Document *doc, U64 version, RAD_LspTextEdit *edits,
       }
     }
     TXT_Patched patched = text.patched;
-    tb_buffer_close_undo_group(buffer);
+    if(!tb_buffer_join_step(buffer, join_step))
+    {
+      tb_buffer_begin_step(buffer);
+    }
     for EachIndex(idx, mapped_count)
     {
       tb_buffer_edit(buffer, &patched, mapped[idx].range, mapped[idx].text);
       patched = txt_patched_from_info_data_patches(scratch.arena, &text.base_info, text.base_data, &buffer->patches);
     }
-    tb_buffer_close_undo_group(buffer);
+    tb_buffer_end_step(buffer);
     rad_request_frame();
   }
   access_close(access);
@@ -438,13 +443,25 @@ rad_code_view_completion_commit(Arena *arena, RAD_Document *doc, TB_Buffer *buff
   if(1 <= c->cursor.y && c->cursor.y <= (S64)c->rows_count)
   {
     Temp scratch = scratch_begin(&arena, 1);
-    RAD_LspCompletionItem *item = &c->items[c->rows[c->cursor.y-1]];
+    U64 item_idx = c->rows[c->cursor.y-1];
+    RAD_LspCompletionItem *item = &c->items[item_idx];
 
-    //- rad: edits the server computes on request (an import): asked for now,
-    // applied when they come
-    if(doc != 0 && item->resolve_json.size != 0 && item->more_edits_count == 0)
+    //- rad: edits the server computes on request (an import), not here yet:
+    // the answer on its way (asked while selected) or asked for now; applied
+    // when they come, into this commit's undo step
+    RAD_LspResolve *r = &rad_lsp->resolve;
+    B32 resolve_pending = 0;
+    if(doc != 0 && item->resolve_json.size != 0 && !item->resolved && item->more_edits_count == 0)
     {
-      rad_lsp_completion_resolve(doc, item);
+      if(r->request_id != 0 && r->items_gen == c->items_gen && r->item_idx == item_idx)
+      {
+        r->for_commit = 1;
+      }
+      else
+      {
+        rad_lsp_completion_resolve(doc, item_idx, 1);
+      }
+      resolve_pending = (r->request_id != 0 && r->for_commit);
     }
 
     //- rad: the main edit, in the current text
@@ -471,8 +488,8 @@ rad_code_view_completion_commit(Arena *arena, RAD_Document *doc, TB_Buffer *buff
     for EachIndex(idx, item->more_edits_count)
     {
       RAD_LspTextEdit e = item->more_edits[idx];
-      if(tb_buffer_map_offset_side(buffer, c->items_version, &e.range.min, Side_Min) &&
-         tb_buffer_map_offset(buffer, c->items_version, &e.range.max) &&
+      if(tb_buffer_map_offset_side(buffer, item->more_edits_version, &e.range.min, Side_Min) &&
+         tb_buffer_map_offset(buffer, item->more_edits_version, &e.range.max) &&
          (e.range.max <= main_edit.range.min || main_edit.range.max <= e.range.min))
       {
         edits[edits_count] = e;
@@ -497,9 +514,9 @@ rad_code_view_completion_commit(Arena *arena, RAD_Document *doc, TB_Buffer *buff
       }
     }
 
-    //- rad: apply
+    //- rad: apply (one undo step)
     S64 shift = 0;
-    tb_buffer_close_undo_group(buffer);
+    U64 step = tb_buffer_begin_step(buffer);
     for EachIndex(idx, edits_count)
     {
       RAD_LspTextEdit *e = &edits[order[idx]];
@@ -510,7 +527,11 @@ rad_code_view_completion_commit(Arena *arena, RAD_Document *doc, TB_Buffer *buff
         shift += (S64)e->text.size - (S64)dim_1u64(e->range);
       }
     }
-    tb_buffer_close_undo_group(buffer);
+    tb_buffer_end_step(buffer);
+    if(resolve_pending)
+    {
+      r->commit_step = step;
+    }
     U64 main_start = (U64)((S64)main_edit.range.min + shift);
     *cursor = main_start + main_cursor;
 
@@ -638,7 +659,46 @@ rad_code_view_completion_update(CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer 
       }
     }
   }
+
+  //- rad: the selected item's import edit is asked for while it is selected
+  // (one request at a time), so its commit has the `use` line at once
+  if(c->active && c->tab == tab->id && doc != 0 && rad_lsp->resolve.request_id == 0 &&
+     1 <= c->cursor.y && c->cursor.y <= (S64)c->rows_count)
+  {
+    U64 item_idx = c->rows[c->cursor.y-1];
+    RAD_LspCompletionItem *item = &c->items[item_idx];
+    if(item->resolve_json.size != 0 && !item->resolved && item->more_edits_count == 0)
+    {
+      rad_lsp_completion_resolve(doc, item_idx, 0);
+    }
+  }
   scratch_end(scratch);
+}
+
+internal void
+rad_icon_from_lsp_completion_kind(S64 kind, RAD_IconKind *icon_out, RAD_CodeColorSlot *color_out)
+{
+  // NOTE(rad): not in raddbg (its lister rows have no kind icons): LSP
+  // CompletionItemKind -> one of raddbg's icons, in the code color of that
+  // kind of token (Visual Studio's shapes where raddbg has one: a cube for
+  // functions, a grid for types)
+  RAD_IconKind icon = RAD_IconKind_Dot;
+  RAD_CodeColorSlot color = RAD_CodeColorSlot_CodeDefault;
+  switch(kind)
+  {
+    default:{}break;
+    case 2: case 3: case 4:                   {icon = RAD_IconKind_Cube;   color = RAD_CodeColorSlot_CodeSymbol;}break;  // method, function, constructor
+    case 5: case 6: case 10:                  {icon = RAD_IconKind_Dot;    color = RAD_CodeColorSlot_CodeLocal;}break;   // field, variable, property
+    case 7: case 8: case 13: case 22: case 25:{icon = RAD_IconKind_Grid;   color = RAD_CodeColorSlot_CodeType;}break;    // class, interface, enum, struct, type parameter
+    case 9:                                   {icon = RAD_IconKind_Module; color = RAD_CodeColorSlot_CodeDefault;}break; // module
+    case 11: case 12: case 20: case 21:       {icon = RAD_IconKind_List;   color = RAD_CodeColorSlot_CodeNumeric;}break; // unit, value, enum member, constant
+    case 14: case 24:                         {icon = RAD_IconKind_Dot;    color = RAD_CodeColorSlot_CodeKeyword;}break; // keyword, operator
+    case 15:                                  {icon = RAD_IconKind_Pencil; color = RAD_CodeColorSlot_CodeMeta;}break;    // snippet
+    case 17:                                  {icon = RAD_IconKind_FileOutline;         color = RAD_CodeColorSlot_CodeDefault;}break;
+    case 19:                                  {icon = RAD_IconKind_FolderClosedOutline; color = RAD_CodeColorSlot_CodeDefault;}break;
+  }
+  *icon_out = icon;
+  *color_out = color;
 }
 
 internal void
@@ -744,8 +804,20 @@ rad_completion_popup_ui(RAD_Window *ws, CFG_Node *window)
               RAD_LspCompletionItem *item = &c->items[c->rows[row_idx]];
               B32 row_selected = (c->cursor.y == row_idx+1);
 
-              //- rad: row text: label (code colors)  detail (weak)
-              DR_FStrList fstrs = rad_fstrs_from_code_string_lang(scratch.arena, 1.f, ui_color_from_name(str8_lit("text")), TXT_LangKind_Rust, item->label);
+              //- rad: row text: kind icon (in the code color of that kind)  label
+              // (code colors)  detail (weak)
+              DR_FStrList fstrs = {0};
+              {
+                RAD_IconKind icon_kind = RAD_IconKind_Dot;
+                RAD_CodeColorSlot icon_color_slot = RAD_CodeColorSlot_CodeDefault;
+                rad_icon_from_lsp_completion_kind(item->kind, &icon_kind, &icon_color_slot);
+                DR_FStrParams icon_params = {rad_font_from_slot(RAD_FontSlot_Icons), rad_raster_flags_from_slot(RAD_FontSlot_Icons), rad_rgba_from_code_color_slot(icon_color_slot), ui_top_font_size()};
+                dr_fstrs_push_new(scratch.arena, &fstrs, &icon_params, rad_icon_kind_text_table[icon_kind]);
+                DR_FStrParams space_params = {rad_font_from_slot(RAD_FontSlot_Code), rad_raster_flags_from_slot(RAD_FontSlot_Code), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+                dr_fstrs_push_new(scratch.arena, &fstrs, &space_params, str8_lit("  "));
+              }
+              DR_FStrList label_fstrs = rad_fstrs_from_code_string_lang(scratch.arena, 1.f, ui_color_from_name(str8_lit("text")), TXT_LangKind_Rust, item->label);
+              dr_fstrs_concat_in_place(&fstrs, &label_fstrs);
               if(item->detail.size != 0)
               {
                 Vec4F32 weak_color = {0};
@@ -809,6 +881,60 @@ rad_completion_popup_ui(RAD_Window *ws, CFG_Node *window)
 
       //- rad: interact with container (takes the clicks between rows)
       ui_signal_from_box(container);
+
+      //- rad: not in raddbg: the selected item's documentation, beside the
+      // list (right of it, else left), laid out like a tooltip
+      RAD_LspCompletionItem *selected = ((1 <= c->cursor.y && c->cursor.y <= (S64)c->rows_count) ? &c->items[c->rows[c->cursor.y-1]] : 0);
+      if(selected != 0 && selected->documentation.size != 0)
+        RAD_Font(RAD_FontSlot_Main)
+      {
+        F32 gap_px = floor_f32(ui_top_font_size()*0.5f);
+        F32 doc_width_px = floor_f32(ui_top_font_size()*36.f);
+        F32 x = rect.x1 + gap_px;
+        if(x + doc_width_px > window_rect.x1 && rect.x0 - gap_px - doc_width_px >= window_rect.x0)
+        {
+          x = rect.x0 - gap_px - doc_width_px;
+        }
+        ui_set_next_fixed_x(x);
+        ui_set_next_fixed_y(rect.y0);
+        ui_set_next_pref_width(ui_children_sum(1));
+        ui_set_next_pref_height(ui_children_sum(1));
+        ui_set_next_child_layout_axis(Axis2_Y);
+        UI_Box *doc_box = &ui_nil_box;
+        UI_Squish(0.1f-0.1f*open_t)
+          UI_Transparency(1.f-open_t)
+          UI_CornerRadius(ui_top_font_size()*0.15f)
+        {
+          doc_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                              UI_BoxFlag_DrawBorder|
+                                              UI_BoxFlag_DrawBackground|
+                                              UI_BoxFlag_DrawBackgroundBlur|
+                                              UI_BoxFlag_DisableFocusOverlay|
+                                              UI_BoxFlag_DrawDropShadow|
+                                              UI_BoxFlag_SquishAnchored,
+                                              "floating_view_container_completion_doc");
+        }
+        UI_Parent(doc_box) UI_Focus(UI_FocusKind_Null)
+        {
+          UI_PrefWidth(ui_px(0, 1)) ui_spacer(ui_em(0.75f, 1.f));
+          ui_set_next_pref_width(ui_children_sum(1));
+          ui_set_next_pref_height(ui_children_sum(1));
+          UI_Row
+          {
+            UI_PrefHeight(ui_px(0, 1)) ui_spacer(ui_em(1.f, 1.f));
+            ui_set_next_pref_width(ui_children_sum(1));
+            ui_set_next_pref_height(ui_children_sum(1));
+            UI_Column UI_PrefHeight(ui_px(floor_f32(ui_top_font_size()*1.75f), 1.f))
+            {
+              rad_markdown_ui(selected->documentation, doc_width_px - 2*ui_top_font_size(), 18);
+            }
+            UI_PrefHeight(ui_px(0, 1)) ui_spacer(ui_em(1.f, 1.f));
+          }
+          UI_PrefWidth(ui_px(0, 1)) ui_spacer(ui_em(0.75f, 1.f));
+        }
+        ui_signal_from_box(doc_box);
+        c->doc_built_frame = rad_state->frame_index;
+      }
     }
     c->built_frame = rad_state->frame_index;
     c->layout_rect = rect;

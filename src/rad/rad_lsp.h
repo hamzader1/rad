@@ -205,10 +205,15 @@ struct RAD_LspNavEntry
 //     Esc (close). Moving the cursor otherwise, or typing a character that is
 //     not part of a word, closes it.
 //   imports: items from crates not imported yet (rust-analyzer offers them
-//     only to clients that resolve) carry `data`; committing one sends
-//     completionItem/resolve first (the server still has the text before the
-//     commit), and the `use` edit it answers with is applied when it comes,
-//     carried over the commit and any typing since (a second undo step).
+//     only to clients that resolve) carry `data`. The selected one is
+//     resolved while it is selected (Visual Studio), so a commit usually has
+//     its `use` edit already and applies it in the same undo step. Committed
+//     before the answer came: the `use` edit is applied when it comes,
+//     carried over the commit and any typing since, in the commit's undo step
+//     if nothing happened since (else its own; dropped if the commit was
+//     undone).
+//   documentation: rust-analyzer sends it with the items (rad does not ask
+//     to resolve it); the selected item's is shown beside the list.
 typedef struct RAD_LspTextEdit RAD_LspTextEdit;
 struct RAD_LspTextEdit
 {
@@ -231,7 +236,10 @@ struct RAD_LspCompletionItem
   U64 insert_cursor;            // snippet's first tab stop; else the end)
   RAD_LspTextEdit *more_edits;  // additionalTextEdits
   U64 more_edits_count;
+  U64 more_edits_version;       // the text version their ranges are in
   String8 resolve_json;         // the item as sent, if it has edits to resolve (`data`)
+  B32 resolved;                 // completionItem/resolve answered (more_edits are its)
+  String8 documentation;        // markdown (or plain text)
 };
 
 typedef struct RAD_LspResolve RAD_LspResolve;
@@ -241,6 +249,10 @@ struct RAD_LspResolve
   S64 request_id;               // 0: none
   U64 doc_id;
   U64 version;                  // the document's version the server had
+  U64 items_gen;                // which list's item (RAD_LspCompletion.items_gen)
+  U64 item_idx;
+  B32 for_commit;               // the item was committed: apply the edits when they come
+  U64 commit_step;              // ...in this undo step if still the last one (text_buffer)
 };
 
 typedef struct RAD_LspCompletion RAD_LspCompletion;
@@ -253,6 +265,7 @@ struct RAD_LspCompletion
   U64 word_start;               // in the text of `word_version`
   U64 word_version;
   U64 open_gen;                 // changes per session (restarts the open animation)
+  U64 items_gen;                // changes per answer (resolve answers find their item by it)
 
   //- rad: request in flight
   RAD_LspServer *server;
@@ -285,6 +298,7 @@ struct RAD_LspCompletion
   U64 anchor_frame;
   Rng2F32 anchor_line_rect;     // window pixels: the word start's line, from the word start
   U64 built_frame;              // last frame the popup was built (with rows)
+  U64 doc_built_frame;          // last frame the documentation beside it was built
   B32 commit_requested;         // a row was clicked: the code view commits it
   Rng2F32 layout_rect;          // (scripts) popup rect, first visible row, row height
   S64 layout_first_row;
@@ -371,9 +385,9 @@ internal void rad_lsp_completion_refilter(String8 filter);
 internal void rad_lsp_completion_set_filter(String8 filter);
 internal void rad_lsp_completion_close(void);
 internal B32 rad_lsp_completion_is_shown(CFG_ID tab);
-internal void rad_lsp_completion_resolve(RAD_Document *doc, RAD_LspCompletionItem *item);
+internal void rad_lsp_completion_resolve(RAD_Document *doc, U64 item_idx, B32 for_commit);
 internal void rad_lsp_take_resolve(RAD_LspServer *s, LSP_Message *m);
-internal void rad_document_apply_edits(RAD_Document *doc, U64 version, RAD_LspTextEdit *edits, U64 edits_count); // (rad_views.c)
+internal void rad_document_apply_edits(RAD_Document *doc, U64 version, RAD_LspTextEdit *edits, U64 edits_count, U64 join_step); // (rad_views.c)
 
 ////////////////////////////////
 //~ rad: Problems Functions

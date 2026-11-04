@@ -616,7 +616,9 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
           str8_match(name, str8_lit("completion_has"), 0) || str8_match(name, str8_lit("completion_cursor"), 0) ||
           str8_match(name, str8_lit("completion_filter"), 0) || str8_match(name, str8_lit("completion_top"), 0) ||
           str8_match(name, str8_lit("completion_bottom"), 0) || str8_match(name, str8_lit("completion_below"), 0) ||
-          str8_match(name, str8_lit("completion_selected_visible"), 0))
+          str8_match(name, str8_lit("completion_selected_visible"), 0) || str8_match(name, str8_lit("completion_doc"), 0) ||
+          str8_match(name, str8_lit("completion_doc_shown"), 0) || str8_match(name, str8_lit("completion_kind"), 0) ||
+          str8_match(name, str8_lit("completion_resolved"), 0))
   {
     RAD_LspCompletion *c = &rad_lsp->completion;
     B32 shown = (c->active && c->rows_count != 0 && c->built_frame+1 >= rad_state->frame_index);
@@ -661,6 +663,18 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     else if(str8_match(name, str8_lit("completion_filter"), 0))
     {
       value = (c->active ? c->filter : str8_zero());
+    }
+    else if(str8_match(name, str8_lit("completion_doc"), 0) || str8_match(name, str8_lit("completion_kind"), 0) ||
+            str8_match(name, str8_lit("completion_resolved"), 0))
+    {
+      RAD_LspCompletionItem *item = ((1 <= c->cursor.y && (U64)c->cursor.y <= rows_count) ? &c->items[c->rows[c->cursor.y-1]] : 0);
+      value = (str8_match(name, str8_lit("completion_doc"), 0) ? (item != 0 ? item->documentation : str8_zero()) :
+               str8_match(name, str8_lit("completion_kind"), 0) ? push_str8f(arena, "%I64d", item != 0 ? item->kind : 0) :
+               ((item != 0 && item->resolved) ? str8_lit("1") : str8_lit("0")));
+    }
+    else if(str8_match(name, str8_lit("completion_doc_shown"), 0))
+    {
+      value = ((shown && c->doc_built_frame+1 >= rad_state->frame_index) ? str8_lit("1") : str8_lit("0"));
     }
     else if(str8_match(name, str8_lit("completion_selected"), 0))
     {

@@ -140,6 +140,10 @@
 //   completion_selected         the selected row's label; completion_cursor: its number
 //   completion_has "<label>"    1 if a row has that label
 //   completion_filter           the typed word it is filtered by
+//   completion_doc              the selected item's documentation ("" if none);
+//                               completion_doc_shown: 1 if shown beside the list;
+//                               completion_kind: its LSP CompletionItemKind;
+//                               completion_resolved: 1 if its resolve came back
 //   completion_top completion_bottom   first/last row fully visible in it;
 //                               completion_below: rows under the last visible one;
 //                               completion_selected_visible: 1 if the selection is

@@ -1164,6 +1164,7 @@ rad_lsp_take_completion(RAD_LspServer *s, LSP_Message *m)
 
     //- rad: items
     arena_clear(c->arena);
+    c->items_gen    += 1;
     c->answered      = 1;
     c->incomplete    = incomplete;
     c->items_version = c->request_version;
@@ -1195,6 +1196,14 @@ rad_lsp_take_completion(RAD_LspServer *s, LSP_Message *m)
       }
       item->edit_cursor = item->edit.text.size;
       item->insert_cursor = item->insert_text.size;
+      item->more_edits_version = c->request_version;
+      {
+        // rad: documentation: a string or MarkupContent {kind, value}
+        JSON_Value *doc_value = json_value_from_key(it, str8_lit("documentation"));
+        String8 documentation = (doc_value->kind == JSON_ValueKind_String ? json_string_from_value(doc_value) :
+                                 json_string_from_value(json_value_from_key(doc_value, str8_lit("value"))));
+        item->documentation = push_str8_copy(c->arena, str8_skip_chop_whitespace(documentation));
+      }
       if(json_s64_from_value(json_value_from_key(it, str8_lit("insertTextFormat"))) == 2)
       {
         // rad: a snippet: plain text, the cursor at its first tab stop
@@ -1346,23 +1355,27 @@ rad_lsp_completion_close(void)
   Arena *arena = c->arena;
   Arena *filter_arena = c->filter_arena;
   U64 open_gen = c->open_gen;
+  U64 items_gen = c->items_gen;
   arena_clear(arena);
   arena_clear(filter_arena);
   MemoryZeroStruct(c);
   c->arena = arena;
   c->filter_arena = filter_arena;
   c->open_gen = open_gen;
+  c->items_gen = items_gen;
 }
 
 internal void
-rad_lsp_completion_resolve(RAD_Document *doc, RAD_LspCompletionItem *item)
+rad_lsp_completion_resolve(RAD_Document *doc, U64 item_idx, B32 for_commit)
 {
-  // NOTE(rad): before the commit's edit: the server gets the text as it is
-  // now, and its answer's ranges are in it (rad_lsp_take_resolve)
+  // NOTE(rad): while selected, or before the commit's edit: the server gets
+  // the text as it is now, and its answer's ranges are in it
+  // (rad_lsp_take_resolve). One request at a time: a newer one replaces it.
   RAD_LspCompletion *c = &rad_lsp->completion;
   RAD_LspServer *s = c->server;
   RAD_LspDoc *ld = (s != 0 ? rad_lsp_doc_from_id(s, doc->id) : 0);
-  if(s != 0 && s->state == RAD_LspServerState_Ready && s->client != 0 && ld != 0 && ld->opened && item->resolve_json.size != 0)
+  RAD_LspCompletionItem *item = (item_idx < c->items_count ? &c->items[item_idx] : 0);
+  if(s != 0 && s->state == RAD_LspServerState_Ready && s->client != 0 && ld != 0 && ld->opened && item != 0 && item->resolve_json.size != 0)
   {
     if(ld->sent_version != doc->buffer->version)
     {
@@ -1372,6 +1385,10 @@ rad_lsp_completion_resolve(RAD_Document *doc, RAD_LspCompletionItem *item)
     r->server = s;
     r->doc_id = doc->id;
     r->version = doc->buffer->version;
+    r->items_gen = c->items_gen;
+    r->item_idx = item_idx;
+    r->for_commit = for_commit;
+    r->commit_step = 0;
     r->request_id = lsp_client_request(s->client, str8_lit("completionItem/resolve"), item->resolve_json);
   }
 }
@@ -1394,17 +1411,43 @@ rad_lsp_take_resolve(RAD_LspServer *s, LSP_Message *m)
     }
   }
   JSON_Value *more = json_value_from_key(m->result, str8_lit("additionalTextEdits"));
-  if(snap != 0 && doc != 0 && more->kind == JSON_ValueKind_Array && more->child_count != 0)
+  RAD_LspTextEdit *edits = 0;
+  U64 edits_count = 0;
+  if(snap != 0 && more->kind == JSON_ValueKind_Array && more->child_count != 0)
   {
-    RAD_LspTextEdit *edits = push_array(scratch.arena, RAD_LspTextEdit, more->child_count);
-    U64 edits_count = 0;
+    edits = push_array(scratch.arena, RAD_LspTextEdit, more->child_count);
     for(JSON_Value *e = more->first; e != &json_value_nil; e = e->next)
     {
       edits[edits_count] = rad_lsp_text_edit_from_json(scratch.arena, s, snap, e);
       edits_count += 1;
     }
-    rad_document_apply_edits(doc, r->version, edits, edits_count);
   }
+
+  //- rad: asked while selected, list still showing those items: the item
+  // keeps the edits (its commit applies them in the same undo step)
+  RAD_LspCompletion *c = &rad_lsp->completion;
+  if(!r->for_commit && snap != 0 && c->active && c->items_gen == r->items_gen && r->item_idx < c->items_count)
+  {
+    RAD_LspCompletionItem *item = &c->items[r->item_idx];
+    item->resolved = 1;
+    item->more_edits = push_array(c->arena, RAD_LspTextEdit, edits_count);
+    item->more_edits_count = edits_count;
+    item->more_edits_version = r->version;
+    for EachIndex(idx, edits_count)
+    {
+      item->more_edits[idx].range = edits[idx].range;
+      item->more_edits[idx].text = push_str8_copy(c->arena, edits[idx].text);
+    }
+  }
+
+  //- rad: the item was committed before the answer came: now, into the
+  // commit's undo step if nothing happened since
+  else if(r->for_commit && doc != 0 && edits_count != 0)
+  {
+    rad_document_apply_edits(doc, r->version, edits, edits_count, r->commit_step);
+  }
+  r->for_commit = 0;
+  r->commit_step = 0;
   scratch_end(scratch);
 }
 

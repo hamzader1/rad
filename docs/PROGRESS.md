@@ -290,10 +290,10 @@ Milestone 6 details (each item with its script):
 - LSP completion: snippets become plain text (the cursor at the first tab
   stop; no Tab between arguments; rust-analyzer is asked for
   `add_parentheses`, so no argument placeholders). Labels show rust-
-  analyzer's `()`/`(…)`/`<…>`. No documentation beside the list, no kind
-  icons; import items show
-  rust-analyzer's "(use path)" in the label; an import's `use` line is a
-  second undo step (it arrives after the commit). A word start opens the
+  analyzer's `()`/`(…)`/`<…>`; import items show rust-analyzer's
+  "(use path)" in the label. An import's `use` line is resolved while the
+  item is selected; one committed before the answer gets it later (the same
+  undo step if nothing happened since, else a second one). A word start opens the
   list only when it is the only character typed in its frame. Filtering:
   prefix, then substring, then subsequence (raddbg's highlight marks
   substring matches only).
@@ -379,6 +379,28 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-04 (tasks A8-A9: completion docs and icons, one-step import undo)
+- `text_buffer`: undo steps. Records made between `tb_buffer_begin_step`
+  and `tb_buffer_end_step` share a step; undo/redo take a whole step (redo's
+  cursor follows the later records). `tb_buffer_join_step` reopens the last
+  step (nothing done since); `tb_buffer_step_is_applied`. rad_tests
+  `undo_steps` (37,610,802 checks pass).
+- Completion commit and `rad_document_apply_edits` use steps. The selected
+  item's completionItem/resolve is sent while it is selected; its answer
+  stays on the item (`more_edits_version` = the text it is in), so the
+  commit applies the `use` line in the same step. A commit before the answer
+  marks the request `for_commit`: the answer joins the commit's step, is
+  its own step if the user edited since, or is dropped if the commit was
+  undone.
+- Documentation (rust-analyzer sends it inline) in a box beside the list:
+  tooltip-like padding, `rad_markdown_ui`, 36 em wide, right of the list or
+  left if it does not fit. Kind icons from raddbg's font in the kind's code
+  color (`rad_icon_from_lsp_completion_kind`). Screenshot checked.
+- Fields completion_doc/doc_shown/kind/resolved. `lsp_completion` (59):
+  one Ctrl+Z for HashMap, a HashSet import resolved before Enter arrives
+  with the commit; `lsp_completion_scroll` (24): checked_add's docs. 26
+  scripts pass.
 
 ### 2026-11-04 (tasks A7: functions complete with their parentheses)
 - initialize: `snippetSupport: true` and `initializationOptions.completion.

@@ -621,6 +621,61 @@ test_buffer_undo_groups(void)
 }
 
 internal void
+test_buffer_undo_steps(void)
+{
+  char *name = "undo_steps";
+  String8 base = str8_lit("fn main() {\n    m\n}\n");
+  String8 one = str8_lit("use x;\nfn main() {\n    map\n}\n");
+  String8 two = str8_lit("use y;\nuse x;\nfn main() {\n    map()\n}\n");
+  TestBuf t = test_buf_open(base, TXT_LangKind_Rust);
+  U64 cursor = 0;
+
+  //- rad: two edits in one step (a completion's word, then its `use` line)
+  U64 step = tb_buffer_begin_step(t.buffer);
+  test_buf_edit(&t, 16, 17, str8_lit("map"));
+  test_buf_edit(&t, 0, 0, str8_lit("use x;\n"));
+  tb_buffer_end_step(t.buffer);
+  test_buf_check(name, 0, &t, one);
+  test_expect(name, "undo takes the whole step", tb_buffer_undo(t.buffer, &cursor));
+  test_buf_check(name, 1, &t, base);
+  test_expect(name, "undo cursor: after the first record's old text", cursor == 17);
+  test_expect(name, "clean after undoing the step", !tb_buffer_is_dirty(t.buffer));
+  test_expect(name, "nothing left to undo", !tb_buffer_undo(t.buffer, 0));
+  test_expect(name, "redo takes the whole step", tb_buffer_redo(t.buffer, &cursor));
+  test_buf_check(name, 2, &t, one);
+  test_expect(name, "redo cursor: after the word, moved by the `use` line", cursor == 26);
+  test_expect(name, "step applied", tb_buffer_step_is_applied(t.buffer, step));
+
+  //- rad: a late edit joins its step while that step is the last thing done
+  U64 step2 = tb_buffer_begin_step(t.buffer);
+  test_buf_edit(&t, 26, 26, str8_lit("()"));
+  tb_buffer_end_step(t.buffer);
+  test_expect(name, "join the last step", tb_buffer_join_step(t.buffer, step2));
+  test_buf_edit(&t, 0, 0, str8_lit("use y;\n"));
+  tb_buffer_end_step(t.buffer);
+  test_buf_check(name, 3, &t, two);
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 4, &t, one);
+  tb_buffer_redo(t.buffer, 0);
+  test_buf_check(name, 5, &t, two);
+
+  //- rad: typing makes a new step; no joining an older one; after undoing a
+  // step it is no longer applied
+  tb_buffer_close_undo_group(t.buffer);
+  test_buf_edit(&t, two.size, two.size, str8_lit("z"));
+  test_expect(name, "no join after another edit", !tb_buffer_join_step(t.buffer, step2));
+  test_expect(name, "older step still applied", tb_buffer_step_is_applied(t.buffer, step2));
+  tb_buffer_undo(t.buffer, 0);
+  test_expect(name, "no join with a redo tail", !tb_buffer_join_step(t.buffer, step2));
+  tb_buffer_undo(t.buffer, 0);
+  test_buf_check(name, 6, &t, one);
+  test_expect(name, "undone step not applied", !tb_buffer_step_is_applied(t.buffer, step2));
+  test_expect(name, "first step still applied", tb_buffer_step_is_applied(t.buffer, step));
+  test_expect(name, "no join with an undone step", !tb_buffer_join_step(t.buffer, step2));
+  test_buf_close(&t);
+}
+
+internal void
 test_buffer_disk(void)
 {
   char *name = "disk";
@@ -1536,6 +1591,7 @@ entry_point(CmdLine *cmd_line)
 
   //- rad: text buffer (undo/redo, groups, compaction, save, disk changes)
   test_buffer_undo_groups();
+  test_buffer_undo_steps();
   test_buffer_disk();
   test_buffer_empty();
   test_section_end("buffer: undo groups, disk, empty", &section_start_us);

@@ -23,6 +23,7 @@ text "    cou"
 wait_until 15000 completion_open == 1
 expect completion_filter == "cou"
 expect completion_selected == "counter"
+expect completion_kind == 6
 expect completion_has "Counter" == 1
 key return
 wait_idle
@@ -101,13 +102,10 @@ expect line 26 == "    let m: HashMap<>"
 expect cursor_line == 26
 expect cursor_col == 20
 
-# undo: the import (it came later), then the word
+# one undo step takes back the word and its `use` line
 key ctrl+z
 wait_idle
 expect line 1 == "struct Counter {"
-expect line 24 == "    let m: HashMap<>"
-key ctrl+z
-wait_idle
 expect line 24 == "    let m: HashMa"
 
 # a function with arguments: the cursor inside its parentheses; typing
@@ -128,4 +126,20 @@ text ");"
 wait_idle
 expect cursor_line_text == "    let v = scale(2, 3);"
 expect cursor_col == 25
+
+# an import resolved while it is selected: its `use` line comes with the
+# commit itself, and one undo takes both back
+key end
+key return
+text "let s: HashSe"
+wait_until 15000 completion_open == 1
+expect completion_selected == "HashSet<…>(use std::collections::HashSet)"
+wait_until 15000 completion_resolved == 1
+key return
+expect line 1 == "use std::collections::HashSet;"
+expect cursor_line_text == "    let s: HashSet<>"
+key ctrl+z
+wait_idle
+expect line 1 == "struct Counter {"
+expect cursor_line_text == "    let s: HashSe"
 quit

@@ -82,14 +82,23 @@ them), then layout (C), tabs (D), the gutter (E), drag and drop (F).
   add_parentheses` (no argument placeholders); `name()` puts the cursor
   after, `name(…)` inside; generic types in type position get `<>`. Typing
   the closing bracket right before the inserted one steps over it.
-- [ ] **A8. Completion documentation and icons.** Documentation of the
+- [x] **A8. Completion documentation and icons.** Documentation of the
   selected item beside the list (completionItem/resolve, same markdown
   reduction as hover). A kind icon per row, from raddbg's icon font
   (function, field, type, module, keyword, ...); no new icon style.
-- [ ] **A9. Undo an auto-import in one Ctrl+Z.** Resolve the selected item
+  Done 2026-11-04: rust-analyzer sends the documentation with the items
+  (no resolve needed); a box beside the list (right, else left) shows the
+  selected item's, like the hover tooltip. Icons: raddbg's Cube (functions),
+  Grid (types), Dot (fields/variables/keywords), List (constants, enum
+  members), Module, Pencil (snippets), each in that token kind's code color.
+- [x] **A9. Undo an auto-import in one Ctrl+Z.** Resolve the selected item
   while it is selected (VS2022 does), so the `use` line is usually there at
   commit and goes into the same undo group; if it arrives later, add it to
   the commit's undo group (new `text_buffer` call, checked by `rad_tests`).
+  Done 2026-11-04: `text_buffer` undo steps (begin/end/join, rad_tests
+  `undo_steps`); the selected import item is resolved while selected; a
+  late answer joins the commit's step if nothing happened since, else is
+  its own step, and is dropped if the commit was undone.
 - [ ] **A10. Restart rust-analyzer.** Command "Restart Language Server"
   (menu + command palette); automatic restart when the server exits, at most
   3 times in a minute, with the reason in the bottom bar.

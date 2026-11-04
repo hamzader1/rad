@@ -38,6 +38,7 @@ tb_buffer_clear_history__(TB_Buffer *buffer)
   buffer->history_last_applied = 0;
   buffer->history_saved = 0;
   buffer->history_group_open = 0;
+  buffer->step_open = 0;
 }
 
 internal void
@@ -303,7 +304,7 @@ tb_buffer_edit(TB_Buffer *buffer, TXT_Patched *current, Rng1U64 range, String8 r
     //- rad: merge into the open record (typing, backspacing, deleting forward)
     TB_EditRecord *last = buffer->history_last_applied;
     B32 merged = 0;
-    if(buffer->history_group_open && last != 0 && last->next == 0 && last != buffer->history_saved && !has_newline &&
+    if(buffer->history_group_open && buffer->step_open == 0 && last != 0 && last->next == 0 && last != buffer->history_saved && !has_newline &&
        last->old_text.size + last->new_text.size + old_text.size + replace.size <= TB_UNDO_GROUP_MAX_SIZE)
     {
       // rad: typing: insertion right after the text the last record inserted
@@ -334,6 +335,11 @@ tb_buffer_edit(TB_Buffer *buffer, TXT_Patched *current, Rng1U64 range, String8 r
     if(!merged)
     {
       TB_EditRecord *rec = push_array(buffer->history_arena, TB_EditRecord, 1);
+      if(buffer->step_open == 0)
+      {
+        buffer->step_counter += 1;
+      }
+      rec->step = (buffer->step_open != 0 ? buffer->step_open : buffer->step_counter);
       rec->range = range;
       rec->old_text = push_str8_copy(buffer->history_arena, old_text);
       rec->new_text = push_str8_copy(buffer->history_arena, replace);
@@ -363,13 +369,20 @@ tb_buffer_undo(TB_Buffer *buffer, U64 *cursor_out)
   TB_EditRecord *rec = buffer->history_last_applied;
   if(rec != 0)
   {
-    tb_buffer_push_patch__(buffer, r1u64(rec->range.min, rec->range.min + rec->new_text.size), rec->old_text);
-    buffer->history_last_applied = rec->prev;
-    buffer->history_group_open = 0;
-    if(cursor_out != 0)
+    // rad: the whole step, last record first (each is in the coordinates of
+    // the text before it); the cursor ends where the first record was
+    U64 step = rec->step;
+    for(; rec != 0 && rec->step == step; rec = buffer->history_last_applied)
     {
-      *cursor_out = rec->range.min + rec->old_text.size;
+      tb_buffer_push_patch__(buffer, r1u64(rec->range.min, rec->range.min + rec->new_text.size), rec->old_text);
+      buffer->history_last_applied = rec->prev;
+      if(cursor_out != 0)
+      {
+        *cursor_out = rec->range.min + rec->old_text.size;
+      }
     }
+    buffer->history_group_open = 0;
+    buffer->step_open = 0;
     result = 1;
   }
   return result;
@@ -382,13 +395,25 @@ tb_buffer_redo(TB_Buffer *buffer, U64 *cursor_out)
   TB_EditRecord *rec = (buffer->history_last_applied != 0 ? buffer->history_last_applied->next : buffer->history_first);
   if(rec != 0)
   {
-    tb_buffer_push_patch__(buffer, rec->range, rec->new_text);
-    buffer->history_last_applied = rec;
-    buffer->history_group_open = 0;
+    // rad: the whole step, first record first; the cursor ends after the
+    // first record's text, moved by the records after it that come before it
+    U64 step = rec->step;
+    U64 cursor = rec->range.min + rec->new_text.size;
+    for(B32 first = 1; rec != 0 && rec->step == step; rec = rec->next, first = 0)
+    {
+      tb_buffer_push_patch__(buffer, rec->range, rec->new_text);
+      buffer->history_last_applied = rec;
+      if(!first && rec->range.max <= cursor)
+      {
+        cursor = cursor - dim_1u64(rec->range) + rec->new_text.size;
+      }
+    }
     if(cursor_out != 0)
     {
-      *cursor_out = rec->range.min + rec->new_text.size;
+      *cursor_out = cursor;
     }
+    buffer->history_group_open = 0;
+    buffer->step_open = 0;
     result = 1;
   }
   return result;
@@ -398,6 +423,52 @@ internal void
 tb_buffer_close_undo_group(TB_Buffer *buffer)
 {
   buffer->history_group_open = 0;
+}
+
+internal U64
+tb_buffer_begin_step(TB_Buffer *buffer)
+{
+  buffer->history_group_open = 0;
+  buffer->step_counter += 1;
+  buffer->step_open = buffer->step_counter;
+  return buffer->step_open;
+}
+
+internal void
+tb_buffer_end_step(TB_Buffer *buffer)
+{
+  buffer->history_group_open = 0;
+  buffer->step_open = 0;
+}
+
+internal B32
+tb_buffer_join_step(TB_Buffer *buffer, U64 step)
+{
+  B32 result = 0;
+  TB_EditRecord *last = buffer->history_last_applied;
+  if(step != 0 && last != 0 && last->next == 0 && last->step == step)
+  {
+    buffer->history_group_open = 0;
+    buffer->step_open = step;
+    result = 1;
+  }
+  return result;
+}
+
+internal B32
+tb_buffer_step_is_applied(TB_Buffer *buffer, U64 step)
+{
+  // NOTE(rad): steps grow along the history, so the walk back stops early
+  B32 result = 0;
+  for(TB_EditRecord *rec = buffer->history_last_applied; rec != 0 && rec->step >= step; rec = rec->prev)
+  {
+    if(rec->step == step)
+    {
+      result = 1;
+      break;
+    }
+  }
+  return result;
 }
 
 ////////////////////////////////

@@ -38,6 +38,13 @@
 // before that edit, so it stays valid across compactions. Dirty means the
 // history position differs from the one at the last save or load.
 //
+// Undo steps: undo and redo take one step at a time. Each record is its own
+// step, except edits made between `tb_buffer_begin_step` and
+// `tb_buffer_end_step` (several edits as one action, e.g. a completion's
+// word and its `use` line), which share one. `tb_buffer_join_step` reopens a
+// step while it is still the last thing done (nothing edited, undone or
+// redone since), for an edit that belongs to it but comes later.
+//
 // Disk tracking: the caller passes the hash of the file's current content
 // to `tb_buffer_observe_source` every frame. The buffer reacts only when
 // that hash changes:
@@ -76,6 +83,7 @@ struct TB_EditRecord
 {
   TB_EditRecord *next;
   TB_EditRecord *prev;
+  U64 step;       // records with the same step are undone/redone together
   Rng1U64 range;
   String8 old_text;
   String8 new_text;
@@ -115,6 +123,8 @@ struct TB_Buffer
   TB_EditRecord *history_last_applied;
   TB_EditRecord *history_saved;
   B32 history_group_open;
+  U64 step_counter;
+  U64 step_open;  // begin_step/join_step: new records get this step (0: one each)
 
   // rad: disk tracking
   U128 disk_hash;
@@ -161,6 +171,10 @@ internal void tb_buffer_edit(TB_Buffer *buffer, TXT_Patched *current, Rng1U64 ra
 internal B32 tb_buffer_undo(TB_Buffer *buffer, U64 *cursor_out);
 internal B32 tb_buffer_redo(TB_Buffer *buffer, U64 *cursor_out);
 internal void tb_buffer_close_undo_group(TB_Buffer *buffer);
+internal U64 tb_buffer_begin_step(TB_Buffer *buffer);
+internal void tb_buffer_end_step(TB_Buffer *buffer);
+internal B32 tb_buffer_join_step(TB_Buffer *buffer, U64 step);
+internal B32 tb_buffer_step_is_applied(TB_Buffer *buffer, U64 step);
 
 ////////////////////////////////
 //~ rad: Saving

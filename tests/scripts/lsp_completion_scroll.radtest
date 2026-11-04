@@ -51,6 +51,14 @@ key page_up 60
 wait_idle
 expect completion_cursor == 1
 expect completion_top == 1
+
+# the selected item's documentation beside the list; its kind (method)
+text "checked_ad"
+wait_idle
+expect completion_selected == "checked_add(…)"
+expect completion_kind == 2
+expect completion_doc != ""
+expect completion_doc_shown == 1
 key esc
 wait_idle
 expect completion_open == 0
