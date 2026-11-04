@@ -203,10 +203,13 @@ Milestone 6 details (each item with its script):
 
 ## Next steps
 
+0. **`docs/TASKS.md` first** (user's list of 2026-11-04 + suggestions:
+   fixes, settings, tool windows, tabs, gutter/folding, drag and drop).
+   It is the whole focus until done; milestone 10 waits. Hint images are
+   in `.dev_hints/` (private, git-ignored, never push it).
 1. Milestone 10 (remove the debugger and rebrand): debugger-only layers
    out of the repo and the build, keep the MIT notice. The last Windows
-   step; until then `raddbg.exe` stays the visual reference. Before it,
-   the user may want to try milestone 9 in `build\release\rad.exe`.
+   step; until then `raddbg.exe` stays the visual reference.
 2. Speed: the user will come back to what feels slow (2026-11-03: "ignore,
    we will come back later"). Measured so far: 1 frame from input to
    screen (release: UI build ~2 ms/frame, input shows in the next frame).
@@ -372,6 +375,16 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-04 (task list before milestone 10; build icon)
+- New `docs/TASKS.md`: the user's list (explorer and output as tool
+  windows, View menu, settings, code-only zoom, compact tabs with pins and
+  overflow, glyph/fold margins, Ctrl+hover definition, focus and cursor
+  bugs, completion fixes, drag and drop) merged with suggestions, in order.
+- `.dev_hints/` git-ignored (the user's private hint images).
+- A1 done: the user's new `icons/build.svg` in `data/rad_icons.ttf`
+  (`uv run --no-project --with fonttools python icons/make_rad_icons.py`;
+  fontTools is not installed globally). Screenshot checked.
 
 ### 2026-11-04 (milestone 9 done)
 - Release build in `build\release\rad.exe`; 22 scripts (453 checks) and
