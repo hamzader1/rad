@@ -272,6 +272,17 @@ tree, each with a header (title, X), no "+", no zoom button.
   scopes from the lexer as fallback. Needs the code view to map visible
   rows to buffer lines (cursor moves, scrolling, find, go to line, edits
   inside a fold all expand or skip it). Biggest task of this list.
+  Plan (2026-11-04): (1) ranges: brace pairs over 1+ lines and runs of
+  comment lines, from the lexer's tokens (rust-analyzer's foldingRange
+  later); (2) per code view a fold list (start offsets, mapped through
+  edits by the buffer's version mapping); a fold hides lines start+1..end;
+  (3) the code view scrolls in rows: row <-> line through the sorted folds
+  (no per-line tables); the code slice gets per-row line numbers
+  (`line_nums`), everything else stays per visible row; (4) a fold column
+  right of the line numbers: chevron on hover at a range start (tooltip
+  "Click to collapse the range"), right chevron + "..." after a folded
+  line; (5) the cursor landing in a fold (moves, Find, Go To Line, edits)
+  expands it.
 
 ## F. Drag and drop
 
