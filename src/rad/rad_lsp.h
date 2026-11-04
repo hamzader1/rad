@@ -41,6 +41,8 @@
 #define RAD_LSP_SHUTDOWN_WAIT_US    1000000
 #define RAD_LSP_HOVER_DELAY_US      500000
 #define RAD_LSP_COMPLETION_MAX_ITEMS 4096
+#define RAD_LSP_AUTO_RESTART_MAX    3           // restarts after a crash, per window below
+#define RAD_LSP_AUTO_RESTART_WINDOW_US 60000000
 
 ////////////////////////////////
 //~ rad: Server Types
@@ -128,6 +130,8 @@ struct RAD_LspServer
   RAD_LspFileDiags *first_file_diags;
   RAD_LspProgress progress[RAD_LSP_PROGRESS_MAX];
   U64 messages_received;
+  U64 auto_restart_us[RAD_LSP_AUTO_RESTART_MAX]; // when it was restarted after a crash (0: never)
+  U64 restarts;                 // restarts so far (command or crash)
 };
 
 typedef struct RAD_LspDocRoot RAD_LspDocRoot;
@@ -315,7 +319,8 @@ struct RAD_LspState
   B32 not_found;                // rust-analyzer could not be started: not tried again
   B32 disabled;                 // no servers started (scripts, unless `lsp on`)
   U64 diags_gen;
-  U64 servers_started;
+  U64 servers_started;          // launches (restarts too; numbers the log files)
+  U64 servers_made;             // servers (one per workspace)
   RAD_LspHover hover;
   RAD_LspDefinition definition;
   RAD_LspNavEntry nav[RAD_LSP_NAV_MAX];
@@ -367,6 +372,11 @@ internal void rad_lsp_tick(void);
 internal void rad_lsp_shutdown(void);
 internal void rad_lsp_document_saved(RAD_Document *doc);
 internal RAD_LspServer *rad_lsp_server_from_path(String8 path);
+internal void rad_lsp_server_launch(RAD_LspServer *s);
+internal void rad_lsp_server_end(RAD_LspServer *s, B32 clean);
+internal void rad_lsp_doc_release(RAD_LspServer *s, RAD_LspDoc *ld);
+internal void rad_lsp_server_restart(RAD_LspServer *s);
+internal void rad_lsp_restart_all(void);
 internal String8 rad_lsp_status_string(Arena *arena, B32 *busy_out);
 internal String8 rad_lsp_markdown_from_hover(Arena *arena, JSON_Value *result);
 internal String8 rad_lsp_position_params(Arena *arena, RAD_Document *doc, U64 off, RAD_LspServer **server_out);

@@ -1089,6 +1089,7 @@ RAD_CmdTable:
   {GoToDefinition         goto_definition      "Go To Definition"     Target            F12        0      0      0      Null     0         0           0         0 }
   {CompleteWord           complete_word        "Complete Word"        Null              Space      ctrl   0      0      Null     0         0           0         0 }
   {NavigateBack           navigate_back        "Navigate Backward"    LeftArrow         Left       0      0      alt    Null     0         0           0         0 }
+  {RestartLanguageServer  restart_language_server "Restart Language Server" Refresh   Null       0      0      0      Null     0         0           0         0 }
 
   //- rad: locations (internal; no default bindings)
   {GoToLocation           goto_location        "Go To Location"       Null              Null       0      0      0      Null     0         0           0         0 }

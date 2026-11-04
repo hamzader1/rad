@@ -312,6 +312,18 @@ rad_lsp_server_start(String8 root)
   s->health_arena = arena_alloc();
   s->quiescent = 0;
   SLLQueuePush(rad_lsp->first_server, rad_lsp->last_server, s);
+  rad_lsp->servers_made += 1;
+  rad_lsp_server_launch(s);
+  scratch_end(scratch);
+  return s;
+}
+
+internal void
+rad_lsp_server_launch(RAD_LspServer *s)
+{
+  Temp scratch = scratch_begin(0, 0);
+  Arena *arena = s->arena;
+  String8 root = s->root;
   rad_lsp->servers_started += 1;
 
   //- rad: log file: <logs>/rust-analyzer_<n>.log (the server's stderr)
@@ -368,7 +380,72 @@ rad_lsp_server_start(String8 root)
     s->state = RAD_LspServerState_Starting;
   }
   scratch_end(scratch);
-  return s;
+}
+
+internal void
+rad_lsp_server_restart(RAD_LspServer *s)
+{
+  // NOTE(rad): in place (the hover, definition, completion and resolve
+  // state point at servers): the old process goes; its documents are opened
+  // again on the new one; its diagnostics and progress are dropped; requests
+  // in flight to it are forgotten
+  rad_lsp_server_end(s, 1);
+  for(RAD_LspDoc *ld = s->first_doc, *next = 0; ld != 0; ld = next)
+  {
+    next = ld->next;
+    rad_lsp_doc_release(s, ld);
+  }
+  s->first_doc = 0;
+  for(RAD_LspFileDiags *fd = s->first_file_diags; fd != 0; fd = fd->next)
+  {
+    arena_clear(fd->arena);
+    fd->diags = 0;
+    fd->count = 0;
+  }
+  rad_lsp->diags_gen += 1;
+  rad_problems_tick();
+  MemoryZeroArray(s->progress);
+  s->quiescent = 0;
+  s->messages_received = 0;
+  s->initialize_id = 0;
+  s->utf8_positions = 0;
+  arena_clear(s->health_arena);
+  s->health_message = str8_zero();
+  if(rad_lsp->hover.server == s)
+  {
+    Arena *hover_arena = rad_lsp->hover.arena;
+    arena_clear(hover_arena);
+    MemoryZeroStruct(&rad_lsp->hover);
+    rad_lsp->hover.arena = hover_arena;
+  }
+  if(rad_lsp->definition.server == s)
+  {
+    rad_lsp->definition.pending = 0;
+  }
+  if(rad_lsp->completion.server == s)
+  {
+    rad_lsp_completion_close();
+  }
+  if(rad_lsp->resolve.server == s)
+  {
+    MemoryZeroStruct(&rad_lsp->resolve);
+  }
+  s->restarts += 1;
+  rad_lsp_server_launch(s);
+  rad_request_frame();
+}
+
+internal void
+rad_lsp_restart_all(void)
+{
+  // NOTE(rad): Restart Language Server: every server; also tries again to
+  // find rust-analyzer if it was missing (the files open start a server)
+  rad_lsp->not_found = 0;
+  for(RAD_LspServer *s = rad_lsp->first_server; s != 0; s = s->next)
+  {
+    rad_lsp_server_restart(s);
+  }
+  rad_request_frame();
 }
 
 internal void
@@ -1500,8 +1577,33 @@ rad_lsp_tick(void)
       rad_lsp_server_take_messages(s);
       if(!lsp_client_is_alive(s->client) && s->state != RAD_LspServerState_Ended)
       {
-        rad_set_error(push_str8f(rad_frame_arena(), "rust-analyzer stopped (log: %S).", s->log_path));
+        // rad: a crash: restarted, at most RAD_LSP_AUTO_RESTART_MAX times per
+        // RAD_LSP_AUTO_RESTART_WINDOW_US (then Restart Language Server)
+        String8 log_path = push_str8_copy(rad_frame_arena(), s->log_path);
         rad_lsp_server_end(s, 0);
+        U64 oldest_idx = 0;
+        U64 recent = 0;
+        for EachElement(idx, s->auto_restart_us)
+        {
+          if(s->auto_restart_us[idx] != 0 && now_us < s->auto_restart_us[idx] + RAD_LSP_AUTO_RESTART_WINDOW_US)
+          {
+            recent += 1;
+          }
+          if(s->auto_restart_us[idx] < s->auto_restart_us[oldest_idx])
+          {
+            oldest_idx = idx;
+          }
+        }
+        if(recent < RAD_LSP_AUTO_RESTART_MAX && !rad_lsp->disabled)
+        {
+          s->auto_restart_us[oldest_idx] = now_us;
+          rad_set_error(push_str8f(rad_frame_arena(), "rust-analyzer stopped; restarting it (log: %S).", log_path));
+          rad_lsp_server_restart(s);
+        }
+        else
+        {
+          rad_set_error(push_str8f(rad_frame_arena(), "rust-analyzer stopped again; not restarted (Build > Restart Language Server). Log: %S", log_path));
+        }
       }
     }
     for(RAD_LspDoc *ld = s->first_doc; ld != 0; ld = ld->next)

@@ -99,15 +99,21 @@ them), then layout (C), tabs (D), the gutter (E), drag and drop (F).
   `undo_steps`); the selected import item is resolved while selected; a
   late answer joins the commit's step if nothing happened since, else is
   its own step, and is dropped if the commit was undone.
-- [ ] **A10. Restart rust-analyzer.** Command "Restart Language Server"
+- [x] **A10. Restart rust-analyzer.** Command "Restart Language Server"
   (menu + command palette); automatic restart when the server exits, at most
   3 times in a minute, with the reason in the bottom bar.
   **[suggestion]** Click the bottom-bar rust-analyzer status for a small
   menu: Restart, Show Log.
-- [ ] **A11. Flaky `file_watch` script.** Failed once under load (woken
+  Done 2026-11-04 (script `lsp_restart`): Build > Restart Language Server;
+  a crash restarts it (3 per minute). The bottom-bar menu is not done.
+- [x] **A11. Flaky `file_watch` script.** Failed once under load (woken
   after 471 ms instead of >= 800). Find why rad woke early (likely a late
   change notification from the earlier write) and make the check measure
   the right thing; 20 runs in a row under a parallel full run must pass.
+  Done 2026-11-04: `sleep_until_woken` ended on any OS message (the mouse
+  over the window, other test windows); it now ends only on a watcher
+  wakeup after any pending `write_file_later`. 20 of 20 passed next to a
+  full parallel run (27 of 27).
 
 ## B. Settings
 

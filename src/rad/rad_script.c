@@ -603,7 +603,16 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   //- rad: hover tooltip
   else if(str8_match(name, str8_lit("lsp_servers"), 0))
   {
-    value = push_str8f(arena, "%I64u", rad_lsp->servers_started);
+    value = push_str8f(arena, "%I64u", rad_lsp->servers_made);
+  }
+  else if(str8_match(name, str8_lit("lsp_restarts"), 0))
+  {
+    U64 restarts = 0;
+    for(RAD_LspServer *s = rad_lsp->first_server; s != 0; s = s->next)
+    {
+      restarts += s->restarts;
+    }
+    value = push_str8f(arena, "%I64u", restarts);
   }
   else if(str8_match(name, str8_lit("hover_text"), 0))
   {
@@ -1520,6 +1529,23 @@ rad_script_run_line(RAD_ScriptLine *line)
       input->key = key;
     }
   }
+  else if(str8_match(cmd, str8_lit("lsp_kill"), 0))
+  {
+    // rad: the editor file's language server process is killed (as if it
+    // crashed); rad notices it like any exit
+    CFG_Node *tab = rad_script_editor_tab();
+    RAD_Document *doc = rad_document_from_tab(tab);
+    RAD_LspServer *s = (doc != 0 ? rad_lsp_server_from_path(doc->path) : 0);
+    if(s == 0 || s->client == 0)
+    {
+      error = str8_lit("lsp_kill: no language server for the editor file");
+    }
+    else
+    {
+      process_kill(s->client->process);
+      rad_script_wait_frames(RAD_SCRIPT_SETTLE_FRAMES);
+    }
+  }
   else if(str8_match(cmd, str8_lit("key_down"), 0) || str8_match(cmd, str8_lit("key_up"), 0))
   {
     WM_Modifiers modifiers = 0;
@@ -1636,6 +1662,7 @@ rad_script_run_line(RAD_ScriptLine *line)
       w->delay_ms = ms;
       w->path = rad_script_path(rad_script->arena, args[1]);
       w->data = push_str8_copy(rad_script->arena, args[2]);
+      ins_atomic_u64_inc_eval(&rad_script->delayed_writes_pending);
       thread_launch(rad_script_delayed_write_entry_point, w);
     }
   }
@@ -1643,6 +1670,7 @@ rad_script_run_line(RAD_ScriptLine *line)
   {
     rad_script->wait_kind = RAD_ScriptWaitKind_Woken;
     rad_script->sleep_begin_us = now_time_us();
+    rad_script->sleep_begin_wakeups = ins_atomic_u64_eval(&rad_state->watch_wakeups_sent);
   }
 
   //- rad: waiting
@@ -1901,6 +1929,7 @@ rad_script_delayed_write_entry_point(void *p)
   RAD_ScriptDelayedWrite *w = (RAD_ScriptDelayedWrite *)p;
   sleep_ms((U32)w->delay_ms);
   write_data_to_file_path(w->path, w->data);
+  ins_atomic_u64_dec_eval(&rad_script->delayed_writes_pending);
 }
 
 internal B32
@@ -2006,7 +2035,16 @@ rad_script_tick(void)
     }break;
     case RAD_ScriptWaitKind_Woken:
     {
-      // rad: any frame after the sleep began means rad was woken
+      // rad: woken by the watcher (a disk change). Any other OS message (the
+      // mouse over the window, other windows opening or closing) can end the
+      // event wait too: then rad just sleeps again. Timeout: the script's.
+      // (a wakeup for an older change, before a pending write_file_later is
+      // done, does not count either)
+      if(ins_atomic_u64_eval(&rad_state->watch_wakeups_sent) == rad_script->sleep_begin_wakeups ||
+         ins_atomic_u64_eval(&rad_script->delayed_writes_pending) != 0)
+      {
+        return;
+      }
       rad_script->last_sleep_us = now_us - rad_script->sleep_begin_us;
     }break;
     case RAD_ScriptWaitKind_Cargo:

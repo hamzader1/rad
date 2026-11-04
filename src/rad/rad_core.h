@@ -289,6 +289,10 @@ struct RAD_State
   // explorer opens files)
   CFG_ID last_editor_panel;
 
+  // rad: wakeups the watcher thread sent (a disk change seen); scripts tell
+  // them from other OS messages that end an idle wait
+  U64 watch_wakeups_sent;
+
   // rad: the code slice whose Ctrl+press started on a link (no selection drag until release)
   UI_Key code_slice_link_press_key;
 

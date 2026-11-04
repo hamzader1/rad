@@ -1577,6 +1577,8 @@ rad_window_frame(RAD_Window *ws)
                     RAD_CmdKind_ShowOutput,
                     RAD_CmdKind_ShowProblems,
                     RAD_CmdKind_ClearOutput,
+                    RAD_CmdKind_Null,//-
+                    RAD_CmdKind_RestartLanguageServer,
                   };
                   U32 codepoints[] =
                   {
@@ -1595,6 +1597,8 @@ rad_window_frame(RAD_Window *ws)
                     'o',
                     'm',
                     'l',
+                    0,//-
+                    'v',
                   };
                   StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
                   rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
@@ -4003,6 +4007,10 @@ rad_exec_cmd(RAD_Cmd *cmd)
     {
       rad_lsp_navigate_back(window);
     }break;
+    case RAD_CmdKind_RestartLanguageServer:
+    {
+      rad_lsp_restart_all();
+    }break;
 
     //- rad: language server: completion list for the word before the cursor
     // (the tab's code view starts it when built)
@@ -4125,6 +4133,7 @@ rad_watch_thread_entry_point(void *p)
     }
     if(changed)
     {
+      ins_atomic_u64_inc_eval(&rad_state->watch_wakeups_sent);
       wm_send_wakeup_event();
     }
   }

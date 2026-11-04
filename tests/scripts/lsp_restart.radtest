@@ -1,0 +1,49 @@
+#! timeout: 400
+# rust-analyzer restarts: the Restart Language Server command (Build menu),
+# and after a crash (its process killed). The file is opened again on the
+# new process and its diagnostics come back. After a crash rad restarts it
+# at most 3 times a minute; then only the command restarts it.
+
+lsp on
+open_folder ../fixtures/cargo_errors
+wait_idle
+open ../fixtures/cargo_errors/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 diag_count == 2
+expect lsp_servers == 1
+expect lsp_restarts == 0
+
+# the command: a new process; the old diagnostics go, the new ones come
+cmd restart_language_server
+wait_frames 2
+expect lsp_restarts == 1
+expect lsp_servers == 1
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 diag_count == 2
+expect diag 1 == "error src/main.rs:8:29 cannot find value `reslt` in this scope"
+
+# a crash: restarted at once
+lsp_kill
+wait_until 10000 lsp_restarts == 2
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 diag_count == 2
+
+# two more crashes: restarted; the next one in the same minute: not
+lsp_kill
+wait_until 10000 lsp_restarts == 3
+lsp_kill
+wait_until 10000 lsp_restarts == 4
+lsp_kill
+wait_until 10000 lsp_state == "ended"
+wait 1000
+expect lsp_restarts == 4
+expect lsp_state == "ended"
+
+# the command still restarts it
+cmd restart_language_server
+wait_frames 2
+expect lsp_restarts == 5
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 diag_count == 2
+quit

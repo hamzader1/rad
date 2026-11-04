@@ -281,8 +281,9 @@ Milestone 6 details (each item with its script):
   incremental sync); fine for normal files.
 - LSP: one rust-analyzer per Cargo workspace (the nearest Cargo.toml with
   `[workspace]`, else the package), started on the first open .rs file and
-  kept until rad quits. No restart command; a server that exits or breaks
-  the protocol stays ended. Library sources (paths with
+  kept until rad quits. Build > Restart Language Server restarts every
+  server (in place); a crashed one is restarted, at most 3 times a minute.
+  A server that breaks the protocol stays ended until the command. Library sources (paths with
   `/.rustup/toolchains/`, `/.cargo/registry/`, `/.cargo/git/`) join an
   existing server by that path test, never start one.
 - LSP hover: markdown is reduced to code blocks (code font, lexed) and
@@ -379,6 +380,22 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-04 (tasks A10-A11: restart rust-analyzer, file_watch flake)
+- A10: `rad_lsp_server_restart` (in place: the old process goes, its
+  documents are opened again, diagnostics/progress dropped, requests to it
+  forgotten); command Restart Language Server (Build menu, also retries a
+  missing rust-analyzer); a process exit restarts it up to 3 times per
+  minute, then the bottom bar says to use the command. `servers_started`
+  now counts launches (log names); field `lsp_servers` counts servers,
+  `lsp_restarts` restarts. Script command `lsp_kill`; script `lsp_restart`
+  (20).
+- A11: `sleep_until_woken` counted any wake of the event wait, and Windows
+  wakes it for other messages too. Now: the watcher thread counts its
+  wakeups (`watch_wakeups_sent`); the sleep ends on one of those, once no
+  `write_file_later` is pending. `file_watch` 20 of 20 next to a parallel
+  full run (27 of 27; runners need separate TEMP folders, the runner wipes
+  `%TEMP%\rad_script_tests`).
 
 ### 2026-11-04 (tasks A8-A9: completion docs and icons, one-step import undo)
 - `text_buffer`: undo steps. Records made between `tb_buffer_begin_step`

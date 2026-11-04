@@ -45,8 +45,9 @@
 //   delete_file <path>
 //   write_file_later <ms> <path> "<text>"  the same, from a thread, after <ms>
 //   sleep_until_woken           let rad block in its event wait, like an idle
-//                               app, until something wakes it (field
-//                               last_sleep_ms = how long it slept)
+//                               app, until the disk watcher wakes it (other OS
+//                               messages that end the wait let it sleep again;
+//                               field last_sleep_ms = how long it slept)
 //   wait <ms>
 //   wait_frames <count>
 //   wait_idle [timeout_ms]      until rad requests no more frames (text loaded,
@@ -56,6 +57,7 @@
 //   wait_until <timeout_ms> <field> <op> <value>  until the check passes (one
 //                               PASS), or FAIL at the timeout; e.g. for a
 //                               language server: wait_until 90000 diag_count == 2
+//   lsp_kill                    kill the editor file's language server process (a crash)
 //   lsp on|off                  language servers (rust-analyzer): off by default in
 //                               scripts (slow to start; a script that does not test
 //                               them stays deterministic)
@@ -129,7 +131,8 @@
 //                               ready, ended (none also when rust-analyzer is missing)
 //   lsp_busy                    1 while it reports progress or is not quiescent
 //   lsp_status                  its bottom bar text ("" when idle)
-//   lsp_servers                 language servers started so far
+//   lsp_servers                 language servers started so far (one per workspace)
+//   lsp_restarts                their restarts (command or after a crash)
 //   cursor_line_text            the editor's line at the cursor
 //   ctrl_link                   the identifier highlighted under the mouse while
 //                               Ctrl is held (Go To Definition link), "" if none
@@ -251,6 +254,8 @@ struct RAD_ScriptState
   U64 wait_until_us;
   U64 wait_frames_left;
   U64 sleep_begin_us;
+  U64 sleep_begin_wakeups;      // rad_state->watch_wakeups_sent when the sleep began
+  U64 delayed_writes_pending;   // write_file_later threads not done yet (atomic)
   U64 last_sleep_us;
   U8 wait_text_buffer[256];
   U64 wait_text_size;
