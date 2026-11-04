@@ -230,14 +230,26 @@ tree, each with a header (title, X), no "+", no zoom button.
 
 ## D. Tabs
 
-- [ ] **D1. Compact tabs** (`TN8f33D5`): width = icon + title + buttons
+- [x] **D1. Compact tabs** (`TN8f33D5`): width = icon + title + buttons
   (not raddbg's fixed width), close X on the active and hovered tab,
   dirty mark kept.
-- [ ] **D2. Overflow setting** when the tabs do not fit: (1) wrap into more
+  Done 2026-11-04 (script `tabs`): `rad_tab_width_target_px` = title + 1em
+  + room for X (+ the pin's on pinned and selected tabs); the selected
+  tab no longer grows when its panel is focused; X drawn on the selected
+  and hovered tab only (room kept). raddbg's tab shape and colors kept.
+- [x] **D2. Overflow setting** when the tabs do not fit: (1) wrap into more
   rows, or (2) one row scrolled with the mouse wheel. **[suggestion]** A
   "..." button at the right end of the tab bar listing all tabs (VS2022).
-- [ ] **D3. Pin tabs.** Pin icon on the tab; pinned tabs move to the front
+  Done 2026-11-04 (script `tabs`): setting Tab Overflow. Scroll: the wheel
+  over the tab bar scrolls it sideways; a down-caret button (left of the
+  zoom button) lists all tabs; picking one brings it to the front (after
+  the pinned ones, as VS2022). Wrap: one tab bar per row, "+" on the last.
+  Not done: keeping the selected tab in view after Next Tab in Scroll mode.
+- [x] **D3. Pin tabs.** Pin icon on the tab; pinned tabs move to the front
   and stay there; unpin with the same icon; saved in the session.
+  Done 2026-11-04 (script `tabs`): Pin Tab command (Tab menu, pin button
+  on pinned and selected tabs); a `pinned` child of the tab cfg (saved
+  with the session); `rad_tab_move_after_pinned` keeps the order.
 
 ## E. Editor gutter
 

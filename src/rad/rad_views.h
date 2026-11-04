@@ -241,6 +241,12 @@ struct RAD_ViewState
   RAD_ProblemsState pr;
   RAD_SettingsState ss;
 
+  // rad: the tab's own boxes, last layout (scripted input aims with them)
+  U64 layout_tab_frame;
+  Rng2F32 layout_tab_rect;
+  Rng2F32 layout_tab_pin_rect;
+  Rng2F32 layout_tab_close_rect;
+
   // rad: query bar (port of raddbg's RD_ViewState query state; the command
   // and committed input live in the tab's `query` cfg child)
   B32 query_is_open;

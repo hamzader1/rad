@@ -218,6 +218,13 @@ struct RAD_Window
   // built: scripted tests click them)
   Rng2F32 top_bar_cmd_rects[RAD_CmdKind_COUNT];
   Rng2F32 tool_close_rects[RAD_ToolKind_COUNT];   // tool window X buttons (last layout; scripts)
+  U64 tab_list_frame;                             // the "..." tab list button and menu (last layout; scripts)
+  Rng2F32 tab_list_button_rect;
+  Rng2F32 tab_list_item_rects[64];
+  U64 tab_list_item_count;
+  U64 tab_list_menu_frame;
+  U64 tab_rows_count;                             // tab bar rows of the focused panel
+  B32 tabs_overflow;
 };
 
 ////////////////////////////////
@@ -349,6 +356,9 @@ internal void rad_tool_set_visible(CFG_Node *window, RAD_ToolKind kind, B32 visi
 internal U64 rad_editor_leaf_count(CFG_Node *window);
 internal void rad_panel_close(CFG_Node *window, CFG_Node *panel_cfg);
 internal void rad_window_tool_layout_ensure(CFG_Node *window);
+internal B32 rad_tab_is_pinned(CFG_Node *tab);
+internal void rad_tab_move_after_pinned(CFG_Node *tab);
+internal F32 rad_tab_width_target_px(Arena *arena, CFG_Node *tab, B32 is_selected);
 internal B32 rad_panel_has_tool_child__(CFG_PanelNode *parent);
 internal CFG_Node *rad_editor_panel_from_window(CFG_Node *window);
 internal String8 rad_setting_value_string(Arena *arena, RAD_Settings *settings, U64 idx);

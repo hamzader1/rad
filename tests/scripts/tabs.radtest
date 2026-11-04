@@ -1,0 +1,90 @@
+# Tabs (tasks D1-D3): compact widths, the close button only on the selected
+# and the hovered tab, pinning (pinned tabs first), Tab Overflow: Scroll (a
+# "..." list of all tabs; picking one brings it to the front) or Wrap.
+
+open ../fixtures/edit.txt
+wait_idle
+expect tab == "edit.txt"
+expect tab_index == 2
+
+# pin: the tab moves to the front; new tabs open after it
+click tab_pin edit.txt
+wait_idle
+expect tab_pinned == 1
+expect tab_index == 1
+open ../fixtures/lines_3000.txt
+wait_idle
+expect tab_index == 3
+cmd toggle_pin_tab
+wait_idle
+expect tab_pinned == 1
+expect tab_index == 2
+cmd toggle_pin_tab
+wait_idle
+expect tab_pinned == 0
+expect tab_index == 2
+
+# the close button of another tab shows on hover
+mouse tab_box edit.txt
+wait_frames 5
+click tab_close edit.txt
+wait_idle
+expect tab_count == 2
+expect tab == "lines_3000.txt"
+
+# many tabs: one row, "..." lists them all
+write_file ../fixtures/overflow_tab_01.txt "01"
+write_file ../fixtures/overflow_tab_02.txt "02"
+write_file ../fixtures/overflow_tab_03.txt "03"
+write_file ../fixtures/overflow_tab_04.txt "04"
+write_file ../fixtures/overflow_tab_05.txt "05"
+write_file ../fixtures/overflow_tab_06.txt "06"
+write_file ../fixtures/overflow_tab_07.txt "07"
+write_file ../fixtures/overflow_tab_08.txt "08"
+write_file ../fixtures/overflow_tab_09.txt "09"
+write_file ../fixtures/overflow_tab_10.txt "10"
+write_file ../fixtures/overflow_tab_11.txt "11"
+write_file ../fixtures/overflow_tab_12.txt "12"
+write_file ../fixtures/overflow_tab_13.txt "13"
+write_file ../fixtures/overflow_tab_14.txt "14"
+write_file ../fixtures/overflow_tab_15.txt "15"
+write_file ../fixtures/overflow_tab_16.txt "16"
+open ../fixtures/overflow_tab_01.txt
+open ../fixtures/overflow_tab_02.txt
+open ../fixtures/overflow_tab_03.txt
+open ../fixtures/overflow_tab_04.txt
+open ../fixtures/overflow_tab_05.txt
+open ../fixtures/overflow_tab_06.txt
+open ../fixtures/overflow_tab_07.txt
+open ../fixtures/overflow_tab_08.txt
+open ../fixtures/overflow_tab_09.txt
+open ../fixtures/overflow_tab_10.txt
+open ../fixtures/overflow_tab_11.txt
+open ../fixtures/overflow_tab_12.txt
+open ../fixtures/overflow_tab_13.txt
+open ../fixtures/overflow_tab_14.txt
+open ../fixtures/overflow_tab_15.txt
+open ../fixtures/overflow_tab_16.txt
+wait_idle
+expect tab == "overflow_tab_16.txt"
+expect tab_rows == 1
+expect tabs_overflow == 1
+click tab_list
+wait_frames 5
+click tab_list_item 3
+wait_idle
+expect tab == "overflow_tab_01.txt"
+expect tab_index == 1
+wheel 3 tab_box overflow_tab_01.txt
+wait_idle
+
+# Wrap: more rows, no "..."
+set_setting tab_overflow 1
+wait_idle
+expect tab_rows > 1
+expect tabs_overflow == 0
+expect tab == "overflow_tab_01.txt"
+set_setting tab_overflow 0
+wait_idle
+expect tab_rows == 1
+quit

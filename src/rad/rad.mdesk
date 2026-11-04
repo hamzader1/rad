@@ -1089,6 +1089,7 @@ RAD_CmdTable:
   {ShowProblems           show_problems        "Problems"             WarningSmall      Null       0      0      0      Null     0         0           0         0 }
   {ShowExplorer           show_explorer        "Explorer"             FolderClosedFilled L          ctrl   0      alt    Null     0         0           0         0 }
   {SearchExplorer         search_explorer      "Search Explorer"      Find              Semicolon  ctrl   0      0      Null     0         0           0         0 }
+  {TogglePinTab           toggle_pin_tab       "Pin Tab"              Pin               Null       0      0      0      Null     0         0           0         0 }
   {CloseToolWindow        close_tool_window    "Close Tool Window"    X                 Esc        0      shift  0      Null     0         0           0         0 }
   {ClearOutput            clear_output         "Clear Output"         Trash             Null       0      0      0      Null     0         0           0         0 }
 
@@ -1127,6 +1128,7 @@ RAD_SettingTable:
   {density                      Enum  U64 0   0  1  Appearance "Density"                       "Comfortable: raddbg's sizes. Compact: shorter rows, tabs and panel headers." "Comfortable|Compact"}
   {explorer_side                Enum  U64 0   0  1  Layout     "Explorer Side"                 "The side of the window the explorer is docked to." "Left|Right"}
   {explorer_compact_rows        Bool  B32 0   0  1  Layout     "Compact Explorer Rows"         "Shorter explorer rows (2 font sizes), for big folders." ""}
+  {tab_overflow                 Enum  U64 0   0  1  Layout     "Tab Overflow"                  "When the tabs do not fit: one row, scrolled with the mouse wheel, with a list of all tabs (Scroll); or more rows (Wrap)." "Scroll|Wrap"}
   {opaque_backgrounds           Bool  B32 0   0  1  Appearance "Opaque Backgrounds"            "Controls whether or not all floating background colors are forced to be fully opaque." ""}
   {background_blur              Bool  B32 1   0  1  Appearance "Background Blur"               "Controls whether or not occluded regions behind floating elements are blurred." ""}
   {drop_shadows                 Bool  B32 1   0  1  Appearance "Drop Shadows"                  "Controls whether or not drop shadows are drawn." ""}

@@ -382,6 +382,18 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (tasks D1-D3: compact tabs, overflow, pinning)
+- Tab widths from `rad_tab_width_target_px`; the X only on the selected
+  and hovered tab (room kept); pin button on pinned and selected tabs;
+  Pin Tab command (`pinned` child on the tab; pinned tabs first).
+- Setting `tab_overflow`: Scroll (wheel over the tab bar -> sideways; a
+  down-caret "All Tabs" button with a menu; picking a tab moves it to the
+  front) or Wrap (rows computed before the panel's rects; one tab bar box
+  per row; zoom button on the first row, "+" on the last).
+- Script: fields `tab_pinned`, `tab_index`, `tab_rows`, `tabs_overflow`;
+  targets `tab_box`, `tab_pin`, `tab_close`, `tab_list`, `tab_list_item`;
+  script `tabs` (20). Tested with build\rad_probe.exe (rad.exe was open).
+
 ### 2026-11-04 (task C2: explorer search filter, compact rows)
 - Explorer filter (`RAD_ExplorerState.filter_*`): a filter row above the
   list (column layout, as Settings). Non-empty -> rows from

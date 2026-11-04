@@ -407,6 +407,23 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   {
     value = push_str8f(arena, "%I64u", tree.focused->tabs.count);
   }
+  else if(str8_match(name, str8_lit("tab_pinned"), 0) || str8_match(name, str8_lit("tab_index"), 0))
+  {
+    // rad: the focused panel's selected tab: pinned; 1-based position
+    CFG_Node *tab = tree.focused->selected_tab;
+    U64 index = 0;
+    U64 idx = 1;
+    for(CFG_NodePtrNode *n = tree.focused->tabs.first; n != 0; n = n->next, idx += 1)
+    {
+      if(n->v == tab) { index = idx; }
+    }
+    value = (str8_match(name, str8_lit("tab_pinned"), 0) ? push_str8f(arena, "%i", (int)rad_tab_is_pinned(tab)) : push_str8f(arena, "%I64u", index));
+  }
+  else if(str8_match(name, str8_lit("tab_rows"), 0) || str8_match(name, str8_lit("tabs_overflow"), 0))
+  {
+    RAD_Window *ws = rad_state->first_window;
+    value = push_str8f(arena, "%I64u", ws == 0 ? 0 : str8_match(name, str8_lit("tab_rows"), 0) ? ws->tab_rows_count : (U64)ws->tabs_overflow);
+  }
   else if(str8_match(name, str8_lit("explorer_on_right"), 0))
   {
     // rad: 1 if the explorer is the last panel of its row
@@ -1362,6 +1379,66 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
         args_used = used;
         result = 1;
       }
+    }
+  }
+
+  //- rad: a tab's box, pin button, close button (any panel; by its name);
+  // the "..." tab list button; an item of its menu (1-based)
+  else if(str8_match(kind, str8_lit("tab_box"), 0) || str8_match(kind, str8_lit("tab_pin"), 0) || str8_match(kind, str8_lit("tab_close"), 0))
+  {
+    Rng2F32 rect = {0};
+    CFG_PanelTree tree = rad_script_panel_tree(scratch.arena);
+    for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+    {
+      for(CFG_NodePtrNode *n = p->tabs.first; n != 0; n = n->next)
+      {
+        if(args_count >= 2 && str8_match(rad_script_tab_name(n->v), args[1], 0))
+        {
+          RAD_ViewState *vs = rad_view_state_from_cfg(n->v);
+          if(vs->layout_tab_frame+1 >= rad_state->frame_index)
+          {
+            rect = (str8_match(kind, str8_lit("tab_box"), 0) ? vs->layout_tab_rect :
+                    str8_match(kind, str8_lit("tab_pin"), 0) ? vs->layout_tab_pin_rect : vs->layout_tab_close_rect);
+          }
+        }
+      }
+    }
+    if(rect.x1 <= rect.x0 || rect.y1 <= rect.y0)
+    {
+      *error_out = push_str8f(arena, "%S: not visible", kind);
+    }
+    else
+    {
+      pos = center_2f32(rect);
+      args_used = 2;
+      result = 1;
+    }
+  }
+  else if(str8_match(kind, str8_lit("tab_list"), 0) || str8_match(kind, str8_lit("tab_list_item"), 0))
+  {
+    RAD_Window *ws = rad_state->first_window;
+    Rng2F32 rect = {0};
+    U64 used = 1;
+    S64 n = 0;
+    if(ws != 0 && str8_match(kind, str8_lit("tab_list"), 0) && ws->tab_list_frame+1 >= rad_state->frame_index)
+    {
+      rect = ws->tab_list_button_rect;
+    }
+    else if(ws != 0 && str8_match(kind, str8_lit("tab_list_item"), 0) && args_count >= 2 && try_s64_from_str8_c_rules(args[1], &n) &&
+            n >= 1 && (U64)n <= ws->tab_list_item_count && ws->tab_list_menu_frame+1 >= rad_state->frame_index)
+    {
+      rect = ws->tab_list_item_rects[n-1];
+      used = 2;
+    }
+    if(rect.x1 <= rect.x0 || rect.y1 <= rect.y0)
+    {
+      *error_out = push_str8f(arena, "%S: not visible", kind);
+    }
+    else
+    {
+      pos = center_2f32(rect);
+      args_used = used;
+      result = 1;
     }
   }
 

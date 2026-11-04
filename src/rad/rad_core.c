@@ -1102,6 +1102,51 @@ rad_window_tool_layout_ensure(CFG_Node *window)
   scratch_end(scratch);
 }
 
+////////////////////////////////
+//~ rad: Tabs (not in raddbg: pinning, compact widths)
+
+internal B32
+rad_tab_is_pinned(CFG_Node *tab)
+{
+  B32 result = (cfg_node_child_from_string(tab, str8_lit("pinned")) != &cfg_nil_node);
+  return result;
+}
+
+internal void
+rad_tab_move_after_pinned(CFG_Node *tab)
+{
+  // NOTE(rad): pinned tabs come first (VS2022): the tab goes right after the
+  // last pinned tab of its panel (pinned: the end of the pinned ones;
+  // unpinned: the first of the others)
+  CFG_Node *panel = tab->parent;
+  cfg_node_unhook(rad_state->cfg, panel, tab);
+  CFG_Node *prev = &cfg_nil_node;
+  for(CFG_Node *child = panel->first; child != &cfg_nil_node; child = child->next)
+  {
+    if(rad_tab_is_pinned(child))
+    {
+      prev = child;
+    }
+  }
+  cfg_node_insert_child(rad_state->cfg, panel, prev, tab);
+}
+
+internal F32
+rad_tab_width_target_px(Arena *arena, CFG_Node *tab, B32 is_selected)
+{
+  // NOTE(rad): compact tabs (VS2022): icon + title + room for the close
+  // button; on pinned and selected tabs also the pin button's
+  DR_FStrList fstrs = rad_title_fstrs_from_tab(arena, tab);
+  B32 closable = !rad_tab_is_tool(tab);
+  F32 close_width_px = ui_top_font_size()*2.5f;
+  F32 pin_width_px = ui_top_font_size()*2.f;
+  F32 result = (dr_dim_from_fstrs(ui_top_tab_size(), &fstrs).x + ui_top_font_size()*1.f +
+                closable*close_width_px +
+                (closable && (is_selected || rad_tab_is_pinned(tab)))*pin_width_px);
+  result = Min(ui_top_font_size()*20.f, result);
+  return result;
+}
+
 internal CFG_Node *
 rad_tab_from_window_kind(CFG_Node *window, String8 kind)
 {
@@ -2318,6 +2363,7 @@ rad_window_frame(RAD_Window *ws)
                   RAD_CmdKind cmds[] =
                   {
                     RAD_CmdKind_CloseTab,
+                    RAD_CmdKind_TogglePinTab,
                     RAD_CmdKind_Null,//-
                     RAD_CmdKind_NextTab,
                     RAD_CmdKind_PrevTab,
@@ -2325,6 +2371,7 @@ rad_window_frame(RAD_Window *ws)
                   U32 codepoints[] =
                   {
                     'c',
+                    'i',
                     0,//-
                     'n',
                     'p',
@@ -3123,6 +3170,58 @@ rad_window_frame(RAD_Window *ws)
           content_rect = intersect_2f32(content_rect, panel_rect);
 
           //////////////////////////
+          //- rad: not in raddbg: tab rows (setting Tab Overflow: Scroll -> one
+          // row, scrolled by the wheel, "..." lists all tabs; Wrap -> more rows)
+          //
+          U64 tab_rows_count = 1;
+          B32 tabs_overflow = 0;
+          U64 *tab_rows = 0;
+          if(panel->first == &cfg_nil_panel_node && tool_kind != RAD_ToolKind_Explorer && panel->tabs.count != 0)
+          {
+            B32 wrap = (settings->tab_overflow == 1 && tool_kind == RAD_ToolKind_Null && panel->tab_side == Side_Min);
+            F32 spacing_px = floor_f32(ui_top_font_size()*0.4f);
+            F32 avail_px = dim_2f32(tab_bar_rect).x - ui_top_font_size()*1.f - tab_bar_vheight*(tool_kind == RAD_ToolKind_Null ? 2 : 0);
+            tab_rows = push_array(scratch.arena, U64, panel->tabs.count);
+            F32 x = 0;
+            U64 row = 0;
+            U64 idx = 0;
+            for(CFG_NodePtrNode *n = panel->tabs.first; n != 0; n = n->next, idx += 1)
+            {
+              F32 w = rad_tab_width_target_px(scratch.arena, n->v, n->v == panel->selected_tab) + spacing_px;
+              if(x + w > avail_px && x > 0)
+              {
+                if(wrap)
+                {
+                  row += 1;
+                  x = 0;
+                }
+                else
+                {
+                  tabs_overflow = 1;
+                }
+              }
+              x += w;
+              tab_rows[idx] = row;
+            }
+            tab_rows_count = row+1;
+            if(tab_rows_count > 1)
+            {
+              tab_bar_rect.y1 = Min(panel_rect.y1, tab_bar_rect.y0 + tab_bar_vheight*tab_rows_count);
+              content_rect.y0 = Min(content_rect.y1, tab_bar_rect.y1);
+            }
+          }
+          Rng2F32 tab_bar_full_rect = tab_bar_rect;
+          if(tabs_overflow)
+          {
+            tab_bar_rect.x1 -= tab_bar_vheight*(tool_kind == RAD_ToolKind_Null ? 2 : 1);
+          }
+          if(panel == panel_tree.focused)
+          {
+            ws->tab_rows_count = tab_rows_count;
+            ws->tabs_overflow = tabs_overflow;
+          }
+
+          //////////////////////////
           //- rad: for non-leaf panels with focus (subtree selection) -> draw border for all children
           //
           if(panel->first != &cfg_nil_panel_node && panel == panel_tree.focused) UI_Rect(pad_2f32(panel_rect, ui_top_font_size()*0.2f)) UI_Focus(UI_FocusKind_On)
@@ -3261,7 +3360,7 @@ rad_window_frame(RAD_Window *ws)
             {
               ui_set_next_child_layout_axis(Axis2_Y);
               UI_Box *container = &ui_nil_box;
-              UI_Rect(r2f32p(tab_bar_rect.x1 - tab_bar_vheight, tab_bar_rect.y0, tab_bar_rect.x1, tab_bar_rect.y1))
+              UI_Rect(r2f32p(tab_bar_full_rect.x1 - tab_bar_vheight, tab_bar_full_rect.y0, tab_bar_full_rect.x1, tab_bar_full_rect.y0 + tab_bar_vheight))
               {
                 container = ui_build_box_from_stringf(0, "###zoom_panel");
               }
@@ -3393,16 +3492,18 @@ rad_window_frame(RAD_Window *ws)
             CFG_Node *tab;
             DR_FStrList fstrs;
             F32 tab_width;
+            U64 row;
           };
           TabTask *first_tab_task = 0;
           TabTask *last_tab_task = 0;
           U64 tab_task_count = 0;
           F32 tab_close_width_px = ui_top_font_size()*2.5f;
-          F32 max_tab_width_px = ui_top_font_size()*20.f;
+          F32 tab_pin_width_px = ui_top_font_size()*2.f;
           UI_TagF("tab")
           {
             B32 reset = (ws->window_layout_reset || ws->frames_alive < 5 || is_changing_panel_boundaries);
-            for(CFG_NodePtrNode *n = panel->tabs.first; n != 0; n = n->next)
+            U64 tab_idx = 0;
+            for(CFG_NodePtrNode *n = panel->tabs.first; n != 0; n = n->next, tab_idx += 1)
             {
               CFG_Node *tab = n->v;
               if(str8_match(tab->string, str8_lit("text"), 0) ||
@@ -3418,14 +3519,8 @@ rad_window_frame(RAD_Window *ws)
               UI_TagF(tab != panel->selected_tab ? "inactive" : "")
               {
                 DR_FStrList tab_title_fstrs = rad_title_fstrs_from_tab(scratch.arena, tab);
-                B32 tab_is_closable = !rad_tab_is_tool(tab);
-                F32 tab_width_target = dr_dim_from_fstrs(ui_top_tab_size(), &tab_title_fstrs).x + tab_is_closable*tab_close_width_px + ui_top_font_size()*1.f;
                 B32 tab_is_selected = (tab == panel->selected_tab);
-                if(tab_is_selected && panel_tree.focused == panel)
-                {
-                  tab_width_target += tab_close_width_px;
-                }
-                tab_width_target = Min(max_tab_width_px, tab_width_target);
+                F32 tab_width_target = rad_tab_width_target_px(scratch.arena, tab, tab_is_selected);
                 F32 tab_width = floor_f32(ui_anim(ui_key_from_stringf(ui_key_zero(), "tab_width_%p", tab), tab_width_target, .initial = reset ? tab_width_target : 0, .rate = rad_state->menu_animation_rate));
                 if(build_panel)
                 {
@@ -3433,6 +3528,7 @@ rad_window_frame(RAD_Window *ws)
                   t->tab = tab;
                   t->fstrs = tab_title_fstrs;
                   t->tab_width = tab_width;
+                  t->row = (tab_rows != 0 ? tab_rows[tab_idx] : 0);
                   SLLQueuePush(first_tab_task, last_tab_task, t);
                   tab_task_count += 1;
                 }
@@ -3440,18 +3536,28 @@ rad_window_frame(RAD_Window *ws)
             }
           }
 
+          // rad: one tab bar per row (rows: Tab Overflow = Wrap)
+          for(U64 tab_row = 0; tab_row < tab_rows_count; tab_row += 1)
+          {
+          Rng2F32 tab_row_rect = tab_bar_rect;
+          if(tab_rows_count > 1)
+          {
+            tab_row_rect.y0 = tab_bar_rect.y0 + tab_bar_vheight*tab_row;
+            tab_row_rect.y1 = tab_row_rect.y0 + tab_bar_vheight;
+          }
+
           //////////////////////////
           //- rad: build tab bar container
           //
           UI_Box *tab_bar_box = &ui_nil_box;
-          if(build_panel && tool_kind != RAD_ToolKind_Explorer) UI_CornerRadius(0) UI_Rect(tab_bar_rect)
+          if(build_panel && tool_kind != RAD_ToolKind_Explorer) UI_CornerRadius(0) UI_Rect(tab_row_rect)
           {
             tab_bar_box = ui_build_box_from_stringf(UI_BoxFlag_Clip|
                                                     UI_BoxFlag_AllowOverflowY|
                                                     UI_BoxFlag_ViewClampX|
                                                     UI_BoxFlag_ViewScrollX|
                                                     UI_BoxFlag_Clickable,
-                                                    "tab_bar_%p", panel->cfg);
+                                                    "tab_bar_%p_%I64u", panel->cfg, tab_row);
             if(panel->tab_side == Side_Max)
             {
               tab_bar_box->view_off.y = tab_bar_box->view_off_target.y = (tab_bar_rheight - tab_bar_vheight);
@@ -3475,6 +3581,10 @@ rad_window_frame(RAD_Window *ws)
               for(TabTask *tab_task = first_tab_task; tab_task != 0; tab_task = tab_task->next)
             {
               CFG_Node *tab = tab_task->tab;
+              if(tab_task->row != tab_row)
+              {
+                continue;
+              }
 
               //- rad: build tab
               DR_FStrList tab_fstrs = tab_task->fstrs;
@@ -3520,7 +3630,48 @@ rad_window_frame(RAD_Window *ws)
                         ui_box_equip_display_fstrs(name_box, &tab_fstrs);
                       }
                     }
-                    if(!rad_tab_is_tool(tab))
+                    // rad: not in raddbg: pin button (pinned and selected tabs);
+                    // the close button only on the selected and hovered tabs
+                    // (its room is kept: VS2022)
+                    RAD_ViewState *tab_vs = rad_view_state_from_cfg(tab);
+                    B32 tab_is_pinned = rad_tab_is_pinned(tab);
+                    B32 tab_is_hovered = contains_2f32(tab_box->rect, ui_mouse());
+                    tab_vs->layout_tab_frame = rad_state->frame_index;
+                    tab_vs->layout_tab_rect = tab_box->rect;
+                    MemoryZeroStruct(&tab_vs->layout_tab_pin_rect);
+                    MemoryZeroStruct(&tab_vs->layout_tab_close_rect);
+                    if(!rad_tab_is_tool(tab) && (tab_is_pinned || tab_is_selected))
+                      UI_PrefWidth(ui_px(tab_pin_width_px, 1.f))
+                      UI_TextAlignment(UI_TextAlign_Center)
+                      RAD_Font(RAD_FontSlot_Icons)
+                      UI_FontSize(ui_top_font_size()*0.75f)
+                      UI_TagF(".") UI_TagF("tab") UI_TagF(tab_is_pinned ? "" : "weak") UI_TagF("implicit")
+                      UI_VisualMarginX(ceil_f32(ui_top_font_size()*0.25f))
+                      UI_VisualMarginY(floor_f32(tab_bar_vheight - tab_close_width_px + ui_top_font_size()*0.25f))
+                      UI_CornerRadius(ui_top_font_size()*1.f)
+                    {
+                      UI_Box *pin_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                                                  UI_BoxFlag_DrawText|
+                                                                  UI_BoxFlag_DrawHotEffects|
+                                                                  UI_BoxFlag_DrawActiveEffects,
+                                                                  "%S###pin_view_%p", rad_icon_kind_text_table[RAD_IconKind_Pin], tab);
+                      tab_vs->layout_tab_pin_rect = pin_box->rect;
+                      UI_Signal sig = ui_signal_from_box(pin_box);
+                      if(ui_clicked(sig))
+                      {
+                        rad_cmd(RAD_CmdKind_TogglePinTab, .panel = panel->cfg->id, .tab = tab->id);
+                      }
+                      if(ui_hovering(sig)) UI_Tooltip RAD_Font(RAD_FontSlot_Main) UI_FontSize(rad_state->settings.font_size)
+                      {
+                        ui_state->tooltip_anchor_key = pin_box->key;
+                        ui_label(tab_is_pinned ? str8_lit("Unpin Tab") : str8_lit("Pin Tab"));
+                      }
+                    }
+                    if(!rad_tab_is_tool(tab) && !tab_is_selected && !tab_is_hovered)
+                    {
+                      ui_spacer(ui_px(tab_close_width_px, 1.f));
+                    }
+                    else if(!rad_tab_is_tool(tab))
                       UI_PrefWidth(ui_px(tab_close_width_px, 1.f))
                       UI_TextAlignment(UI_TextAlign_Center)
                       RAD_Font(RAD_FontSlot_Icons)
@@ -3537,6 +3688,7 @@ rad_window_frame(RAD_Window *ws)
                                                                     UI_BoxFlag_DrawHotEffects|
                                                                     UI_BoxFlag_DrawActiveEffects,
                                                                     "%S###close_view_%p", rad_icon_kind_text_table[RAD_IconKind_X], tab);
+                      tab_vs->layout_tab_close_rect = close_box->rect;
                       UI_Signal sig = ui_signal_from_box(close_box);
                       if(ui_clicked(sig) || ui_middle_clicked(sig))
                       {
@@ -3567,8 +3719,8 @@ rad_window_frame(RAD_Window *ws)
               }
             }
 
-            // rad: build add-new-tab button (not on tool windows)
-            if(tool_kind == RAD_ToolKind_Null)
+            // rad: build add-new-tab button (not on tool windows; last row)
+            if(tool_kind == RAD_ToolKind_Null && tab_row+1 == tab_rows_count)
               UI_TextAlignment(UI_TextAlign_Center)
               UI_PrefWidth(ui_px(tab_bar_vheight, 1.f))
               UI_PrefHeight(ui_px(tab_bar_vheight, 1.f))
@@ -3636,8 +3788,112 @@ rad_window_frame(RAD_Window *ws)
               }
             }
 
-            // rad: interact with tab bar
+            // rad: interact with tab bar (rad: the wheel scrolls it sideways)
+            for(UI_Event *evt = 0; ui_next_event(&evt);)
+            {
+              if(evt->kind == UI_EventKind_Scroll && evt->modifiers == 0 && evt->delta_2f32.x == 0 && contains_2f32(tab_row_rect, evt->pos))
+              {
+                evt->delta_2f32 = v2f32(evt->delta_2f32.y, 0);
+              }
+            }
             ui_signal_from_box(tab_bar_box);
+          }
+          }
+
+          //////////////////////////
+          //- rad: not in raddbg: "..." -> a list of all tabs (Tab Overflow =
+          // Scroll, when they do not fit); picking one brings it to the front
+          // (VS2022)
+          //
+          if(build_panel && tabs_overflow)
+          {
+            UI_Key tab_list_menu_key = ui_key_from_stringf(ui_key_zero(), "_tab_list_menu_%p", panel->cfg);
+            UI_Box *list_box = &ui_nil_box;
+            UI_Box *container = &ui_nil_box;
+            UI_Rect(r2f32p(tab_bar_rect.x1, tab_bar_full_rect.y0, tab_bar_rect.x1 + tab_bar_vheight, tab_bar_full_rect.y0 + tab_bar_vheight))
+            {
+              container = ui_build_box_from_stringf(0, "###tab_list_%p", panel->cfg);
+            }
+            UI_TextAlignment(UI_TextAlign_Center) UI_TagF(".")
+            {
+              UI_Parent(container) UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_pct(1, 0))
+                RAD_Font(RAD_FontSlot_Icons)
+                UI_CornerRadius((tab_bar_vheight - tab_bar_vheight/4.f) / 3.f)
+                UI_VisualMargin(tab_bar_vheight/5.f)
+                UI_TagF("implicit")
+                UI_TagF("weak")
+              {
+                list_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|
+                                                     UI_BoxFlag_DrawBorder|
+                                                     UI_BoxFlag_DrawBackground|
+                                                     UI_BoxFlag_DrawHotEffects|
+                                                     UI_BoxFlag_DrawActiveEffects|
+                                                     UI_BoxFlag_Clickable|
+                                                     UI_BoxFlag_DisableTextTrunc,
+                                                     "%S##tab_list_button_%p", rad_icon_kind_text_table[RAD_IconKind_DownCaret], panel->cfg);
+              }
+            }
+            UI_Signal sig = ui_signal_from_box(list_box);
+            if(panel == panel_tree.focused || ws->tab_list_frame+1 < rad_state->frame_index)
+            {
+              ws->tab_list_frame = rad_state->frame_index;
+              ws->tab_list_button_rect = list_box->rect;
+            }
+            if(ui_pressed(sig))
+            {
+              ui_ctx_menu_open(tab_list_menu_key, list_box->key, v2f32(0, dim_2f32(list_box->rect).y));
+            }
+            if(ui_hovering(sig)) UI_Tooltip
+            {
+              ui_state->tooltip_anchor_key = list_box->key;
+              ui_label(str8_lit("All Tabs"));
+            }
+            UI_CtxMenu(tab_list_menu_key) UI_PrefWidth(ui_em(30.f, 1.f)) UI_TagF("implicit")
+            {
+              ws->tab_list_menu_frame = rad_state->frame_index;
+              ws->tab_list_item_count = 0;
+              U64 item_idx = 0;
+              for(CFG_NodePtrNode *n = panel->tabs.first; n != 0; n = n->next, item_idx += 1)
+              {
+                CFG_Node *tab = n->v;
+                DR_FStrList fstrs = rad_title_fstrs_from_tab(scratch.arena, tab);
+                ui_set_next_child_layout_axis(Axis2_X);
+                UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|
+                                                        UI_BoxFlag_DrawBackground|
+                                                        UI_BoxFlag_DrawHotEffects|
+                                                        UI_BoxFlag_DrawActiveEffects|
+                                                        UI_BoxFlag_Clickable,
+                                                        "###tab_list_item_%p", tab);
+                UI_Parent(box) UI_HeightFill UI_Padding(ui_em(1.f, 1.f))
+                {
+                  RAD_Font(RAD_FontSlot_Icons)
+                    UI_PrefWidth(ui_em(2.f, 1.f))
+                    UI_TextAlignment(UI_TextAlign_Center)
+                    UI_TagF("weak")
+                    ui_label(tab == panel->selected_tab ? rad_icon_kind_text_table[RAD_IconKind_Check] : str8_lit(""));
+                  UI_PrefWidth(ui_text_dim(10, 1.f))
+                  {
+                    UI_Box *name_box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
+                    ui_box_equip_display_fstrs(name_box, &fstrs);
+                  }
+                }
+                if(item_idx < ArrayCount(ws->tab_list_item_rects))
+                {
+                  ws->tab_list_item_rects[item_idx] = box->rect;
+                  ws->tab_list_item_count = item_idx+1;
+                }
+                if(ui_clicked(ui_signal_from_box(box)))
+                {
+                  if(!rad_tab_is_pinned(tab) && !rad_tab_is_tool(tab))
+                  {
+                    rad_tab_move_after_pinned(tab);
+                  }
+                  rad_cmd(RAD_CmdKind_FocusTab, .panel = panel->cfg->id, .tab = tab->id);
+                  rad_cmd(RAD_CmdKind_FocusPanel, .panel = panel->cfg->id);
+                  ui_ctx_menu_close();
+                }
+              }
+            }
           }
 
           //////////////////////////
@@ -4615,6 +4871,21 @@ rad_exec_cmd(RAD_Cmd *cmd)
       {
         rad_focus_tab(next_selected_tab);
       }
+    }break;
+    case RAD_CmdKind_TogglePinTab:
+    if(tab_cfg != &cfg_nil_node && !rad_tab_is_tool(tab_cfg))
+    {
+      // rad: not in raddbg (VS2022): pinned tabs come first
+      CFG_Node *pinned = cfg_node_child_from_string(tab_cfg, str8_lit("pinned"));
+      if(pinned != &cfg_nil_node)
+      {
+        cfg_node_release(rad_state->cfg, pinned);
+      }
+      else
+      {
+        cfg_node_new(rad_state->cfg, tab_cfg, str8_lit("pinned"));
+      }
+      rad_tab_move_after_pinned(tab_cfg);
     }break;
     case RAD_CmdKind_CloseTab:
     if(rad_tab_is_tool(tab_cfg))
