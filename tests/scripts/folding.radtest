@@ -1,0 +1,80 @@
+# Code folding (task E2): a chevron at the start of a foldable range (braces
+# with lines inside, comment runs, use runs; braces in strings and char
+# literals do not count) folds it; folded lines are skipped by Up/Down, Go
+# To Line into a fold unfolds it, nested folds, folds move with edits.
+
+open ../fixtures/fold.rs
+wait_idle
+expect fold_count == 0
+
+# fold main (lines 11-17 hidden; the closing brace stays)
+mouse code 10 1
+wait_frames 3
+click fold 10
+wait_idle
+expect fold_count == 1
+expect line_hidden 11 == 1
+expect line_hidden 17 == 1
+expect line_hidden 18 == 0
+
+# Down from the folded line skips the fold; Up comes back to it
+click code 10 3
+wait_idle
+expect cursor_line == 10
+key down
+wait_idle
+expect cursor_line == 18
+key up
+wait_idle
+expect cursor_line == 10
+
+# Go To Line into the fold unfolds it
+key ctrl+g
+wait_frames 3
+text "14"
+key return
+wait_idle
+expect cursor_line == 14
+expect fold_count == 0
+
+# nested: fold the if, then main; unfold main: the if stays folded
+mouse code 13 1
+wait_frames 3
+click fold 13
+wait_idle
+expect line_hidden 14 == 1
+expect line_hidden 15 == 0
+expect cursor_line == 13
+click fold 10
+wait_idle
+expect fold_count == 1
+expect line_hidden 16 == 1
+click fold 10
+wait_idle
+expect fold_count == 1
+expect line_hidden 14 == 1
+expect line_hidden 16 == 0
+click fold 13
+wait_idle
+expect fold_count == 0
+
+# comment and use runs
+click fold 1
+wait_idle
+expect line_hidden 2 == 1
+click fold 3
+wait_idle
+expect line_hidden 4 == 1
+expect fold_count == 2
+
+# a line typed above moves the folds with their text
+click code 1 1
+key return
+wait_idle
+expect line_hidden 3 == 1
+expect line_hidden 5 == 1
+expect fold_count == 2
+key ctrl+z
+wait_idle
+expect line_hidden 2 == 1
+quit

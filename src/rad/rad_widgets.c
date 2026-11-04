@@ -1217,8 +1217,61 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
       {
         Rng1U64 line_range = params->line_ranges[line_idx];
         B32 line_is_selected = (dim_1u64(intersect_1u64(select_rng, line_range)) != 0) || (line_range.min <= *cursor && *cursor <= line_range.max);
+        S64 shown_line_num = (params->line_nums != 0 ? params->line_nums[line_idx] : line_num);
         UI_TagF(line_is_selected ? "" : "weak")
-          ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%I64u##line_num", line_num);
+          ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%I64u##line_num", shown_line_num);
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: not in raddbg: fold column (right part of the line numbers' column):
+  // a down chevron at the start of a foldable range while the mouse is over
+  // the code, a right chevron on a folded line (VS2022)
+  //
+  result.fold_toggle_idx = max_U64;
+  if(params->line_fold_kinds != 0 && params->fold_width_px > 0) UI_Parent(top_container_box) UI_Focus(UI_FocusKind_Off)
+    UI_TagF("floating")
+  {
+    B32 code_hovered = contains_2f32(top_container_box->rect, ui_mouse());
+    ui_set_next_fixed_x(floor_f32(params->margin_float_off_px + margins_width_px + params->line_num_width_px - params->fold_width_px));
+    ui_set_next_pref_width(ui_px(params->fold_width_px, 1.f));
+    ui_set_next_pref_height(ui_px(slice_height_px, 1.f));
+    UI_Column
+      UI_PrefHeight(ui_px(params->line_height_px, 1.f))
+      UI_PrefWidth(ui_px(params->fold_width_px, 1.f))
+      RAD_Font(RAD_FontSlot_Icons)
+      UI_FontSize(params->font_size*0.75f)
+      UI_TextAlignment(UI_TextAlign_Center)
+      UI_CornerRadius(params->font_size*0.25f)
+    {
+      U64 line_idx = 0;
+      for(S64 line_num = params->line_num_range.min;
+          line_num <= params->line_num_range.max;
+          line_num += 1, line_idx += 1)
+      {
+        U8 kind = params->line_fold_kinds[line_idx];
+        if(kind == 0 || (kind == 1 && !code_hovered))
+        {
+          ui_spacer(ui_px(params->line_height_px, 1.f));
+          continue;
+        }
+        UI_Box *chevron_box = &ui_nil_box;
+        UI_TagF("weak") UI_TagF("implicit")
+        {
+          chevron_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
+                                                  "%S###fold_%I64x", rad_icon_kind_text_table[kind == 2 ? RAD_IconKind_RightCaret : RAD_IconKind_DownCaret], line_num);
+        }
+        UI_Signal sig = ui_signal_from_box(chevron_box);
+        if(ui_clicked(sig))
+        {
+          result.fold_toggle_idx = line_idx;
+        }
+        if(ui_hovering(sig)) UI_Tooltip RAD_Font(RAD_FontSlot_Main) UI_FontSize(ui_bottom_font_size())
+        {
+          ui_state->tooltip_anchor_key = chevron_box->key;
+          ui_label(kind == 2 ? str8_lit("Click to expand the range") : str8_lit("Click to collapse the range"));
+        }
       }
     }
   }
@@ -1671,6 +1724,40 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
         ui_spacer(ui_em(1.5f, 1.f));
         UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawText, "###annotation");
         ui_box_equip_display_fstrs(box, &params->line_annotations[line_idx]);
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: not in raddbg: folded lines: a "..." box after the text; click
+  // expands (VS2022)
+  //
+  if(params->line_fold_kinds != 0) UI_Parent(text_container_box) UI_Focus(UI_FocusKind_Off) UI_PrefHeight(ui_px(params->line_height_px, 1.f))
+  {
+    U64 line_idx = 0;
+    for(S64 line_num = params->line_num_range.min;
+        line_num <= params->line_num_range.max;
+        line_num += 1, line_idx += 1)
+    {
+      if(params->line_fold_kinds[line_idx] != 2)
+      {
+        continue;
+      }
+      F32 line_text_dim = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, params->line_text[line_idx]).x + params->line_num_width_px + line_num_padding_px;
+      F32 box_h = floor_f32(params->line_height_px*0.8f);
+      ui_set_next_fixed_x(line_text_dim + params->font_size*0.5f);
+      ui_set_next_fixed_y(line_idx*params->line_height_px + floor_f32((params->line_height_px - box_h)/2));
+      ui_set_next_pref_height(ui_px(box_h, 1.f));
+      ui_set_next_pref_width(ui_text_dim(params->font_size*0.5f, 1.f));
+      UI_Box *box = &ui_nil_box;
+      UI_TagF("weak") UI_CornerRadius(params->font_size*0.25f) RAD_Font(RAD_FontSlot_Code) UI_FontSize(params->font_size) UI_TextAlignment(UI_TextAlign_Center)
+      {
+        box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
+                                        "...###fold_marker_%I64x", line_num);
+      }
+      if(ui_clicked(ui_signal_from_box(box)))
+      {
+        result.fold_toggle_idx = line_idx;
       }
     }
   }

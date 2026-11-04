@@ -36,6 +36,22 @@ struct RAD_Document
 // another tab changed the text, they are mapped through the change log).
 
 typedef struct RAD_CodeViewState RAD_CodeViewState;
+#define RAD_CODE_VIEW_FOLDS_MAX 512
+typedef struct RAD_FoldRange RAD_FoldRange;
+struct RAD_FoldRange
+{
+  S64 line_min; // shown (the range's first line)
+  S64 line_max; // last hidden line (hides line_min+1..line_max)
+};
+
+typedef struct RAD_FoldMap RAD_FoldMap;
+struct RAD_FoldMap
+{
+  RAD_FoldRange *v; // folded ranges, outermost only, by line
+  U64 count;
+  S64 hidden_count;
+};
+
 struct RAD_CodeViewState
 {
   // rad: stable state
@@ -48,6 +64,23 @@ struct RAD_CodeViewState
   // rad: text
   U64 buffer_version;
   B32 editable;
+
+  // rad: code folding (not in raddbg): the foldable ranges of the text at
+  // `fold_ranges_version`; the folded ones as the offsets of their first
+  // lines' starts at buffer version `folds_version`
+  Arena *fold_arena;
+  RAD_FoldRange *fold_ranges;
+  U64 fold_ranges_count;
+  U64 fold_ranges_version;
+  B32 fold_ranges_valid;
+  U64 fold_offs[RAD_CODE_VIEW_FOLDS_MAX];
+  U64 fold_count;
+  U64 folds_version;
+  RAD_FoldRange layout_folds[RAD_CODE_VIEW_FOLDS_MAX]; // last layout (scripts)
+  U64 layout_fold_count;
+  Rng1S64 layout_visible_rows;
+  F32 layout_fold_x0;
+  F32 layout_fold_x1;
 
   // rad: per-frame command info
   S64 goto_line_num;
@@ -334,5 +367,13 @@ internal void rad_goto_diagnostic(CFG_Node *window, U64 diag_num);
 //~ rad: Settings
 
 internal void rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect);
+
+////////////////////////////////
+//~ rad: Code Folding
+
+internal S64 rad_fold_row_from_line(RAD_FoldRange *v, U64 count, S64 line);
+internal S64 rad_fold_line_from_row(RAD_FoldRange *v, U64 count, S64 row);
+internal B32 rad_fold_line_is_hidden(RAD_FoldRange *v, U64 count, S64 line);
+internal RAD_FoldRange *rad_fold_ranges_from_text(Arena *arena, String8 text, U64 *count_out);
 
 #endif // RAD_VIEWS_H

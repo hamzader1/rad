@@ -129,6 +129,8 @@ struct RAD_CodeSliceParams
   DR_FStrList *line_annotations;
   RAD_CodeSliceUnderline *first_underline;
   DR_FStrList *line_margin_fstrs; // rad: drawn in the catchall margin
+  S64 *line_nums;       // rad: per visible row, its line number (folds hide lines); 0 = rows are lines
+  U8 *line_fold_kinds;  // rad: per visible row: 0 none, 1 a foldable range starts here, 2 folded here
 
   // rad: visual parameters
   FNT_Tag font;
@@ -138,6 +140,7 @@ struct RAD_CodeSliceParams
   F32 line_height_px;
   F32 priority_margin_width_px;
   F32 catchall_margin_width_px;
+  F32 fold_width_px;    // rad: the fold column, the right part of line_num_width_px
   F32 line_num_width_px;
   F32 line_text_max_width_px;
   F32 margin_float_off_px;
@@ -158,6 +161,7 @@ struct RAD_CodeSliceSignal
   B32 link_pressed;         // rad: ...and pressed there (the cursor did not move)
   U64 link_off;             // rad: the character under the mouse then
   Rng1U64 link_range;       // rad: its token
+  U64 fold_toggle_idx;      // rad: visible row whose fold chevron / "..." was clicked (max_U64: none)
 };
 
 ////////////////////////////////

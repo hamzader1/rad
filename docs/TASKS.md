@@ -264,7 +264,7 @@ tree, each with a header (title, X), no "+", no zoom button.
   advances each, floating when scrolled sideways, as raddbg); the priority
   margin is empty (breakpoints later); the catchall margin shows the icon
   of the line's worst diagnostic. Not done: the change bar.
-- [ ] **E2. Code folding.** A fold margin between line numbers and text: a
+- [x] **E2. Code folding.** A fold margin between line numbers and text: a
   down arrow appears on hover at the first line of a block, tooltip "Click
   to collapse the range"; collapsed blocks show one line with a "..."
   marker, the arrow points right, click expands. Ranges from rust-analyzer
@@ -283,6 +283,13 @@ tree, each with a header (title, X), no "+", no zoom button.
   "Click to collapse the range"), right chevron + "..." after a folded
   line; (5) the cursor landing in a fold (moves, Find, Go To Line, edits)
   expands it.
+  Done 2026-11-04 (script `folding`, fixture `fold.rs`) as planned, with
+  the byte scanner instead of the lexer for ranges (strings, raw strings,
+  char literals and comments skipped). Up/Down skip a fold; folding a range
+  with the cursor inside moves it to the fold's first line (VS2022); the
+  "..." box and the right chevron unfold. Not done: rust-analyzer's
+  foldingRange, a Toggle Fold key (VS2022's Ctrl+M, Ctrl+M is a chord),
+  folds saved in the session.
 
 ## F. Drag and drop
 

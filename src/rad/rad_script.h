@@ -87,6 +87,7 @@
 //   problem <n>                 middle of visible Problems row n (1-based)
 //   tool_close <explorer|bottom> a tool window's X button
 //   explorer_filter             the explorer's search filter row
+//   fold <line>                 the editor's fold chevron of a visible line
 //   tab_box <name>              a tab (any panel), by its name
 //   tab_pin <name>              its pin button (pinned and selected tabs)
 //   tab_close <name>            its close button (selected and hovered tabs)
@@ -134,6 +135,8 @@
 //   settings_filter_focused     1 if the filter has the keyboard
 //   setting <name>              a setting's value as stored (enums: the option's name)
 //   editor_font_size            the editor view's font size (code font setting)
+//   fold_count                  folded ranges in the editor view
+//   line_hidden <line>          1 if the line is folded away
 //   ui_font_size                the window's font size (UI font setting)
 //   explorer_panel_tabs         number of tabs in the explorer's panel
 //   cursor_line cursor_col mark_line mark_col     editor cursor/mark (1-based)

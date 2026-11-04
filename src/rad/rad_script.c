@@ -348,6 +348,28 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       }
     }
   }
+  else if(str8_match(name, str8_lit("fold_count"), 0) || str8_match(name, str8_lit("line_hidden"), 0))
+  {
+    // rad: folded ranges shown in the editor view; 1 if a line is folded away
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    result = rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out);
+    S64 line_num = 0;
+    if(result && str8_match(name, str8_lit("fold_count"), 0))
+    {
+      value = push_str8f(arena, "%I64u", cv->layout_fold_count);
+    }
+    else if(result && args_count >= 2 && try_s64_from_str8_c_rules(args[1], &line_num))
+    {
+      value = push_str8f(arena, "%i", (int)rad_fold_line_is_hidden(cv->layout_folds, cv->layout_fold_count, line_num));
+    }
+    else if(result)
+    {
+      *error_out = str8_lit("line_hidden: needs <line>");
+      result = 0;
+    }
+  }
   else if(str8_match(name, str8_lit("editor_font_size"), 0))
   {
     RAD_CodeViewState *cv = 0;
@@ -1072,17 +1094,20 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
         {
           *error_out = str8_lit("code: needs <line> <col>");
         }
-        else if(line_num < cv->layout_visible_lines.min || cv->layout_visible_lines.max < line_num)
+        else if(line_num < cv->layout_visible_lines.min || cv->layout_visible_lines.max < line_num ||
+                rad_fold_line_is_hidden(cv->layout_folds, cv->layout_fold_count, line_num))
         {
           *error_out = push_str8f(arena, "code: line %I64d is not visible (visible: %I64d-%I64d)", line_num, cv->layout_visible_lines.min, cv->layout_visible_lines.max);
         }
         else
         {
+          // rad: rows: folds hide lines
+          S64 row = rad_fold_row_from_line(cv->layout_folds, cv->layout_fold_count, line_num);
           String8 line_text = rad_script_line_text(scratch.arena, &text, line_num);
           String8 prefix = str8_prefix(line_text, (U64)col-1);
           F32 advance = fnt_dim_from_tag_size_string(cv->layout_font, cv->layout_font_size, 0, cv->layout_tab_size, prefix).x;
           pos.x = cv->layout_text_rect.x0 + cv->layout_text_x_off + advance + 1.f;
-          pos.y = cv->layout_text_rect.y0 + ((F32)(line_num - cv->layout_visible_lines.min) + 0.5f)*cv->layout_line_height;
+          pos.y = cv->layout_text_rect.y0 + ((F32)(row - cv->layout_visible_rows.min) + 0.5f)*cv->layout_line_height;
           args_used = 3;
           result = 1;
         }
@@ -1112,7 +1137,7 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
       String8 prefix = str8_prefix(line_text, (U64)col-1);
       F32 advance = fnt_dim_from_tag_size_string(cv->layout_font, cv->layout_font_size, 0, cv->layout_tab_size, prefix).x;
       pos.x = cv->layout_text_rect.x0 + cv->layout_text_x_off + advance + 1.f;
-      pos.y = cv->layout_text_rect.y0 + ((F32)(last_line - cv->layout_visible_lines.min) + 2.5f)*cv->layout_line_height;
+      pos.y = cv->layout_text_rect.y0 + ((F32)(rad_fold_row_from_line(cv->layout_folds, cv->layout_fold_count, last_line) - cv->layout_visible_rows.min) + 2.5f)*cv->layout_line_height;
       if(last_line < cv->layout_visible_lines.min || cv->layout_visible_lines.max < last_line || pos.y >= cv->layout_code_rect.y1)
       {
         *error_out = str8_lit("code_below: no empty area under the last line");
@@ -1122,6 +1147,35 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
         args_used = 2;
         result = 1;
       }
+    }
+  }
+
+  //- rad: the fold chevron of a (visible) line of the editor view
+  else if(str8_match(kind, str8_lit("fold"), 0))
+  {
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    S64 line_num = 0;
+    if(!rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out))
+    {
+    }
+    else if(args_count < 2 || !try_s64_from_str8_c_rules(args[1], &line_num))
+    {
+      *error_out = str8_lit("fold: needs <line>");
+    }
+    else if(line_num < cv->layout_visible_lines.min || cv->layout_visible_lines.max < line_num ||
+            rad_fold_line_is_hidden(cv->layout_folds, cv->layout_fold_count, line_num) || cv->layout_fold_x1 <= cv->layout_fold_x0)
+    {
+      *error_out = push_str8f(arena, "fold: line %I64d is not visible", line_num);
+    }
+    else
+    {
+      S64 row = rad_fold_row_from_line(cv->layout_folds, cv->layout_fold_count, line_num);
+      pos.x = (cv->layout_fold_x0 + cv->layout_fold_x1)/2;
+      pos.y = cv->layout_text_rect.y0 + ((F32)(row - cv->layout_visible_rows.min) + 0.5f)*cv->layout_line_height;
+      args_used = 2;
+      result = 1;
     }
   }
 

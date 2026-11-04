@@ -382,6 +382,23 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (task E2: code folding)
+- rad_views.c "Code Folding": `rad_fold_ranges_from_text` (byte scanner:
+  brace pairs with inner lines -> [open, close-1], comment runs, use runs;
+  sorted), cached per buffer version in the code view's `fold_arena`.
+  Folds: `fold_offs` (first-line offsets, mapped through edits with
+  `tb_buffer_map_offset`); `rad_code_view_fold_map` = folded ranges,
+  outermost only; rows <-> lines: `rad_fold_row_from_line` /
+  `rad_fold_line_from_row` (walk the sorted folds).
+- `rad_code_view_build` scrolls in rows (scroll range, visible range,
+  cursor centering and containment, diagnostics, completion anchor); the
+  slice gets `line_nums`, `line_fold_kinds`, `fold_width_px` (a fold column
+  in the line numbers' column: chevrons, tooltip) and draws a "..." box
+  after a folded line; `fold_toggle_idx` comes back on clicks.
+- The cursor in a fold: vertical moves skip it, anything else unfolds it.
+- Script: fields `fold_count`, `line_hidden <line>`; target `fold <line>`;
+  `code` targets use rows; script `folding` (26).
+
 ### 2026-11-04 (task E1: glyph margins)
 - `rad_code_slice`: raddbg's priority and catchall margins
   (`RAD_CodeSliceFlag_PriorityMargin/CatchallMargin`, widths 3.5 glyph

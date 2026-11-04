@@ -942,6 +942,406 @@ rad_completion_popup_ui(RAD_Window *ws, CFG_Node *window)
   }
 }
 
+////////////////////////////////
+//~ rad: Code Folding (not in raddbg)
+
+internal S64
+rad_fold_row_from_line(RAD_FoldRange *v, U64 count, S64 line)
+{
+  // NOTE(rad): rows are what the view shows: lines minus the folded ones (a
+  // hidden line maps to its fold's first line)
+  S64 row = line;
+  for(U64 idx = 0; idx < count; idx += 1)
+  {
+    if(v[idx].line_max < line)
+    {
+      row -= (v[idx].line_max - v[idx].line_min);
+    }
+    else
+    {
+      if(v[idx].line_min < line)
+      {
+        row -= (line - v[idx].line_min);
+      }
+      break;
+    }
+  }
+  return row;
+}
+
+internal S64
+rad_fold_line_from_row(RAD_FoldRange *v, U64 count, S64 row)
+{
+  S64 line = row;
+  for(U64 idx = 0; idx < count; idx += 1)
+  {
+    if(v[idx].line_min < line)
+    {
+      line += (v[idx].line_max - v[idx].line_min);
+    }
+    else
+    {
+      break;
+    }
+  }
+  return line;
+}
+
+internal B32
+rad_fold_line_is_hidden(RAD_FoldRange *v, U64 count, S64 line)
+{
+  B32 result = 0;
+  for(U64 idx = 0; idx < count && !result; idx += 1)
+  {
+    result = (v[idx].line_min < line && line <= v[idx].line_max);
+  }
+  return result;
+}
+
+internal int
+rad_fold_range_compare(RAD_FoldRange *a, RAD_FoldRange *b)
+{
+  int result = (a->line_min < b->line_min ? -1 : a->line_min > b->line_min ? +1 :
+                a->line_max > b->line_max ? -1 : a->line_max < b->line_max ? +1 : 0);
+  return result;
+}
+
+internal RAD_FoldRange *
+rad_fold_ranges_from_text(Arena *arena, String8 text, U64 *count_out)
+{
+  // NOTE(rad): the foldable ranges, sorted: { } pairs with lines between
+  // them (the closing brace stays shown, as rust-analyzer's line folding),
+  // runs of 2+ comment lines, runs of 2+ `use` lines. A byte scanner, not
+  // the lexer (cheap enough to run once per buffer version): skips strings,
+  // Rust raw strings, char literals (not lifetimes) and comments.
+  Temp scratch = scratch_begin(&arena, 1);
+  typedef struct RangeNode RangeNode;
+  struct RangeNode
+  {
+    RangeNode *next;
+    RAD_FoldRange v;
+  };
+  RangeNode *first = 0;
+  RangeNode *last = 0;
+  U64 count = 0;
+#define rad_fold_push__(min, max) do { RangeNode *n__ = push_array(scratch.arena, RangeNode, 1); n__->v.line_min = (min); n__->v.line_max = (max); SLLQueuePush(first, last, n__); count += 1; } while(0)
+  U64 stack_cap = 4096;
+  S64 *stack = push_array(scratch.arena, S64, stack_cap);
+  U64 depth = 0;
+  S64 line = 1;
+  B32 at_line_start = 1;
+  S64 comment_run_min = 0, comment_run_max = -1;
+  S64 use_run_min = 0, use_run_max = -1;
+  U8 prev_c = 0;
+  for(U64 i = 0; i < text.size;)
+  {
+    U8 c = text.str[i];
+    U8 next = (i+1 < text.size ? text.str[i+1] : 0);
+    if(c == '\n')
+    {
+      line += 1;
+      i += 1;
+      at_line_start = 1;
+      prev_c = c;
+      continue;
+    }
+    if(at_line_start && (c == ' ' || c == '\t' || c == '\r'))
+    {
+      i += 1;
+      continue;
+    }
+
+    //- rad: first character of a line: comment / use runs
+    if(at_line_start)
+    {
+      at_line_start = 0;
+      B32 is_comment = (c == '/' && next == '/');
+      String8 rest = str8_skip(text, i);
+      B32 is_use = (str8_match(str8_prefix(rest, 4), str8_lit("use "), 0) || str8_match(str8_prefix(rest, 8), str8_lit("pub use "), 0));
+      if(is_comment)
+      {
+        if(comment_run_max != line-1)
+        {
+          if(comment_run_max > comment_run_min) { rad_fold_push__(comment_run_min, comment_run_max); }
+          comment_run_min = line;
+        }
+        comment_run_max = line;
+      }
+      if(is_use)
+      {
+        if(use_run_max != line-1)
+        {
+          if(use_run_max > use_run_min) { rad_fold_push__(use_run_min, use_run_max); }
+          use_run_min = line;
+        }
+        use_run_max = line;
+      }
+    }
+
+    //- rad: comments
+    if(c == '/' && next == '/')
+    {
+      for(; i < text.size && text.str[i] != '\n'; i += 1);
+      continue;
+    }
+    if(c == '/' && next == '*')
+    {
+      U64 block_depth = 1;
+      i += 2;
+      for(; i < text.size && block_depth != 0;)
+      {
+        if(text.str[i] == '\n') { line += 1; }
+        if(text.str[i] == '/' && i+1 < text.size && text.str[i+1] == '*') { block_depth += 1; i += 2; }
+        else if(text.str[i] == '*' && i+1 < text.size && text.str[i+1] == '/') { block_depth -= 1; i += 2; }
+        else { i += 1; }
+      }
+      continue;
+    }
+
+    //- rad: raw strings: r"..", r#".."#, br".."
+    if((c == 'r' || (c == 'b' && next == 'r')) && !char_is_alpha(prev_c) && !char_is_digit(prev_c, 10) && prev_c != '_')
+    {
+      U64 j = i + (c == 'b' ? 2 : 1);
+      U64 hashes = 0;
+      for(; j < text.size && text.str[j] == '#'; j += 1, hashes += 1);
+      if(j < text.size && text.str[j] == '"')
+      {
+        j += 1;
+        for(; j < text.size; j += 1)
+        {
+          if(text.str[j] == '\n') { line += 1; }
+          if(text.str[j] == '"')
+          {
+            U64 k = 0;
+            for(; k < hashes && j+1+k < text.size && text.str[j+1+k] == '#'; k += 1);
+            if(k == hashes)
+            {
+              j += 1 + hashes;
+              break;
+            }
+          }
+        }
+        i = j;
+        prev_c = '"';
+        continue;
+      }
+    }
+
+    //- rad: strings
+    if(c == '"')
+    {
+      i += 1;
+      for(; i < text.size && text.str[i] != '"'; i += 1)
+      {
+        if(text.str[i] == '\\') { i += 1; }
+        if(i < text.size && text.str[i] == '\n') { line += 1; }
+      }
+      i += 1;
+      prev_c = '"';
+      continue;
+    }
+
+    //- rad: char literals ('x', '\n', 'é'); a lifetime ('a) is not one
+    if(c == '\'')
+    {
+      if(next == '\\')
+      {
+        U64 j = i+2;
+        for(; j < text.size && j < i+12 && text.str[j] != '\'' && text.str[j] != '\n'; j += 1);
+        i = (j < text.size && text.str[j] == '\'') ? j+1 : i+1;
+      }
+      else
+      {
+        U64 len = 1;
+        for(; i+1+len < text.size && (text.str[i+1+len] & 0xC0) == 0x80; len += 1);
+        i = (i+1+len < text.size && text.str[i+1+len] == '\'' && next != '\n') ? i+2+len : i+1;
+      }
+      prev_c = '\'';
+      continue;
+    }
+
+    //- rad: braces
+    if(c == '{')
+    {
+      if(depth < stack_cap) { stack[depth] = line; }
+      depth += 1;
+    }
+    else if(c == '}' && depth != 0)
+    {
+      depth -= 1;
+      if(depth < stack_cap && stack[depth] < line-1)
+      {
+        rad_fold_push__(stack[depth], line-1);
+      }
+    }
+    prev_c = c;
+    i += 1;
+  }
+  if(comment_run_max > comment_run_min) { rad_fold_push__(comment_run_min, comment_run_max); }
+  if(use_run_max > use_run_min) { rad_fold_push__(use_run_min, use_run_max); }
+#undef rad_fold_push__
+
+  //- rad: array, sorted (by first line; longer first)
+  RAD_FoldRange *result = push_array(arena, RAD_FoldRange, count);
+  {
+    U64 idx = 0;
+    for(RangeNode *n = first; n != 0; n = n->next, idx += 1)
+    {
+      result[idx] = n->v;
+    }
+  }
+  quick_sort(result, count, sizeof(result[0]), rad_fold_range_compare);
+  *count_out = count;
+  scratch_end(scratch);
+  return result;
+}
+
+internal void
+rad_code_view_folds_update(RAD_CodeViewState *cv, TB_Buffer *buffer, TXT_Patched *patched)
+{
+  // rad: the foldable ranges (once per buffer version); folded offsets
+  // mapped to the current version
+  if(cv->fold_arena == 0)
+  {
+    cv->fold_arena = arena_alloc();
+  }
+  if(!cv->fold_ranges_valid || cv->fold_ranges_version != buffer->version)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    arena_clear(cv->fold_arena);
+    String8 text = memory_map_data_from_range(scratch.arena, &patched->memory_map, r1u64(0, patched->size));
+    cv->fold_ranges = rad_fold_ranges_from_text(cv->fold_arena, text, &cv->fold_ranges_count);
+    cv->fold_ranges_version = buffer->version;
+    cv->fold_ranges_valid = 1;
+    scratch_end(scratch);
+  }
+  if(cv->folds_version != buffer->version)
+  {
+    U64 kept = 0;
+    for EachIndex(idx, cv->fold_count)
+    {
+      U64 off = cv->fold_offs[idx];
+      if(tb_buffer_map_offset(buffer, cv->folds_version, &off))
+      {
+        cv->fold_offs[kept] = off;
+        kept += 1;
+      }
+    }
+    cv->fold_count = kept;
+    cv->folds_version = buffer->version;
+  }
+}
+
+internal RAD_FoldRange *
+rad_code_view_fold_range_from_line(RAD_CodeViewState *cv, S64 line)
+{
+  // rad: the longest foldable range starting on `line` (sorted: first)
+  RAD_FoldRange *result = 0;
+  U64 lo = 0, hi = cv->fold_ranges_count;
+  for(; lo < hi;)
+  {
+    U64 mid = (lo+hi)/2;
+    if(cv->fold_ranges[mid].line_min < line) { lo = mid+1; } else { hi = mid; }
+  }
+  if(lo < cv->fold_ranges_count && cv->fold_ranges[lo].line_min == line)
+  {
+    result = &cv->fold_ranges[lo];
+  }
+  return result;
+}
+
+internal RAD_FoldMap
+rad_code_view_fold_map(Arena *arena, RAD_CodeViewState *cv, TXT_Patched *patched)
+{
+  // rad: the folded ranges (outermost only, sorted); folds whose range is
+  // gone are dropped
+  RAD_FoldMap map = {0};
+  map.v = push_array(arena, RAD_FoldRange, cv->fold_count+1);
+  U64 kept = 0;
+  for EachIndex(idx, cv->fold_count)
+  {
+    S64 line = (S64)txt_line_num_from_off(&patched->line_map, cv->fold_offs[idx]);
+    RAD_FoldRange *range = rad_code_view_fold_range_from_line(cv, line);
+    if(range != 0)
+    {
+      cv->fold_offs[kept] = txt_range_from_line_num(&patched->line_map, line).min;
+      kept += 1;
+      map.v[map.count] = *range;
+      map.count += 1;
+    }
+  }
+  cv->fold_count = kept;
+  quick_sort(map.v, map.count, sizeof(map.v[0]), rad_fold_range_compare);
+  U64 outer = 0;
+  for EachIndex(idx, map.count)
+  {
+    if(outer == 0 || map.v[idx].line_min > map.v[outer-1].line_max)
+    {
+      map.v[outer] = map.v[idx];
+      outer += 1;
+    }
+  }
+  map.count = outer;
+  for EachIndex(idx, map.count)
+  {
+    map.hidden_count += map.v[idx].line_max - map.v[idx].line_min;
+  }
+  return map;
+}
+
+internal B32
+rad_code_view_fold_toggle(RAD_CodeViewState *cv, TXT_Patched *patched, S64 line)
+{
+  // rad: fold the range starting on `line`, or unfold it
+  B32 result = 0;
+  Rng1U64 line_range = txt_range_from_line_num(&patched->line_map, (U64)line);
+  for EachIndex(idx, cv->fold_count)
+  {
+    if(txt_line_num_from_off(&patched->line_map, cv->fold_offs[idx]) == (U64)line)
+    {
+      cv->fold_offs[idx] = cv->fold_offs[cv->fold_count-1];
+      cv->fold_count -= 1;
+      result = 1;
+      break;
+    }
+  }
+  RAD_FoldRange *range = rad_code_view_fold_range_from_line(cv, line);
+  if(!result && range != 0 && cv->fold_count < RAD_CODE_VIEW_FOLDS_MAX)
+  {
+    cv->fold_offs[cv->fold_count] = line_range.min;
+    cv->fold_count += 1;
+    result = 1;
+
+    // rad: the cursor inside -> to the end of the fold's first line (VS2022)
+    S64 cursor_line = (S64)txt_line_num_from_off(&patched->line_map, cv->cursor);
+    if(range->line_min < cursor_line && cursor_line <= range->line_max)
+    {
+      cv->cursor = cv->mark = line_range.max;
+    }
+  }
+  return result;
+}
+
+internal void
+rad_code_view_fold_expand_line(RAD_CodeViewState *cv, TXT_Patched *patched, S64 line)
+{
+  // rad: unfold every fold that hides `line`
+  for(U64 idx = 0; idx < cv->fold_count;)
+  {
+    S64 fold_line = (S64)txt_line_num_from_off(&patched->line_map, cv->fold_offs[idx]);
+    RAD_FoldRange *range = rad_code_view_fold_range_from_line(cv, fold_line);
+    if(range != 0 && range->line_min < line && line <= range->line_max)
+    {
+      cv->fold_offs[idx] = cv->fold_offs[cv->fold_count-1];
+      cv->fold_count -= 1;
+    }
+    else
+    {
+      idx += 1;
+    }
+  }
+}
+
 internal void
 rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data)
 {
@@ -998,8 +1398,18 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     snap[Axis2_X] = snap[Axis2_Y] = 1;
   }
 
+  U64 fold_old_cursor = cv->cursor;
+  B32 fold_vertical_move = 0;
   UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && text_is_ready)
   {
+    // rad: not in raddbg: a vertical move this frame (it skips folds)
+    for(UI_Event *evt = 0; ui_next_event(&evt);)
+    {
+      if(evt->kind == UI_EventKind_Navigate && evt->delta_2s32.y != 0)
+      {
+        fold_vertical_move = 1;
+      }
+    }
     U64 line_count_per_page = ClampBot(num_possible_visible_lines, 10) - 10;
     U64 *cursor = &cv->cursor;
     U64 *mark = &cv->mark;
@@ -1349,7 +1759,48 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
   }
 
   //////////////////////////////
-  //- rad: determine visible line range / count
+  //- rad: not in raddbg: code folding: the folds; the cursor in a fold:
+  // vertical moves skip it (VS2022), anything else (Find, Go To Line, a
+  // click on a line, typing) unfolds it
+  //
+  RAD_FoldMap folds = {0};
+  B32 do_folding = (cv->editable && text_is_ready && str8_match(tab->string, str8_lit("text"), 0));
+  if(do_folding)
+  {
+    rad_code_view_folds_update(cv, buffer, &text_patched);
+    folds = rad_code_view_fold_map(scratch.arena, cv, &text_patched);
+    S64 cursor_line = (S64)txt_line_num_from_off(&text_patched.line_map, cv->cursor);
+    for EachIndex(idx, folds.count)
+    {
+      RAD_FoldRange *f = &folds.v[idx];
+      if(f->line_min < cursor_line && cursor_line <= f->line_max)
+      {
+        if(fold_vertical_move && f->line_max+1 <= (S64)text_patched.line_map.total_line_count)
+        {
+          S64 target_line = (cv->cursor > fold_old_cursor ? f->line_max+1 : f->line_min);
+          Rng1U64 target_range = txt_range_from_line_num(&text_patched.line_map, (U64)target_line);
+          Rng1U64 cursor_range = txt_range_from_line_num(&text_patched.line_map, (U64)cursor_line);
+          U64 column = Min(cv->cursor - cursor_range.min, dim_1u64(target_range));
+          B32 mark_follows = (cv->mark == cv->cursor);
+          cv->cursor = target_range.min + column;
+          if(mark_follows)
+          {
+            cv->mark = cv->cursor;
+          }
+        }
+        else
+        {
+          rad_code_view_fold_expand_line(cv, &text_patched, cursor_line);
+          folds = rad_code_view_fold_map(scratch.arena, cv, &text_patched);
+        }
+        break;
+      }
+    }
+  }
+  S64 total_rows = Max(1, (S64)text_patched.line_map.total_line_count - folds.hidden_count);
+
+  //////////////////////////////
+  //- rad: determine visible line range / count (rad: rows: lines minus folded ones)
   //
   Rng1S64 visible_line_num_range = r1s64(scroll_pos.y.idx + (S64)(scroll_pos.y.off) + 1 - !!(scroll_pos.y.off < 0),
                                          scroll_pos.y.idx + (S64)(scroll_pos.y.off) + 1 + num_possible_visible_lines);
@@ -1357,12 +1808,12 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
                                                 scroll_pos.y.idx + 1 + num_possible_visible_lines);
   U64 visible_line_count = 0;
   {
-    visible_line_num_range.min = Clamp(1, visible_line_num_range.min, (S64)text_patched.line_map.total_line_count);
-    visible_line_num_range.max = Clamp(1, visible_line_num_range.max, (S64)text_patched.line_map.total_line_count);
+    visible_line_num_range.min = Clamp(1, visible_line_num_range.min, total_rows);
+    visible_line_num_range.max = Clamp(1, visible_line_num_range.max, total_rows);
     visible_line_num_range.min = Max(1, visible_line_num_range.min);
     visible_line_num_range.max = Max(1, visible_line_num_range.max);
-    target_visible_line_num_range.min = Clamp(1, target_visible_line_num_range.min, (S64)text_patched.line_map.total_line_count);
-    target_visible_line_num_range.max = Clamp(1, target_visible_line_num_range.max, (S64)text_patched.line_map.total_line_count);
+    target_visible_line_num_range.min = Clamp(1, target_visible_line_num_range.min, total_rows);
+    target_visible_line_num_range.max = Clamp(1, target_visible_line_num_range.max, total_rows);
     target_visible_line_num_range.min = Max(1, target_visible_line_num_range.min);
     target_visible_line_num_range.max = Max(1, target_visible_line_num_range.max);
     visible_line_count = (U64)dim_1s64(visible_line_num_range)+1;
@@ -1378,7 +1829,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     line_size_x = ClampBot(line_size_x, (S64)big_glyph_advance*120);
     line_size_x = ClampBot(line_size_x, (S64)code_area_dim.x);
     scroll_idx_rng[Axis2_X] = r1s64(0, line_size_x-(S64)code_area_dim.x);
-    scroll_idx_rng[Axis2_Y] = r1s64(0, (S64)text_patched.line_map.total_line_count-1);
+    scroll_idx_rng[Axis2_Y] = r1s64(0, total_rows-1);
   }
 
   //////////////////////////////
@@ -1387,7 +1838,15 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
   F32 line_num_width_px = 0;
   if(do_line_numbers)
   {
-    line_num_width_px = floor_f32(big_glyph_advance * (log10(visible_line_num_range.max) + 3));
+    line_num_width_px = floor_f32(big_glyph_advance * (log10(rad_fold_line_from_row(folds.v, folds.count, visible_line_num_range.max)) + 3));
+  }
+
+  // NOTE(rad): not in raddbg: the fold column, right of the line numbers
+  F32 fold_width_px = 0;
+  if(do_folding)
+  {
+    fold_width_px = floor_f32(big_glyph_advance*2.f);
+    line_num_width_px += fold_width_px;
   }
 
   // NOTE(rad): raddbg's margins (RD_CodeViewBuildFlag_Margins), in text tabs:
@@ -1401,8 +1860,10 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     priority_margin_width_px = floor_f32(big_glyph_advance*3.5f);
     catchall_margin_width_px = floor_f32(big_glyph_advance*3.5f);
   }
-  Rng1U64 visible_byte_range = r1u64(txt_range_from_line_num(&text_patched.line_map, visible_line_num_range.min).min,
-                                     txt_range_from_line_num(&text_patched.line_map, visible_line_num_range.max).max);
+  Rng1S64 visible_lines = r1s64(rad_fold_line_from_row(folds.v, folds.count, visible_line_num_range.min),
+                                rad_fold_line_from_row(folds.v, folds.count, visible_line_num_range.max));
+  Rng1U64 visible_byte_range = r1u64(txt_range_from_line_num(&text_patched.line_map, visible_lines.min).min,
+                                     txt_range_from_line_num(&text_patched.line_map, visible_lines.max).max);
   String8 visible_data = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, visible_byte_range);
 
   //////////////////////////////
@@ -1470,6 +1931,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     code_slice_params.line_height_px            = code_line_height;
     code_slice_params.search_query              = search_query;
     code_slice_params.line_num_width_px         = line_num_width_px;
+    code_slice_params.fold_width_px             = fold_width_px;
     code_slice_params.priority_margin_width_px  = priority_margin_width_px;
     code_slice_params.catchall_margin_width_px  = catchall_margin_width_px;
     code_slice_params.line_text_max_width_px    = (F32)line_size_x;
@@ -1484,14 +1946,30 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       code_slice_params.flags |= RAD_CodeSliceFlag_CtrlLinks;
     }
 
-    // rad: fill line text / ranges
+    // rad: fill line text / ranges (rad: per visible row: its line; folds)
+    if(do_folding)
     {
-      S64 line_num = visible_line_num_range.min;
-      U64 line_idx = visible_line_num_range.min-1;
-      for(U64 visible_line_idx = 0;
-          visible_line_idx < visible_line_count && line_idx < text_patched.line_map.total_line_count;
-          visible_line_idx += 1, line_idx += 1, line_num += 1)
+      code_slice_params.line_nums       = push_array(scratch.arena, S64, visible_line_count);
+      code_slice_params.line_fold_kinds = push_array(scratch.arena, U8, visible_line_count);
+    }
+    {
+      for(U64 visible_line_idx = 0; visible_line_idx < visible_line_count; visible_line_idx += 1)
       {
+        S64 line_num = rad_fold_line_from_row(folds.v, folds.count, visible_line_num_range.min + (S64)visible_line_idx);
+        if(line_num > (S64)text_patched.line_map.total_line_count)
+        {
+          break;
+        }
+        if(do_folding)
+        {
+          code_slice_params.line_nums[visible_line_idx] = line_num;
+          B32 folded_here = 0;
+          for EachIndex(idx, folds.count)
+          {
+            folded_here = folded_here || (folds.v[idx].line_min == line_num);
+          }
+          code_slice_params.line_fold_kinds[visible_line_idx] = (folded_here ? 2 : rad_code_view_fold_range_from_line(cv, line_num) != 0 ? 1 : 0);
+        }
         Rng1U64 line_range = txt_range_from_line_num(&text_patched.line_map, line_num);
         String8 line_text = {0};
         line_text.size = dim_1u64(line_range);
@@ -1589,11 +2067,13 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
           SLLQueuePush(code_slice_params.first_underline, last_underline, underline);
         }
 
-        // rad: line color + annotation: [icon] message
+        // rad: line color + annotation: [icon] message (rad: rows)
         S64 line_num = (S64)txt_line_num_from_off(&text_patched.line_map, range.min);
-        if(visible_line_num_range.min <= line_num && line_num <= visible_line_num_range.max)
+        S64 line_row = rad_fold_row_from_line(folds.v, folds.count, line_num);
+        if(!rad_fold_line_is_hidden(folds.v, folds.count, line_num) &&
+           visible_line_num_range.min <= line_row && line_row <= visible_line_num_range.max)
         {
-          U64 line_idx = (U64)(line_num - visible_line_num_range.min);
+          U64 line_idx = (U64)(line_row - visible_line_num_range.min);
           DR_FStrList *fstrs = &code_slice_params.line_annotations[line_idx];
           RAD_IconKind icon_kind = (is_error ? RAD_IconKind_WarningBig : is_warning ? RAD_IconKind_WarningSmall : RAD_IconKind_Info);
           Vec4F32 icon_color = (is_error ? error_text_color : is_warning ? warning_mark_color : weak_text_color);
@@ -1773,7 +2253,8 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       cv->cursor = cv->mark = rad_offset_from_line_column(&text_patched, line_num, column_num, column_in_bytes);
       cv->preferred_column = (S64)(cv->cursor - range.min);
     }
-    cv->center_cursor = !cv->force_contain_only && (!cv->contain_cursor || (line_num < target_visible_line_num_range.min+4 || target_visible_line_num_range.max-4 < line_num));
+    S64 line_row = rad_fold_row_from_line(folds.v, folds.count, line_num);
+    cv->center_cursor = !cv->force_contain_only && (!cv->contain_cursor || (line_row < target_visible_line_num_range.min+4 || target_visible_line_num_range.max-4 < line_row));
   }
 
   //////////////////////////////
@@ -1794,6 +2275,13 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       sig = rad_code_slicef(&code_slice_params, &cv->cursor, &cv->mark, &cv->preferred_column, "code_slice");
     }
 
+    //- rad: not in raddbg: a fold chevron / "..." clicked
+    if(sig.fold_toggle_idx < visible_line_count && code_slice_params.line_nums != 0)
+    {
+      rad_code_view_fold_toggle(cv, &text_patched, code_slice_params.line_nums[sig.fold_toggle_idx]);
+      rad_request_frame();
+    }
+
     //- rad: press code slice? -> focus panel (same as raddbg)
     if(ui_pressed(sig.base))
     {
@@ -1811,13 +2299,14 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       else if(text_is_ready)
       {
         S64 line_num = (S64)txt_line_num_from_off(&text_patched.line_map, cmp->word_start);
-        if(visible_line_num_range.min <= line_num && line_num <= visible_line_num_range.max)
+        S64 line_row = rad_fold_row_from_line(folds.v, folds.count, line_num);
+        if(visible_line_num_range.min <= line_row && line_row <= visible_line_num_range.max)
         {
           Rng1U64 line_range = txt_range_from_line_num(&text_patched.line_map, (U64)line_num);
           String8 prefix = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, r1u64(line_range.min, Max(line_range.min, cmp->word_start)));
           F32 advance = fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, prefix).x;
           F32 x = sig.text_rect.x0 + sig.text_x_off + advance;
-          F32 y = sig.text_rect.y0 + (F32)(line_num - visible_line_num_range.min)*code_line_height;
+          F32 y = sig.text_rect.y0 + (F32)(line_row - visible_line_num_range.min)*code_line_height;
           cmp->anchor_line_rect = r2f32p(x, y, x + code_line_height, y + code_line_height);
           cmp->anchor_frame = rad_state->frame_index;
         }
@@ -1859,7 +2348,12 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     cv->layout_text_rect     = sig.text_rect;
     cv->layout_text_x_off    = sig.text_x_off;
     cv->layout_line_height   = code_line_height;
-    cv->layout_visible_lines = visible_line_num_range;
+    cv->layout_visible_lines = visible_lines;
+    cv->layout_visible_rows  = visible_line_num_range;
+    cv->layout_fold_count    = Min(folds.count, ArrayCount(cv->layout_folds));
+    MemoryCopy(cv->layout_folds, folds.v, sizeof(folds.v[0])*cv->layout_fold_count);
+    cv->layout_fold_x0       = sig.text_rect.x0 + line_num_width_px - fold_width_px;
+    cv->layout_fold_x1       = sig.text_rect.x0 + line_num_width_px;
     cv->layout_font          = code_font;
     cv->layout_font_size     = code_font_size;
     cv->layout_tab_size      = code_tab_size;
@@ -1915,7 +2409,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
 
         // rad: scroll y
         {
-          S64 new_idx = ((S64)cursor_line_num-1) - num_possible_visible_lines/2 + 2;
+          S64 new_idx = (rad_fold_row_from_line(folds.v, folds.count, (S64)cursor_line_num)-1) - num_possible_visible_lines/2 + 2;
           new_idx = Clamp(scroll_idx_rng[Axis2_Y].min, new_idx, scroll_idx_rng[Axis2_Y].max);
           ui_scroll_pt_target_idx(&scroll_pos.y, new_idx);
           snap[Axis2_Y] = 0;
@@ -1957,13 +2451,14 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     // rad: snap in Y
     if(snap[Axis2_Y])
     {
-      Rng1S64 cursor_visibility_range = r1s64((S64)cursor_line_num-4, (S64)cursor_line_num+4);
+      S64 cursor_row_num = rad_fold_row_from_line(folds.v, folds.count, (S64)cursor_line_num);
+      Rng1S64 cursor_visibility_range = r1s64(cursor_row_num-4, cursor_row_num+4);
       cursor_visibility_range.min = ClampBot(0, cursor_visibility_range.min);
       cursor_visibility_range.max = ClampBot(0, cursor_visibility_range.max);
       S64 min_delta = Min(0, cursor_visibility_range.min-(target_visible_line_num_range.min));
       S64 max_delta = Max(0, cursor_visibility_range.max-(target_visible_line_num_range.min+num_possible_visible_lines));
       S64 new_idx = scroll_pos.y.idx+min_delta+max_delta;
-      new_idx = Clamp(0, new_idx, (S64)text_patched.line_map.total_line_count-1);
+      new_idx = Clamp(0, new_idx, total_rows-1);
       ui_scroll_pt_target_idx(&scroll_pos.y, new_idx);
     }
   }
