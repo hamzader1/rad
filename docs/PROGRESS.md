@@ -382,6 +382,21 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (task G4: code actions)
+- rad_lsp.c "Code Actions": `RAD_LspCodeActions` (rest: cursor, mark,
+  version, time; one request at a time; the answer is shown only for the
+  state it was asked for); `rad_lsp_apply_workspace_edit` (documentChanges
+  or changes; snapshots of the version named); resolve when an action has
+  no edit yet (rust-analyzer always resolves).
+- Code slice `action_row` -> the button (`RAD_IconKind_Screwdriver`, U+E000:
+  the first icon past ASCII, UTF-8 in `RAD_IconTable`); the code view
+  opens the menu (`_code_actions_menu_%p`).
+- Command QuickActions (Ctrl+.); script fields `code_actions_count`,
+  `code_action <n>`, `code_actions_shown` (laid out); targets
+  `code_actions_button`, `code_action_item <n>`.
+- Found by `lsp_semantic`: the button over column 1 of an unindented line
+  took the click meant for the text; it now goes left of the text there.
+
 ### 2026-11-04 (task G3: signature help)
 - rad_lsp.c "Signature Help": `RAD_LspSignature` (one at a time; the last
   asked version + cursor); `rad_lsp_take_signature` finds the active

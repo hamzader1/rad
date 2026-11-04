@@ -693,6 +693,56 @@ rad_code_view_completion_update(CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer 
     }
   }
 
+  //- rad: code actions: asked for where the cursor rests; Quick Actions asks
+  // at once (the menu opens with the answer)
+  {
+    RAD_LspCodeActions *ca = &rad_lsp->code_actions;
+    B32 quick_actions = cv->quick_actions;
+    cv->quick_actions = 0;
+    if(doc != 0 && cv->editable && focused)
+    {
+      U64 now_us = now_time_us();
+      if(ca->tab != tab->id || ca->doc_id != doc->id || ca->rest_off != cv->cursor || ca->rest_mark != cv->mark || ca->rest_version != buffer->version)
+      {
+        ca->tab = tab->id;
+        ca->doc_id = doc->id;
+        ca->rest_off = cv->cursor;
+        ca->rest_mark = cv->mark;
+        ca->rest_version = buffer->version;
+        ca->rest_begin_us = now_us;
+        ca->rest_asked = 0;
+      }
+      if(quick_actions)
+      {
+        if(rad_lsp_code_actions_shown(tab->id, cv->cursor, cv->mark, buffer->version))
+        {
+          ca->menu_open_requested = 1;
+        }
+        else if(ca->request_id == 0 && rad_lsp_code_actions_request(tab, doc, cv->cursor, cv->mark))
+        {
+          ca->rest_asked = 1;
+          ca->menu_on_answer = 1;
+        }
+        else if(ca->request_id != 0)
+        {
+          ca->menu_on_answer = 1;
+        }
+      }
+      else if(!ca->rest_asked && ca->request_id == 0)
+      {
+        if(now_us >= ca->rest_begin_us + RAD_LSP_CODE_ACTION_DELAY_US)
+        {
+          rad_lsp_code_actions_request(tab, doc, cv->cursor, cv->mark);
+          ca->rest_asked = 1;
+        }
+        else
+        {
+          rad_request_frame();
+        }
+      }
+    }
+  }
+
   //- rad: the selected item's import edit is asked for while it is selected
   // (one request at a time), so its commit has the `use` line at once
   if(c->active && c->tab == tab->id && doc != 0 && rad_lsp->resolve.request_id == 0 &&
@@ -2112,6 +2162,16 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       // rad: not in raddbg: rust-analyzer's semantic tokens
       code_slice_params.token_colors = rad_lsp_token_colors_from_document(rad_document_from_tab(tab), &code_slice_params.token_colors_count);
     }
+    if(cv->editable && rad_lsp_code_actions_shown(tab->id, cv->cursor, cv->mark, buffer->version))
+    {
+      // rad: not in raddbg: the code actions button on the cursor's row
+      S64 cursor_line = (S64)txt_line_num_from_off(&text_patched.line_map, cv->cursor);
+      S64 cursor_row = rad_fold_row_from_line(folds.v, folds.count, cursor_line);
+      if(visible_line_num_range.min <= cursor_row && cursor_row <= visible_line_num_range.max)
+      {
+        code_slice_params.action_row = (U64)(cursor_row - visible_line_num_range.min) + 1;
+      }
+    }
     code_slice_params.priority_margin_width_px  = priority_margin_width_px;
     code_slice_params.catchall_margin_width_px  = catchall_margin_width_px;
     code_slice_params.line_text_max_width_px    = (F32)line_size_x;
@@ -2453,6 +2513,69 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     UI_Focus(UI_FocusKind_On)
     {
       sig = rad_code_slicef(&code_slice_params, &cv->cursor, &cv->mark, &cv->preferred_column, "code_slice");
+    }
+
+    //- rad: not in raddbg: code actions: the button or Quick Actions -> the
+    // menu (raddbg's context menu look); picking one applies it
+    {
+      RAD_LspCodeActions *ca = &rad_lsp->code_actions;
+      UI_Key menu_key = ui_key_from_stringf(ui_key_zero(), "_code_actions_menu_%p", tab);
+      if(code_slice_params.action_row != 0)
+      {
+        ca->layout_frame = rad_state->frame_index;
+        ca->layout_button_rect = sig.action_button_rect;
+        if(sig.action_clicked || ca->menu_open_requested || ca->menu_on_answer)
+        {
+          ui_ctx_menu_open(menu_key, sig.action_button_key, v2f32(0, dim_2f32(sig.action_button_rect).y));
+          ca->menu_open_requested = 0;
+          ca->menu_on_answer = 0;
+        }
+      }
+      else if(ca->menu_on_answer && ca->answered && ca->request_id == 0 && ca->tab == tab->id)
+      {
+        // rad: Quick Actions found nothing here
+        ca->menu_on_answer = 0;
+      }
+      UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(30.f, 1.f)) UI_TagF("implicit")
+      {
+        ca->layout_menu_frame = rad_state->frame_index;
+        ca->layout_item_count = 0;
+        for EachIndex(idx, ca->count)
+        {
+          RAD_LspCodeAction *action = &ca->actions[idx];
+          ui_set_next_child_layout_axis(Axis2_X);
+          UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|
+                                                  UI_BoxFlag_DrawBackground|
+                                                  UI_BoxFlag_DrawHotEffects|
+                                                  UI_BoxFlag_DrawActiveEffects|
+                                                  UI_BoxFlag_Clickable,
+                                                  "###code_action_%I64u", idx);
+          UI_Parent(box) UI_HeightFill UI_Padding(ui_em(1.f, 1.f))
+          {
+            RAD_Font(RAD_FontSlot_Icons)
+              UI_PrefWidth(ui_em(2.f, 1.f))
+              UI_TextAlignment(UI_TextAlign_Center)
+              UI_TagF("weak")
+              ui_label(action->preferred ? rad_icon_kind_text_table[RAD_IconKind_Screwdriver] : str8_lit(""));
+            UI_PrefWidth(ui_text_dim(10, 1.f)) ui_label(action->title);
+          }
+          if(idx < ArrayCount(ca->layout_item_rects))
+          {
+            ca->layout_item_rects[idx] = box->rect;
+            ca->layout_item_count = idx+1;
+          }
+          if(ui_clicked(ui_signal_from_box(box)))
+          {
+            RAD_Document *doc = rad_document_from_tab(tab);
+            if(doc != 0)
+            {
+              rad_lsp_code_action_apply(doc, idx);
+            }
+            ui_ctx_menu_close();
+            rad_request_frame();
+          }
+        }
+      }
     }
 
     //- rad: not in raddbg: a fold chevron / "..." clicked

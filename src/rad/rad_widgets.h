@@ -139,6 +139,7 @@ struct RAD_CodeSliceParams
   DR_FStrList *line_margin_fstrs; // rad: drawn in the catchall margin
   RAD_TokenColor *token_colors; // rad: sorted by range.min; a lexer token starting at one takes its color
   U64 token_colors_count;
+  U64 action_row;               // rad: 1 + the visible row with the code actions button (0: none)
   S64 *line_nums;       // rad: per visible row, its line number (folds hide lines); 0 = rows are lines
   U8 *line_fold_kinds;  // rad: per visible row: 0 none, 1 a foldable range starts here, 2 folded here
 
@@ -172,6 +173,9 @@ struct RAD_CodeSliceSignal
   U64 link_off;             // rad: the character under the mouse then
   Rng1U64 link_range;       // rad: its token
   U64 fold_toggle_idx;      // rad: visible row whose fold chevron / "..." was clicked (max_U64: none)
+  B32 action_clicked;       // rad: the code actions button was pressed
+  UI_Key action_button_key;
+  Rng2F32 action_button_rect;
 };
 
 ////////////////////////////////

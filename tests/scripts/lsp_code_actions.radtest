@@ -1,0 +1,54 @@
+#! timeout: 300
+# Code actions (task G4, VS2022's Quick Actions): where the cursor rests,
+# rust-analyzer's actions show as a screwdriver at the start of the line; a
+# click or Quick Actions (Ctrl+.) opens their menu; picking one applies its
+# edit (resolved first: rust-analyzer sends edits on resolve), one undo
+# step. The fixture is never saved.
+
+lsp on
+open_folder ../fixtures/lsp_complete
+wait_idle
+open ../fixtures/lsp_complete/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+
+# the cursor on `1` in `self.count += 1;`: integer literal conversions
+click code 11 23
+wait_until 15000 code_actions_shown == 1
+expect code_action 3 == "Convert 1 to 0x1"
+click code_actions_button
+wait_frames 3
+click code_action_item 3
+wait_until 15000 line 11 == "        self.count += 0x1;"
+expect code_actions_shown == 0
+key ctrl+z
+wait_idle
+expect line 11 == "        self.count += 1;"
+
+# Quick Actions (Ctrl+.) at once: the menu opens with the answer
+click code 11 23
+wait_frames 2
+key ctrl+period
+wait_until 15000 code_actions_shown == 1
+wait_frames 3
+click code_action_item 1
+wait_until 15000 line 11 == "        self.count += 0b1;"
+key ctrl+z
+wait_idle
+expect line 11 == "        self.count += 1;"
+
+# an unindented line: the button goes left of the text (in the line numbers'
+# column), so a click on the first column stays a text click
+click code 1 1
+wait_until 15000 code_actions_shown == 1
+wait 700
+click code 1 1
+wait_frames 2
+text "x"
+wait_idle
+expect line 1 == "xstruct Counter {"
+key ctrl+z
+wait_idle
+expect line 1 == "struct Counter {"
+quit

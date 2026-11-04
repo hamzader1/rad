@@ -106,6 +106,9 @@ struct RAD_CodeViewState
   // rad: Parameter Info (Ctrl+Shift+Space) asked for (signature help)
   B32 parameter_info;
 
+  // rad: Quick Actions (Ctrl+.) asked for (code actions menu)
+  B32 quick_actions;
+
   // rad: a completion left the cursor before the closing bracket it inserted:
   // typing that bracket there steps over it (offsets in the text of `typeover_version`; off once
   // the cursor leaves [typeover_min, typeover_off])

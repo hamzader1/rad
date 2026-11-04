@@ -114,6 +114,8 @@ RAD_IconTable:
   (SymbolConstant           "|")
   (SymbolKeyword            '\\\\')
   (SymbolParameter          "`")
+  //- rad: past ASCII: private-use codepoints, as UTF-8
+  (Screwdriver              '\\xee\\x80\\x80')
 }
 
 @enum RAD_IconKind:
@@ -1197,6 +1199,7 @@ RAD_CmdTable:
   {GoToDefinition         goto_definition      "Go To Definition"     Target            F12        0      0      0      Null     0         0           0         0 }
   {CompleteWord           complete_word        "Complete Word"        Null              Space      ctrl   0      0      Null     0         0           0         0 }
   {ParameterInfo          parameter_info       "Parameter Info"       Null              Space      ctrl   shift  0      Null     0         0           0         0 }
+  {QuickActions           quick_actions        "Quick Actions"        Screwdriver       Period     ctrl   0      0      Null     0         0           0         0 }
   {NavigateBack           navigate_back        "Navigate Backward"    LeftArrow         Left       0      0      alt    Null     0         0           0         0 }
   {RestartLanguageServer  restart_language_server "Restart Language Server" Refresh   Null       0      0      0      Null     0         0           0         0 }
 

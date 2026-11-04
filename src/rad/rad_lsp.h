@@ -40,6 +40,8 @@
 #define RAD_LSP_SNAPSHOT_COUNT      4
 #define RAD_LSP_SHUTDOWN_WAIT_US    1000000
 #define RAD_LSP_HOVER_DELAY_US      500000
+#define RAD_LSP_CODE_ACTION_DELAY_US 300000
+#define RAD_LSP_CODE_ACTIONS_MAX    64
 #define RAD_LSP_COMPLETION_MAX_ITEMS 4096
 #define RAD_LSP_AUTO_RESTART_MAX    3           // restarts after a crash, per window below
 #define RAD_LSP_AUTO_RESTART_WINDOW_US 60000000
@@ -363,6 +365,65 @@ struct RAD_LspSignature
   Rng2F32 layout_rect;          // (scripts)
 };
 
+// NOTE(rad): code actions (VS2022's Quick Actions, the screwdriver): the
+// cursor rests (RAD_LSP_CODE_ACTION_DELAY_US) -> textDocument/codeAction for
+// the cursor / selection -> the actions that carry an edit or can be
+// resolved to one -> the screwdriver at the start of the cursor's line
+// while the cursor, selection and text stay as asked; a click on it or
+// Quick Actions (Ctrl+.) opens their menu; picking one applies its edit
+// (codeAction/resolve first if it has none yet), one undo step per file.
+// Edits to files that are not open are skipped.
+typedef struct RAD_LspCodeAction RAD_LspCodeAction;
+struct RAD_LspCodeAction
+{
+  String8 title;
+  String8 kind;
+  B32 preferred;
+  String8 json;                 // the action as sent (resolve, apply)
+};
+
+typedef struct RAD_LspCodeActions RAD_LspCodeActions;
+struct RAD_LspCodeActions
+{
+  //- rad: where the cursor rests
+  CFG_ID tab;
+  U64 doc_id;
+  U64 rest_off;
+  U64 rest_mark;
+  U64 rest_version;
+  U64 rest_begin_us;
+  B32 rest_asked;
+
+  //- rad: request in flight
+  RAD_LspServer *server;
+  S64 request_id;
+  U64 request_off;
+  U64 request_mark;
+  U64 request_version;
+
+  //- rad: answer (for answer_off/mark/version)
+  Arena *arena;
+  B32 answered;
+  U64 answer_off;
+  U64 answer_mark;
+  U64 answer_version;
+  RAD_LspCodeAction actions[RAD_LSP_CODE_ACTIONS_MAX];
+  U64 count;
+
+  //- rad: menu, resolve
+  B32 menu_on_answer;           // Quick Actions before the answer came: open the menu then
+  B32 menu_open_requested;
+  S64 resolve_id;
+  RAD_LspServer *resolve_server;
+  U64 resolve_doc_id;
+  U64 resolve_version;
+  U64 layout_frame;             // (scripts) the button, the menu's items
+  Rng2F32 layout_button_rect;
+  U64 layout_menu_frame;
+  Rng2F32 layout_item_rects[RAD_LSP_CODE_ACTIONS_MAX];
+  U64 layout_item_count;
+};
+
 typedef struct RAD_LspState RAD_LspState;
 struct RAD_LspState
 {
@@ -382,6 +443,7 @@ struct RAD_LspState
   RAD_LspCompletion completion;
   RAD_LspResolve resolve;
   RAD_LspSignature signature;
+  RAD_LspCodeActions code_actions;
 };
 
 ////////////////////////////////
@@ -463,6 +525,16 @@ internal void rad_document_apply_edits(RAD_Document *doc, U64 version, RAD_LspTe
 internal B32 rad_lsp_signature_request(CFG_Node *window, CFG_Node *tab, RAD_Document *doc, U64 off, U8 trigger_char);
 internal void rad_lsp_take_signature(RAD_LspServer *s, LSP_Message *m);
 internal void rad_lsp_signature_close(void);
+
+////////////////////////////////
+//~ rad: Code Action Functions
+
+internal B32 rad_lsp_code_actions_request(CFG_Node *tab, RAD_Document *doc, U64 cursor, U64 mark);
+internal void rad_lsp_take_code_actions(RAD_LspServer *s, LSP_Message *m);
+internal void rad_lsp_code_action_apply(RAD_Document *doc, U64 idx);
+internal void rad_lsp_take_code_action_resolve(RAD_LspServer *s, LSP_Message *m);
+internal RAD_LspTextEdit rad_lsp_text_edit_from_json(Arena *arena, RAD_LspServer *s, RAD_LspSnapshot *snap, JSON_Value *edit);
+internal B32 rad_lsp_code_actions_shown(CFG_ID tab, U64 cursor, U64 mark, U64 version);
 
 ////////////////////////////////
 //~ rad: Problems Functions

@@ -342,8 +342,17 @@ tree, each with a header (title, X), no "+", no zoom button.
   below; asked again on every cursor or text change while shown; closed
   by an empty answer (outside the call), Esc, a selection. Not done:
   cycling overloads with Up/Down (Rust has none; "n of m" is shown).
-- [ ] **G4. Code actions / quick fixes** (the screwdriver in `tIHhIDuW`):
-  LSP `textDocument/codeAction`.
+- [x] **G4. Code actions / quick fixes** (the screwdriver in `tIHhIDuW`):
+  LSP `textDocument/codeAction`. Done 2026-11-04 (script
+  `lsp_code_actions`): asked where the cursor rests (0.3 s); the
+  screwdriver (a new icon, `icons/screwdriver.svg`) floats on the cursor's
+  line, in its indentation or else at the left of the line numbers'
+  column (never over text, the glyph margin being off); a click or Quick
+  Actions (Ctrl+.) opens the menu (raddbg's context menu), preferred ones
+  first; picking one resolves it (`codeAction/resolve`) and applies its
+  WorkspaceEdit, one undo step per open file. Not done: edits to files
+  that are not open (reported), file creates/renames, client commands
+  (e.g. rust-analyzer's "Run"); VS2022's preview of the change.
 - [ ] **G5. Navigation bar** under the tabs (`TN8f33D5`: type and member
   dropdowns) from `textDocument/documentSymbol`.
 - [x] **G6. Semantic token colors** from rust-analyzer (functions, macros,

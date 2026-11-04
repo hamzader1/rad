@@ -366,6 +366,9 @@ rad_lsp_server_launch(RAD_LspServer *s)
                               "\"publishDiagnostics\":{\"versionSupport\":true},"
                               "\"hover\":{\"contentFormat\":[\"markdown\",\"plaintext\"]},"
                               "\"definition\":{\"linkSupport\":false},"
+                              "\"codeAction\":{\"codeActionLiteralSupport\":{\"codeActionKind\":{\"valueSet\":[\"\",\"quickfix\",\"refactor\",\"refactor.extract\","
+                              "\"refactor.inline\",\"refactor.rewrite\",\"source\",\"source.organizeImports\"]}},"
+                              "\"resolveSupport\":{\"properties\":[\"edit\"]},\"dataSupport\":true,\"isPreferredSupport\":true},"
                               "\"semanticTokens\":{\"requests\":{\"full\":true},\"formats\":[\"relative\"],"
                               "\"tokenTypes\":[\"namespace\",\"type\",\"class\",\"enum\",\"interface\",\"struct\",\"typeParameter\",\"parameter\",\"variable\","
                               "\"property\",\"enumMember\",\"function\",\"method\",\"macro\",\"keyword\",\"comment\",\"string\",\"number\",\"operator\",\"decorator\"],"
@@ -438,6 +441,13 @@ rad_lsp_server_restart(RAD_LspServer *s)
   if(rad_lsp->signature.server == s)
   {
     rad_lsp_signature_close();
+  }
+  if(rad_lsp->code_actions.server == s || rad_lsp->code_actions.resolve_server == s)
+  {
+    rad_lsp->code_actions.request_id = 0;
+    rad_lsp->code_actions.resolve_id = 0;
+    rad_lsp->code_actions.answered = 0;
+    rad_lsp->code_actions.rest_asked = 0;
   }
   s->restarts += 1;
   rad_lsp_server_launch(s);
@@ -816,6 +826,14 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
       {
         rad_lsp_take_signature(s, &m);
       }
+      else if(rad_lsp->code_actions.request_id != 0 && rad_lsp->code_actions.server == s && m.id == rad_lsp->code_actions.request_id)
+      {
+        rad_lsp_take_code_actions(s, &m);
+      }
+      else if(rad_lsp->code_actions.resolve_id != 0 && rad_lsp->code_actions.resolve_server == s && m.id == rad_lsp->code_actions.resolve_id)
+      {
+        rad_lsp_take_code_action_resolve(s, &m);
+      }
       else if(rad_lsp_take_semantic_tokens(s, &m))
       {
       }
@@ -1012,6 +1030,241 @@ rad_lsp_take_signature(RAD_LspServer *s, LSP_Message *m)
     sh->answered = 1;
   }
   rad_request_frame();
+}
+
+////////////////////////////////
+//~ rad: Code Actions (not in raddbg)
+
+internal B32
+rad_lsp_code_actions_request(CFG_Node *tab, RAD_Document *doc, U64 cursor, U64 mark)
+{
+  // NOTE(rad): the actions for the selection (the cursor if none); the
+  // context has no diagnostics: rust-analyzer finds the fixes of its own
+  // diagnostics in the range itself
+  Temp scratch = scratch_begin(0, 0);
+  RAD_LspCodeActions *ca = &rad_lsp->code_actions;
+  RAD_LspServer *s = 0;
+  U64 min = Min(cursor, mark);
+  U64 max = Max(cursor, mark);
+  String8 params_min = rad_lsp_position_params(scratch.arena, doc, min, &s);
+  B32 result = (params_min.size != 0);
+  if(result)
+  {
+    RAD_LspDoc *ld = rad_lsp_doc_from_id(s, doc->id);
+    RAD_LspSnapshot *snap = rad_lsp_snapshot_from_version(ld, doc->buffer->version);
+    S64 l0 = 0, c0 = 0, l1 = 0, c1 = 0;
+    rad_lsp_position_from_offset(snap->text, min, s->utf8_positions, &l0, &c0);
+    rad_lsp_position_from_offset(snap->text, max, s->utf8_positions, &l1, &c1);
+    String8 body = push_str8f(scratch.arena,
+                              "{\"textDocument\":{\"uri\":%S},"
+                              "\"range\":{\"start\":{\"line\":%I64d,\"character\":%I64d},\"end\":{\"line\":%I64d,\"character\":%I64d}},"
+                              "\"context\":{\"diagnostics\":[],\"triggerKind\":2}}",
+                              json_escaped_from_str8(scratch.arena, ld->uri), l0, c0, l1, c1);
+    ca->server = s;
+    ca->request_id = lsp_client_request(s->client, str8_lit("textDocument/codeAction"), body);
+    ca->request_off = cursor;
+    ca->request_mark = mark;
+    ca->request_version = doc->buffer->version;
+  }
+  scratch_end(scratch);
+  return result;
+}
+
+internal void
+rad_lsp_take_code_actions(RAD_LspServer *s, LSP_Message *m)
+{
+  // NOTE(rad): [CodeAction | Command]; Commands and actions with a command
+  // but no edit to resolve are left out (rad runs no client commands)
+  RAD_LspCodeActions *ca = &rad_lsp->code_actions;
+  ca->request_id = 0;
+  if(ca->arena == 0)
+  {
+    ca->arena = arena_alloc();
+  }
+  arena_clear(ca->arena);
+  ca->count = 0;
+  for(JSON_Value *a = m->result->first; m->result->kind == JSON_ValueKind_Array && a != &json_value_nil && ca->count < ArrayCount(ca->actions); a = a->next)
+  {
+    String8 title = json_string_from_value(json_value_from_key(a, str8_lit("title")));
+    JSON_Value *edit = json_value_from_key(a, str8_lit("edit"));
+    JSON_Value *data = json_value_from_key(a, str8_lit("data"));
+    B32 disabled = !json_value_is_nil(json_value_from_key(a, str8_lit("disabled")));
+    if(title.size == 0 || disabled || (json_value_is_nil(edit) && json_value_is_nil(data)))
+    {
+      continue;
+    }
+    RAD_LspCodeAction *action = &ca->actions[ca->count];
+    action->title = push_str8_copy(ca->arena, title);
+    action->kind = push_str8_copy(ca->arena, json_string_from_value(json_value_from_key(a, str8_lit("kind"))));
+    action->preferred = json_b32_from_value(json_value_from_key(a, str8_lit("isPreferred")));
+    action->json = json_text_from_value(ca->arena, a);
+    ca->count += 1;
+  }
+
+  //- rad: preferred ones (quick fixes) first, else the server's order
+  {
+    RAD_LspCodeAction sorted[RAD_LSP_CODE_ACTIONS_MAX];
+    U64 n = 0;
+    for(U64 pass = 0; pass < 2; pass += 1)
+    {
+      for EachIndex(idx, ca->count)
+      {
+        if(!!ca->actions[idx].preferred == (pass == 0))
+        {
+          sorted[n] = ca->actions[idx];
+          n += 1;
+        }
+      }
+    }
+    MemoryCopy(ca->actions, sorted, sizeof(sorted[0])*n);
+  }
+  ca->answered = 1;
+  ca->answer_off = ca->request_off;
+  ca->answer_mark = ca->request_mark;
+  ca->answer_version = ca->request_version;
+  rad_request_frame();
+}
+
+internal B32
+rad_lsp_code_actions_shown(CFG_ID tab, U64 cursor, U64 mark, U64 version)
+{
+  RAD_LspCodeActions *ca = &rad_lsp->code_actions;
+  B32 result = (ca->answered && ca->count != 0 && ca->tab == tab &&
+                ca->answer_off == cursor && ca->answer_mark == mark && ca->answer_version == version);
+  return result;
+}
+
+internal B32
+rad_lsp_apply_workspace_edit(RAD_LspServer *s, JSON_Value *edit, U64 *skipped_out)
+{
+  // NOTE(rad): WorkspaceEdit: documentChanges [TextDocumentEdit {textDocument
+  // {uri, version}, edits}] or changes {uri: [TextEdit]}; each open document
+  // gets its edits in one undo step, from the text of the version named (or
+  // the last one sent); others are counted in `skipped_out`
+  Temp scratch = scratch_begin(0, 0);
+  B32 applied = 0;
+  U64 skipped = 0;
+  typedef struct DocEdits DocEdits;
+  struct DocEdits
+  {
+    DocEdits *next;
+    String8 uri;
+    S64 version;                // -1: not named
+    JSON_Value *edits;
+  };
+  DocEdits *first = 0;
+  DocEdits *last = 0;
+  JSON_Value *doc_changes = json_value_from_key(edit, str8_lit("documentChanges"));
+  for(JSON_Value *dc = doc_changes->first; doc_changes->kind == JSON_ValueKind_Array && dc != &json_value_nil; dc = dc->next)
+  {
+    JSON_Value *td = json_value_from_key(dc, str8_lit("textDocument"));
+    if(td->kind != JSON_ValueKind_Object)
+    {
+      skipped += 1;   // a file create / rename / delete
+      continue;
+    }
+    DocEdits *de = push_array(scratch.arena, DocEdits, 1);
+    de->uri = json_string_from_value(json_value_from_key(td, str8_lit("uri")));
+    JSON_Value *version = json_value_from_key(td, str8_lit("version"));
+    de->version = (version->kind == JSON_ValueKind_Number ? json_s64_from_value(version) : -1);
+    de->edits = json_value_from_key(dc, str8_lit("edits"));
+    SLLQueuePush(first, last, de);
+  }
+  JSON_Value *changes = json_value_from_key(edit, str8_lit("changes"));
+  for(JSON_Value *c = changes->first; changes->kind == JSON_ValueKind_Object && c != &json_value_nil; c = c->next)
+  {
+    DocEdits *de = push_array(scratch.arena, DocEdits, 1);
+    de->uri = c->string;
+    de->version = -1;
+    de->edits = c->first;
+    SLLQueuePush(first, last, de);
+  }
+  for(DocEdits *de = first; de != 0; de = de->next)
+  {
+    String8 path = rad_lsp_path_from_uri(scratch.arena, de->uri);
+    RAD_Document *doc = rad_document_lookup(path);
+    RAD_LspDoc *ld = (doc != 0 ? rad_lsp_doc_from_id(s, doc->id) : 0);
+    U64 version = (ld != 0 ? (de->version >= 0 ? (U64)de->version : ld->sent_version) : 0);
+    RAD_LspSnapshot *snap = (ld != 0 ? rad_lsp_snapshot_from_version(ld, version) : 0);
+    if(snap == 0 || de->edits->kind != JSON_ValueKind_Array)
+    {
+      skipped += 1;
+      continue;
+    }
+    RAD_LspTextEdit *edits = push_array(scratch.arena, RAD_LspTextEdit, de->edits->child_count);
+    U64 count = 0;
+    for(JSON_Value *e = de->edits->first; e != &json_value_nil; e = e->next)
+    {
+      edits[count] = rad_lsp_text_edit_from_json(scratch.arena, s, snap, e);
+      count += 1;
+    }
+    rad_document_apply_edits(doc, version, edits, count, 0);
+    applied = 1;
+  }
+  if(skipped_out != 0)
+  {
+    *skipped_out = skipped;
+  }
+  scratch_end(scratch);
+  return applied;
+}
+
+internal void
+rad_lsp_code_action_apply(RAD_Document *doc, U64 idx)
+{
+  // NOTE(rad): the action's edit; none yet -> codeAction/resolve (applied
+  // when it comes)
+  Temp scratch = scratch_begin(0, 0);
+  RAD_LspCodeActions *ca = &rad_lsp->code_actions;
+  RAD_LspServer *s = ca->server;
+  if(idx < ca->count && s != 0 && s->state == RAD_LspServerState_Ready && s->client != 0)
+  {
+    RAD_LspCodeAction *action = &ca->actions[idx];
+    JSON_Value *a = json_parse(scratch.arena, action->json).root;
+    JSON_Value *edit = json_value_from_key(a, str8_lit("edit"));
+    if(edit->kind == JSON_ValueKind_Object)
+    {
+      U64 skipped = 0;
+      rad_lsp_apply_workspace_edit(s, edit, &skipped);
+      if(skipped != 0)
+      {
+        rad_set_error(push_str8f(scratch.arena, "%S: %I64u change(s) to files that are not open were not made.", action->title, skipped));
+      }
+    }
+    else
+    {
+      ca->resolve_server = s;
+      ca->resolve_doc_id = doc->id;
+      ca->resolve_version = doc->buffer->version;
+      ca->resolve_id = lsp_client_request(s->client, str8_lit("codeAction/resolve"), action->json);
+    }
+    ca->answered = 0;
+  }
+  scratch_end(scratch);
+}
+
+internal void
+rad_lsp_take_code_action_resolve(RAD_LspServer *s, LSP_Message *m)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RAD_LspCodeActions *ca = &rad_lsp->code_actions;
+  ca->resolve_id = 0;
+  JSON_Value *edit = json_value_from_key(m->result, str8_lit("edit"));
+  if(edit->kind == JSON_ValueKind_Object)
+  {
+    U64 skipped = 0;
+    rad_lsp_apply_workspace_edit(s, edit, &skipped);
+    if(skipped != 0)
+    {
+      rad_set_error(push_str8f(scratch.arena, "%I64u change(s) to files that are not open were not made.", skipped));
+    }
+    rad_request_frame();
+  }
+  else
+  {
+    rad_set_error(str8_lit("The language server gave no change for this action."));
+  }
+  scratch_end(scratch);
 }
 
 ////////////////////////////////

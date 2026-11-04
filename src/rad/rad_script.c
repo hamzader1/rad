@@ -379,6 +379,35 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       result = 1;
     }
   }
+  else if(str8_match(name, str8_lit("code_actions_count"), 0) || str8_match(name, str8_lit("code_action"), 0) ||
+          str8_match(name, str8_lit("code_actions_shown"), 0))
+  {
+    // rad: the code actions answer: how many; the title of action n (1-based);
+    // 1 if the button is shown (last frame)
+    RAD_LspCodeActions *ca = &rad_lsp->code_actions;
+    S64 n = 0;
+    if(str8_match(name, str8_lit("code_actions_count"), 0))
+    {
+      value = push_str8f(arena, "%I64u", ca->answered ? ca->count : 0);
+      result = 1;
+    }
+    else if(str8_match(name, str8_lit("code_actions_shown"), 0))
+    {
+      // rad: and laid out (a new button has its rect from the next frame)
+      value = push_str8f(arena, "%i", (int)(ca->layout_frame+1 >= rad_state->frame_index && ca->layout_button_rect.x1 > ca->layout_button_rect.x0));
+      result = 1;
+    }
+    else if(args_count >= 2 && try_s64_from_str8_c_rules(args[1], &n) && 1 <= n && (U64)n <= ca->count)
+    {
+      value = push_str8_copy(arena, ca->actions[n-1].title);
+      result = 1;
+    }
+    else
+    {
+      *error_out = str8_lit("code_action: needs <n> (1 .. code_actions_count)");
+      result = 0;
+    }
+  }
   else if(str8_match(name, str8_lit("signature_open"), 0) || str8_match(name, str8_lit("signature_label"), 0) ||
           str8_match(name, str8_lit("signature_param"), 0))
   {
@@ -1312,6 +1341,35 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
         args_used = 3;
         result = 1;
       }
+    }
+  }
+
+  //- rad: the code actions button; item n (1-based) of its menu
+  else if(str8_match(kind, str8_lit("code_actions_button"), 0) || str8_match(kind, str8_lit("code_action_item"), 0))
+  {
+    RAD_LspCodeActions *ca = &rad_lsp->code_actions;
+    S64 n = 0;
+    Rng2F32 rect = {0};
+    U64 used = 1;
+    if(str8_match(kind, str8_lit("code_actions_button"), 0) && ca->layout_frame+1 >= rad_state->frame_index)
+    {
+      rect = ca->layout_button_rect;
+    }
+    else if(str8_match(kind, str8_lit("code_action_item"), 0) && args_count >= 2 && try_s64_from_str8_c_rules(args[1], &n) &&
+            1 <= n && (U64)n <= ca->layout_item_count && ca->layout_menu_frame+1 >= rad_state->frame_index)
+    {
+      rect = ca->layout_item_rects[n-1];
+      used = 2;
+    }
+    if(rect.x1 <= rect.x0)
+    {
+      *error_out = push_str8f(arena, "%S: not visible", kind);
+    }
+    else
+    {
+      pos = center_2f32(rect);
+      args_used = used;
+      result = 1;
     }
   }
 

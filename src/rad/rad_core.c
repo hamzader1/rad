@@ -5857,6 +5857,18 @@ rad_exec_cmd(RAD_Cmd *cmd)
       rad_lsp_restart_all();
     }break;
 
+    //- rad: language server: the code actions menu at the cursor (the tab's
+    // code view asks / opens it when built)
+    case RAD_CmdKind_QuickActions:
+    {
+      RAD_Document *doc = rad_document_from_tab(tab_cfg);
+      if(doc != 0)
+      {
+        rad_view_state_from_cfg(tab_cfg)->cv.quick_actions = 1;
+        rad_request_frame();
+      }
+    }break;
+
     //- rad: language server: signature help at the cursor (the tab's code
     // view asks when built)
     case RAD_CmdKind_ParameterInfo:

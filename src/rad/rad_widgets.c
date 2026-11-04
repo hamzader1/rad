@@ -1228,6 +1228,48 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
   }
 
   //////////////////////////////
+  //- rad: not in raddbg: the code actions button (VS2022's screwdriver),
+  // floating on its row (built before the text: on top): in the line's
+  // indentation when it is wide enough, else at the left edge of the line
+  // numbers' column (right-aligned numbers leave it free), so it never
+  // covers text
+  //
+  if(params->action_row != 0 && params->action_row-1 <= (U64)dim_1s64(params->line_num_range)) UI_Parent(top_container_box) UI_Focus(UI_FocusKind_Off)
+    UI_TagF("floating")
+  {
+    F32 size_px = params->line_height_px;
+    String8 line_text = params->line_text[params->action_row-1];
+    U64 indent_size = 0;
+    for(;indent_size < line_text.size && (line_text.str[indent_size] == ' ' || line_text.str[indent_size] == '	'); indent_size += 1);
+    F32 indent_px = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, str8_prefix(line_text, indent_size)).x;
+    F32 x = (indent_px >= size_px + line_num_padding_px*0.5f ?
+             params->margin_float_off_px + margins_width_px + params->line_num_width_px + line_num_padding_px*0.25f :
+             params->margin_float_off_px + margins_width_px + 1.f);
+    ui_set_next_fixed_x(floor_f32(x));
+    ui_set_next_fixed_y((params->action_row-1)*params->line_height_px);
+    ui_set_next_pref_width(ui_px(size_px, 1.f));
+    ui_set_next_pref_height(ui_px(size_px, 1.f));
+    UI_Box *button = &ui_nil_box;
+    RAD_Font(RAD_FontSlot_Icons)
+      UI_FontSize(params->font_size*0.85f)
+      UI_TextAlignment(UI_TextAlign_Center)
+      UI_CornerRadius(params->font_size*0.25f)
+    {
+      button = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|
+                                         UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|UI_BoxFlag_DrawDropShadow,
+                                         "%S###code_actions_button", rad_icon_kind_text_table[RAD_IconKind_Screwdriver]);
+    }
+    UI_Signal sig = ui_signal_from_box(button);
+    result.action_clicked = ui_pressed(sig);
+    result.action_button_key = button->key;
+    result.action_button_rect = button->rect;
+    if(ui_hovering(sig) && !ui_any_ctx_menu_is_open()) UI_Tooltip RAD_Font(RAD_FontSlot_Main) UI_FontSize(ui_bottom_font_size())
+    {
+      ui_label(str8_lit("Show potential fixes (Ctrl+.)"));
+    }
+  }
+
+  //////////////////////////////
   //- rad: not in raddbg: fold column (right part of the line numbers' column):
   // a down chevron at the start of a foldable range while the mouse is over
   // the code, a right chevron on a folded line (VS2022)

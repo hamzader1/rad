@@ -90,6 +90,8 @@
 //   tool_close <explorer|bottom> a tool window's X button
 //   explorer_filter             the explorer's search filter row
 //   fold <line>                 the editor's fold chevron of a visible line
+//   code_actions_button         the code actions button (screwdriver)
+//   code_action_item <n>        item n (1-based) of its menu
 //   panel_site <n> <site>       editor panel n (tree order, tool windows skipped):
 //                               a docking compass site (center up down left
 //                               right), an edge's middle (edge_left edge_right
@@ -146,6 +148,9 @@
 //   editor_font_size            the editor view's font size (code font setting)
 //   panel_tabs <n>              editor panel n's tab names, space-separated
 //   drag_active                 1 while a tab or file is being dragged
+//   code_actions_count          code actions in the last answer
+//   code_action <n>             the title of action n (1-based)
+//   code_actions_shown          1 if the code actions button is shown
 //   signature_open              1 if signature help (Parameter Info) is shown
 //   signature_label             its signature; signature_param: the active parameter
 //   semantic_count              the editor document's semantic tokens (rust-analyzer)
