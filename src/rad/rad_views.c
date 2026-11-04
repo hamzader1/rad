@@ -247,6 +247,10 @@ rad_document_save(RAD_Document *doc)
     Access *access = access_open();
     result = tb_buffer_save(doc->buffer, access, doc->path);
     access_close(access);
+    if(result)
+    {
+      rad_lsp_document_saved(doc);
+    }
     if(!result)
     {
       log_user_errorf("Could not save \"%S\".", doc->path);
@@ -813,7 +817,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     // NOTE(rad): the theme has no warning color; `thread_0` is the yellow /
     // orange of every preset (rustc prints warnings in yellow).
     RAD_Document *doc = rad_document_from_tab(tab);
-    if(doc != 0 && rad_cargo->diags_count != 0 && text_is_ready)
+    if(doc != 0 && rad_problems->count != 0 && text_is_ready)
     {
       Vec4F32 error_line_color = {0};
       Vec4F32 error_text_color = {0};
@@ -837,9 +841,9 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       code_slice_params.line_annotations = push_array(scratch.arena, DR_FStrList, visible_line_count);
       RAD_CodeSliceUnderline *last_underline = 0;
       DR_FStrParams fstr_params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), weak_text_color, code_font_size};
-      for EachIndex(diag_idx, rad_cargo->diags_count)
+      for EachIndex(diag_idx, rad_problems->count)
       {
-        RAD_Diagnostic *diag = rad_cargo->diags[diag_idx];
+        RAD_Diagnostic *diag = rad_problems->diags[diag_idx];
         if(!str8_match(diag->path, doc->path, StringMatchFlag_CaseInsensitive|StringMatchFlag_SlashInsensitive))
         {
           continue;
@@ -1030,7 +1034,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     // rad: not in raddbg: a column too (Go To Location: 1-based, characters)
     if(column_num > 1)
     {
-      cv->cursor = cv->mark = rad_offset_from_line_column(&text_patched, line_num, column_num);
+      cv->cursor = cv->mark = rad_offset_from_line_column(&text_patched, line_num, column_num, 0);
       cv->preferred_column = (S64)(cv->cursor - range.min);
     }
     cv->center_cursor = !cv->force_contain_only && (!cv->contain_cursor || (line_num < target_visible_line_num_range.min+4 || target_visible_line_num_range.max-4 < line_num));
@@ -2064,11 +2068,11 @@ rad_goto_diagnostic(CFG_Node *window, U64 diag_num)
   // NOTE(rad): selects the diagnostic (Problems view, Next/Previous Error) and
   // goes to it. In an open document it is where it moved with the edits made
   // since the build; otherwise at the reported line and column.
-  RAD_CargoState *c = rad_cargo;
-  if(1 <= diag_num && diag_num <= c->diags_count)
+  RAD_Problems *problems = rad_problems;
+  if(1 <= diag_num && diag_num <= problems->count)
   {
     Temp scratch = scratch_begin(0, 0);
-    RAD_Diagnostic *diag = c->diags[diag_num-1];
+    RAD_Diagnostic *diag = problems->diags[diag_num-1];
     S64 line = diag->line;
     S64 column = diag->column;
     RAD_Document *doc = rad_document_lookup(diag->path);
@@ -2083,7 +2087,7 @@ rad_goto_diagnostic(CFG_Node *window, U64 diag_num)
       }
       access_close(access);
     }
-    c->diag_cursor = diag_num;
+    rad_problems_select(diag_num);
     rad_cmd(RAD_CmdKind_GoToLocation, .window = window->id, .file_path = diag->path, .line_num = line, .column_num = column);
     scratch_end(scratch);
   }
@@ -2097,9 +2101,8 @@ rad_problems_view_ui(CFG_Node *tab, Rng2F32 rect)
   Temp scratch = scratch_begin(0, 0);
   RAD_ViewState *vs = rad_view_state_from_cfg(tab);
   RAD_ProblemsState *pr = &vs->pr;
-  RAD_CargoState *c = rad_cargo;
-  S64 rows_count = (S64)c->diags_count;
-  String8 root = rad_cargo_workspace_root(scratch.arena);
+  RAD_Problems *problems = rad_problems;
+  S64 rows_count = (S64)problems->count;
   U64 goto_num = 0;
 
   //////////////////////////////
@@ -2116,9 +2119,11 @@ rad_problems_view_ui(CFG_Node *tab, Rng2F32 rect)
   // run) -> scroll it into view
   //
   {
-    S64 shared = (S64)Min(c->diag_cursor, (U64)rows_count);
-    B32 moved_outside = (pr->cursor.y != shared || pr->diags_gen_seen != c->diags_gen);
-    pr->diags_gen_seen = c->diags_gen;
+    // NOTE(rad): the list is rebuilt whenever a server publishes (while
+    // typing): only a change of the selected row counts
+    S64 shared = (S64)Min(problems->cursor, (U64)rows_count);
+    B32 moved_outside = (pr->cursor.y != shared);
+    pr->diags_gen_seen = problems->gen;
     pr->cursor = pr->mark = v2s64(0, shared);
     if(moved_outside && shared != 0)
     {
@@ -2190,7 +2195,7 @@ rad_problems_view_ui(CFG_Node *tab, Rng2F32 rect)
       UI_Parent(table)
         for(S64 row_idx = visible_row_rng.min; row_idx <= visible_row_rng.max && row_idx < rows_count; row_idx += 1)
       {
-        RAD_Diagnostic *diag = c->diags[row_idx];
+        RAD_Diagnostic *diag = problems->diags[row_idx];
         B32 row_selected = (pr->cursor.y == row_idx+1);
 
         //- rad: row text: [icon]  message  code  path:line:column
@@ -2214,12 +2219,7 @@ rad_problems_view_ui(CFG_Node *tab, Rng2F32 rect)
           {
             icon_color = weak_color;
           }
-          String8 path = diag->path;
-          if(root.size != 0 && path.size > root.size+1 &&
-             str8_match(str8_prefix(path, root.size), root, StringMatchFlag_CaseInsensitive|StringMatchFlag_SlashInsensitive))
-          {
-            path = str8_skip(path, root.size+1);
-          }
+          String8 path = rad_problem_display_path(scratch.arena, diag);
           DR_FStrParams params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), text_color, ui_top_font_size()};
           dr_fstrs_push_new(scratch.arena, &fstrs, &params, rad_icon_kind_text_table[icon_kind],
                             .font = rad_font_from_slot(RAD_FontSlot_Icons),
@@ -2294,7 +2294,10 @@ rad_problems_view_ui(CFG_Node *tab, Rng2F32 rect)
   //////////////////////////////
   //- rad: selection -> the shared position; deferred go-to
   //
-  c->diag_cursor = (U64)Clamp(0, pr->cursor.y, rows_count);
+  if(problems->cursor != (U64)Clamp(0, pr->cursor.y, rows_count))
+  {
+    rad_problems_select((U64)Clamp(0, pr->cursor.y, rows_count));
+  }
   if(goto_num != 0)
   {
     rad_goto_diagnostic(cfg_window_from_cfg(tab), goto_num);

@@ -1,0 +1,50 @@
+#! timeout: 300
+# rust-analyzer (needs `rustup component add rust-analyzer`): opening a .rs
+# file of a Cargo workspace starts it; its diagnostics (its own, and those
+# of the `cargo check` it runs) show in Problems and in the editor without
+# any build here. They follow edits; fixing the error and saving clears it.
+# Slow: rust-analyzer indexes the standard library first (~30 s).
+
+lsp on
+open_folder ../fixtures/cargo_errors
+wait_idle
+open ../fixtures/cargo_errors/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 diag_count == 2
+expect diag 1 == "error src/main.rs:8:29 cannot find value `reslt` in this scope"
+expect diag 2 == "warning src/main.rs:2:9 unused variable: `unused`"
+expect line_diag 8 == "error"
+expect line_diag 2 == "warning"
+expect cargo_status == "none"
+
+# they follow edits at once (anchored in the text of the version they were
+# computed for), and stay right when the server answers for the new text
+key ctrl+home
+key return
+wait_idle
+expect line_diag 9 == "error"
+expect line_diag 3 == "warning"
+wait 3000
+wait_until 60000 lsp_busy == 0
+expect line_diag 9 == "error"
+expect line_diag 3 == "warning"
+key ctrl+z
+wait_idle
+expect dirty == 0
+
+# F8 goes there; fix it; save -> rust-analyzer's cargo check -> only the
+# warning is left
+key f8
+wait_idle
+expect cursor_line == 8
+expect cursor_col == 29
+key delete 5
+text "result"
+key ctrl+s
+wait_idle
+expect dirty == 0
+wait_until 120000 diag_count == 1
+expect diag 1 == "warning src/main.rs:2:9 unused variable: `unused`"
+expect line_diag 8 == ""
+quit

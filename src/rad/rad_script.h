@@ -50,6 +50,12 @@
 //                               animations and compaction done); default 10 s
 //   wait_cargo [timeout_ms]     until no cargo command runs or waits to; 120 s
 //   wait_output "<text>" [timeout_ms]  until the cargo output contains it; 120 s
+//   wait_until <timeout_ms> <field> <op> <value>  until the check passes (one
+//                               PASS), or FAIL at the timeout; e.g. for a
+//                               language server: wait_until 90000 diag_count == 2
+//   lsp on|off                  language servers (rust-analyzer): off by default in
+//                               scripts (slow to start; a script that does not test
+//                               them stays deterministic)
 //   terminal visible|hidden     where Run puts the program: by default a hidden
 //                               terminal whose output goes to the Output tab;
 //                               `visible` opens a real window (manual checks)
@@ -109,7 +115,12 @@
 //                               (exit code != 0), finished
 //   cargo_cmd cargo_exit_code   last cargo command ("cargo build") and its exit code
 //   cargo_profile               "debug" or "release" (the configuration box)
-//   diag_count diag_errors diag_warnings   diagnostics of the last command
+//   lsp_state                   the editor file's language server: none, starting,
+//                               ready, ended (none also when rust-analyzer is missing)
+//   lsp_busy                    1 while it reports progress or is not quiescent
+//   lsp_status                  its bottom bar text ("" when idle)
+//   diag_count diag_errors diag_warnings   problems: the last cargo command's
+//                               diagnostics and the language servers', merged
 //   diag <n>                    "<kind> <path>:<line>:<col> <message>" (path
 //                               relative to the workspace root)
 //   diag_selected               Next/Previous Error position (= Problems selection)
@@ -180,6 +191,7 @@ typedef enum RAD_ScriptWaitKind
   RAD_ScriptWaitKind_Woken,
   RAD_ScriptWaitKind_Cargo,
   RAD_ScriptWaitKind_Output,
+  RAD_ScriptWaitKind_Until,
 }
 RAD_ScriptWaitKind;
 
@@ -213,6 +225,7 @@ struct RAD_ScriptState
   U8 wait_text_buffer[256];
   U64 wait_text_size;
   B32 terminal_visible;
+  RAD_ScriptLine *wait_line;
 
   //- rad: queued input steps (one per frame)
   Arena *input_arena;

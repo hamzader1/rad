@@ -66,6 +66,7 @@ struct RAD_Diagnostic
   S64 column;        // 1-based, in characters (rustc's convention)
   S64 end_line;
   S64 end_column;
+  B32 column_in_bytes; // columns count UTF-8 bytes (language servers), not characters
   String8 code;      // "E0425", "unused_variables", or empty
   String8 message;   // "cannot find value `x` in this scope"
   String8 label;     // the primary span's label, or empty
@@ -160,7 +161,6 @@ struct RAD_CargoState
   U64 error_count;
   U64 warning_count;
   U64 diags_gen;
-  U64 diag_cursor;                // 1-based; Next/Previous Error position
 
   //- rad: terminal windows of programs that have ended, waiting for a key
   // (their groups stay open; closing one closes its window). runner thread,
@@ -180,7 +180,7 @@ global RAD_CargoState *rad_cargo = 0;
 internal String8 rad_diagnostic_kind_name(RAD_DiagnosticKind kind);
 internal RAD_DiagnosticKind rad_diagnostic_kind_from_level(String8 level);
 internal RAD_Diagnostic *rad_diagnostic_from_cargo_message(Arena *arena, JSON_Value *message, String8 workspace_root);
-internal U64 rad_offset_from_line_column(TXT_Patched *patched, S64 line, S64 column);
+internal U64 rad_offset_from_line_column(TXT_Patched *patched, S64 line, S64 column, B32 column_in_bytes);
 internal void rad_line_column_from_offset(TXT_Patched *patched, U64 off, S64 *line_out, S64 *column_out);
 internal Rng1U64 rad_diagnostic_range_from_document(RAD_Diagnostic *diag, struct RAD_Document *doc, TXT_Patched *patched);
 internal B32 rad_location_from_text_line(Arena *arena, String8 text, String8 root, String8 *path_out, S64 *line_out, S64 *column_out);

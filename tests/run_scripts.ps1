@@ -27,15 +27,19 @@ foreach ($script in $scripts) {
   Copy-Item -Recurse (Join-Path $tests "scripts") $dir
   $results = Join-Path $dir "results.txt"
   $argline = "--script:`"$dir\scripts\$($script.Name)`" --script_out:`"$results`" --logs:`"$dir\logs`""
-  # optional first line "#! args: <more args>"; {work} = the shared work folder
-  # (scripts run in name order, so e.g. session_1 can leave a file for session_2)
-  $first = Get-Content $script.FullName -TotalCount 1
-  if ($first -match '^#!\s*args:\s*(.*)$') { $argline += " " + $Matches[1].Replace("{work}", $work) }
+  # optional header lines (first 5 lines): "#! args: <more args>"; {work} =
+  # the shared work folder (scripts run in name order, so e.g. session_1 can
+  # leave a file for session_2); "#! timeout: <seconds>" (default -TimeoutSec)
+  $limit = $TimeoutSec
+  foreach ($head in (Get-Content $script.FullName -TotalCount 5)) {
+    if ($head -match '^#!\s*args:\s*(.*)$') { $argline += " " + $Matches[1].Replace("{work}", $work) }
+    if ($head -match '^#!\s*timeout:\s*(\d+)') { $limit = [int]$Matches[1] }
+  }
 
   # run, with a time limit
   $sw = [Diagnostics.Stopwatch]::StartNew()
   $p = Start-Process -FilePath $Exe -ArgumentList $argline -PassThru
-  $exited = $p.WaitForExit($TimeoutSec * 1000)
+  $exited = $p.WaitForExit($limit * 1000)
   if (-not $exited) { Stop-Process -Id $p.Id -Force }
   $seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1)
 
@@ -45,7 +49,7 @@ foreach ($script in $scripts) {
   $ok = $exited -and ($done -match '^DONE pass \d+ fail 0 error 0$')
   $status = if ($ok) { "OK  " } else { "FAIL" }
   $summary = if ($done) { $done.Substring(5) } else { "no DONE line" }
-  if (-not $exited) { $summary += ", did not exit within $TimeoutSec s (stopped)" }
+  if (-not $exited) { $summary += ", did not exit within $limit s (stopped)" }
   Write-Output ("{0} {1} ({2}, {3} s)" -f $status, $script.BaseName, $summary, $seconds)
   foreach ($line in $lines) {
     if ($line -like 'FAIL *' -or $line -like 'ERROR *' -or $line -like 'MEASURE *' -or $line -like 'PRINT *') {

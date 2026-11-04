@@ -32,7 +32,7 @@ optimized build in `build\release\rad.exe` at the end of every milestone.
 | 6. Editor essentials                 | Done. 13 scripts, 210 checks, all pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 7. Rust syntax highlighting          | Done. Rust lexing in the `text` layer (see below, `docs/notes/04-syntax-highlighting.md`); 14 scripts, 242 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 8. Cargo integration                 | Done. `json` layer; cargo runner (Build, Check, Run, Test, Stop; Debug/Release), Output + Problems tabs, diagnostics in the editor, clickable locations, Run in a terminal window, top-bar run toolbar with the user's icons (see journal). 18 scripts, 368 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
-| 9. LSP client                        | Not started. |
+| 9. LSP client                        | In progress: `lsp` layer; rust-analyzer started per Cargo workspace, documents synced, diagnostics in Problems and the editor (see journal). Next: hover, go to definition, completion. |
 | 10. Remove debugger, rebrand         | Not started. |
 | 11-13. Mac foundation, Mac UI, debugging | Not started. |
 
@@ -343,6 +343,32 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-04 (milestone 9, steps 1-2: lsp layer, rust-analyzer diagnostics)
+- Installed rust-analyzer (`rustup component add rust-analyzer`; the
+  toolchain is aarch64-pc-windows-msvc). Probed it from Python first: it
+  takes UTF-8 positions, sends the first diagnostics ~20-35 s after start
+  (it indexes std on every start), tags them with the document version.
+- New layer `lsp` (`LSP_`, `src/lsp/`, base + json): Content-Length
+  framing (incremental parser), JSON-RPC messages, a client (server in a
+  job object; reader thread stdout -> inbox; writer thread outbox -> stdin).
+  rad_tests: framing in every chunk size, 3 MB bodies, broken headers.
+- `rad_lsp.c/.h`: one rust-analyzer per Cargo workspace with an open .rs
+  file (root = nearest Cargo.toml with [workspace], else the package).
+  initialize (utf-8/utf-16 positions, progress, serverStatus) ->
+  initialized; didOpen / didChange (full text, 150 ms debounce) / didSave /
+  didClose. Each sent text is kept (last 4 versions): diagnostics for
+  version V get their offsets from V's text, then the buffer's change log
+  carries them to the current text. Hints (severity 4) dropped; the first
+  line of a message is the message (rust-analyzer appends rustc's notes).
+- Problems = cargo's + the servers' diagnostics, deduplicated (rust-analyzer
+  runs `cargo check` on save too), errors first, by path/line. Problems tab,
+  F8 and the editor use it. Its selection is kept by key across rebuilds.
+- Bottom bar (right, next to the version): rust-analyzer's progress.
+- Scripts: language servers are off in script mode unless `lsp on`;
+  `wait_until <ms> <field> <op> <value>`; fields lsp_state, lsp_busy,
+  lsp_status; runner header `#! timeout: <s>`. New `lsp_diagnostics` (19).
+  19 scripts pass.
 
 ### 2026-11-03 (milestone 8 done)
 - Release build in `build\release\rad.exe`. 18 scripts, 368 checks pass on

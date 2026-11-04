@@ -5,4 +5,5 @@
 #include "rad_widgets.c"
 #include "rad_views.c"
 #include "rad_cargo.c"
+#include "rad_lsp.c"
 #include "rad_script.c"

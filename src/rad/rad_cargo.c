@@ -98,17 +98,21 @@ rad_diagnostic_from_cargo_message(Arena *arena, JSON_Value *message, String8 wor
 }
 
 internal U64
-rad_offset_from_line_column(TXT_Patched *patched, S64 line, S64 column)
+rad_offset_from_line_column(TXT_Patched *patched, S64 line, S64 column, B32 column_in_bytes)
 {
-  // NOTE(rad): 1-based line, 1-based column in characters (UTF-8 decoded);
-  // clamped to the text
+  // NOTE(rad): 1-based line, 1-based column in characters (UTF-8 decoded),
+  // or in bytes; clamped to the line
   Temp scratch = scratch_begin(0, 0);
   S64 line_count = (S64)patched->line_map.total_line_count;
   line = Clamp(1, line, Max(line_count, 1));
   Rng1U64 range = txt_range_from_line_num(&patched->line_map, (U64)line);
   String8 text = memory_map_data_from_range(scratch.arena, &patched->memory_map, range);
   U64 off = 0;
-  for(S64 c = 1; c < column && off < text.size; c += 1)
+  if(column_in_bytes)
+  {
+    off = (U64)Max(column - 1, 0);
+  }
+  for(S64 c = 1; !column_in_bytes && c < column && off < text.size; c += 1)
   {
     UnicodeDecode decode = utf8_decode(text.str + off, text.size - off);
     off += Max(decode.inc, 1);
@@ -140,8 +144,8 @@ rad_diagnostic_range_from_document(RAD_Diagnostic *diag, RAD_Document *doc, TXT_
   }
   if(!mapped)
   {
-    U64 min = rad_offset_from_line_column(patched, diag->line, diag->column);
-    U64 max = rad_offset_from_line_column(patched, diag->end_line, diag->end_column);
+    U64 min = rad_offset_from_line_column(patched, diag->line, diag->column, diag->column_in_bytes);
+    U64 max = rad_offset_from_line_column(patched, diag->end_line, diag->end_column, diag->column_in_bytes);
     diag->doc_id = doc->id;
     diag->doc_version = buffer->version;
     diag->doc_range = r1u64(min, Max(min, max));
@@ -974,8 +978,9 @@ rad_cargo_start(RAD_CargoCmdKind kind, CFG_Node *window)
     c->diags_cap = 0;
     c->error_count = 0;
     c->warning_count = 0;
-    c->diag_cursor = 0;
     c->diags_gen += 1;
+    rad_problems_select(0);
+    rad_problems_tick();
     rad_cargo_clear_output();
 
     // rad: the run

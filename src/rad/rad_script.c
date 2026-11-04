@@ -268,16 +268,30 @@ rad_script_diag_string(Arena *arena, RAD_Diagnostic *diag)
 {
   // NOTE(rad): "<kind> <path relative to the workspace root>:<line>:<col> <message>"
   Temp scratch = scratch_begin(&arena, 1);
-  String8 root = rad_cargo_workspace_root(scratch.arena);
-  String8 path = diag->path;
-  if(root.size != 0 && path.size > root.size+1 &&
-     str8_match(str8_prefix(path, root.size), root, StringMatchFlag_CaseInsensitive|StringMatchFlag_SlashInsensitive))
-  {
-    path = str8_skip(path, root.size+1);
-  }
+  String8 path = rad_problem_display_path(scratch.arena, diag);
   String8 result = push_str8f(arena, "%S %S:%I64d:%I64d %S", rad_diagnostic_kind_name(diag->kind), path, diag->line, diag->column, diag->message);
   scratch_end(scratch);
   return result;
+}
+
+internal B32
+rad_script_compare(String8 actual, String8 op, String8 expected, B32 *pass_out)
+{
+  // NOTE(rad): returns 0 for an unknown operator (or an ordering of non-numbers)
+  S64 a = 0;
+  S64 e = 0;
+  B32 numeric = (try_s64_from_str8_c_rules(actual, &a) && try_s64_from_str8_c_rules(expected, &e));
+  B32 op_valid = 1;
+  B32 pass = 0;
+  if(str8_match(op, str8_lit("=="), 0))      { pass = numeric ? (a == e) : str8_match(actual, expected, 0); }
+  else if(str8_match(op, str8_lit("!="), 0)) { pass = numeric ? (a != e) : !str8_match(actual, expected, 0); }
+  else if(numeric && str8_match(op, str8_lit("<"), 0))  { pass = (a <  e); }
+  else if(numeric && str8_match(op, str8_lit("<="), 0)) { pass = (a <= e); }
+  else if(numeric && str8_match(op, str8_lit(">"), 0))  { pass = (a >  e); }
+  else if(numeric && str8_match(op, str8_lit(">="), 0)) { pass = (a >= e); }
+  else { op_valid = 0; }
+  *pass_out = pass;
+  return op_valid;
 }
 
 internal B32
@@ -572,6 +586,32 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     }
   }
 
+  //- rad: the editor file's language server
+  else if(str8_match(name, str8_lit("lsp_state"), 0) || str8_match(name, str8_lit("lsp_busy"), 0) ||
+          str8_match(name, str8_lit("lsp_status"), 0))
+  {
+    CFG_Node *tab = rad_script_editor_tab();
+    RAD_Document *doc = rad_document_from_tab(tab);
+    RAD_LspServer *s = (doc != 0 ? rad_lsp_server_from_path(doc->path) : 0);
+    B32 busy = 0;
+    String8 status = rad_lsp_status_string(arena, &busy);
+    if(str8_match(name, str8_lit("lsp_state"), 0))
+    {
+      value = (s == 0 ? str8_lit("none") :
+               s->state == RAD_LspServerState_Starting ? str8_lit("starting") :
+               s->state == RAD_LspServerState_Ready ? str8_lit("ready") :
+               str8_lit("ended"));
+    }
+    else if(str8_match(name, str8_lit("lsp_busy"), 0))
+    {
+      value = (busy ? str8_lit("1") : str8_lit("0"));
+    }
+    else
+    {
+      value = status;
+    }
+  }
+
   //- rad: cargo configuration
   else if(str8_match(name, str8_lit("cargo_profile"), 0))
   {
@@ -614,31 +654,31 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   //- rad: diagnostics of the last cargo command
   else if(str8_match(name, str8_lit("diag_count"), 0))
   {
-    value = push_str8f(arena, "%I64u", rad_cargo->diags_count);
+    value = push_str8f(arena, "%I64u", rad_problems->count);
   }
   else if(str8_match(name, str8_lit("diag_errors"), 0))
   {
-    value = push_str8f(arena, "%I64u", rad_cargo->error_count);
+    value = push_str8f(arena, "%I64u", rad_problems->error_count);
   }
   else if(str8_match(name, str8_lit("diag_warnings"), 0))
   {
-    value = push_str8f(arena, "%I64u", rad_cargo->warning_count);
+    value = push_str8f(arena, "%I64u", rad_problems->warning_count);
   }
   else if(str8_match(name, str8_lit("diag_selected"), 0))
   {
-    value = push_str8f(arena, "%I64u", rad_cargo->diag_cursor);
+    value = push_str8f(arena, "%I64u", rad_problems->cursor);
   }
   else if(str8_match(name, str8_lit("diag"), 0))
   {
     S64 n = 0;
-    if(args_count < 2 || !try_s64_from_str8_c_rules(args[1], &n) || n < 1 || (U64)n > rad_cargo->diags_count)
+    if(args_count < 2 || !try_s64_from_str8_c_rules(args[1], &n) || n < 1 || (U64)n > rad_problems->count)
     {
-      *error_out = push_str8f(arena, "diag: needs a number in 1..%I64u", rad_cargo->diags_count);
+      *error_out = push_str8f(arena, "diag: needs a number in 1..%I64u", rad_problems->count);
       result = 0;
     }
     else
     {
-      value = rad_script_diag_string(arena, rad_cargo->diags[n-1]);
+      value = rad_script_diag_string(arena, rad_problems->diags[n-1]);
     }
   }
 
@@ -727,9 +767,9 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       *error_out = str8_lit("line_diag: needs a line number");
       result = 0;
     }
-    for(U64 idx = 0; result && idx < rad_cargo->diags_count; idx += 1)
+    for(U64 idx = 0; result && idx < rad_problems->count; idx += 1)
     {
-      RAD_Diagnostic *diag = rad_cargo->diags[idx];
+      RAD_Diagnostic *diag = rad_problems->diags[idx];
       if(str8_match(diag->path, doc->path, StringMatchFlag_CaseInsensitive|StringMatchFlag_SlashInsensitive))
       {
         Rng1U64 range = rad_diagnostic_range_from_document(diag, doc, &text.patched);
@@ -982,9 +1022,9 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
     {
       *error_out = str8_lit("problem: no problems tab");
     }
-    else if(args_count < 2 || !try_s64_from_str8_c_rules(args[1], &n) || n < 1 || (U64)n > rad_cargo->diags_count)
+    else if(args_count < 2 || !try_s64_from_str8_c_rules(args[1], &n) || n < 1 || (U64)n > rad_problems->count)
     {
-      *error_out = push_str8f(arena, "problem: needs a row number in 1..%I64u", rad_cargo->diags_count);
+      *error_out = push_str8f(arena, "problem: needs a row number in 1..%I64u", rad_problems->count);
     }
     else
     {
@@ -1359,6 +1399,32 @@ rad_script_run_line(RAD_ScriptLine *line)
       rad_script->wait_until_us = now_time_us() + ms*1000;
     }
   }
+  else if(str8_match(cmd, str8_lit("wait_until"), 0))
+  {
+    U64 ms = 0;
+    if(args_count < 4 || !try_u64_from_str8_c_rules(args[0], &ms))
+    {
+      error = str8_lit("wait_until: needs <timeout_ms> <field> <op> <value>");
+    }
+    else
+    {
+      rad_script->wait_kind = RAD_ScriptWaitKind_Until;
+      rad_script->wait_line_num = line->line_num;
+      rad_script->wait_until_us = now_time_us() + ms*1000;
+      rad_script->wait_line = line;
+    }
+  }
+  else if(str8_match(cmd, str8_lit("lsp"), 0))
+  {
+    if(args_count == 1 && (str8_match(args[0], str8_lit("on"), 0) || str8_match(args[0], str8_lit("off"), 0)))
+    {
+      rad_lsp->disabled = str8_match(args[0], str8_lit("off"), 0);
+    }
+    else
+    {
+      error = str8_lit("lsp: needs on or off");
+    }
+  }
   else if(str8_match(cmd, str8_lit("terminal"), 0))
   {
     if(args_count == 1 && (str8_match(args[0], str8_lit("visible"), 0) || str8_match(args[0], str8_lit("hidden"), 0)))
@@ -1423,18 +1489,8 @@ rad_script_run_line(RAD_ScriptLine *line)
       {
         String8 op = args[args_count-2];
         String8 expected = args[args_count-1];
-        S64 a = 0;
-        S64 e = 0;
-        B32 numeric = (try_s64_from_str8_c_rules(actual, &a) && try_s64_from_str8_c_rules(expected, &e));
-        B32 op_valid = 1;
         B32 pass = 0;
-        if(str8_match(op, str8_lit("=="), 0))      { pass = numeric ? (a == e) : str8_match(actual, expected, 0); }
-        else if(str8_match(op, str8_lit("!="), 0)) { pass = numeric ? (a != e) : !str8_match(actual, expected, 0); }
-        else if(numeric && str8_match(op, str8_lit("<"), 0))  { pass = (a <  e); }
-        else if(numeric && str8_match(op, str8_lit("<="), 0)) { pass = (a <= e); }
-        else if(numeric && str8_match(op, str8_lit(">"), 0))  { pass = (a >  e); }
-        else if(numeric && str8_match(op, str8_lit(">="), 0)) { pass = (a >= e); }
-        else { op_valid = 0; }
+        B32 op_valid = rad_script_compare(actual, op, expected, &pass);
         if(!op_valid)
         {
           error = push_str8f(scratch.arena, "expect: bad operator \"%S\" (or not a number)", op);
@@ -1611,6 +1667,46 @@ rad_script_tick(void)
   switch(rad_script->wait_kind)
   {
     default:{}break;
+    case RAD_ScriptWaitKind_Until:
+    {
+      Temp scratch = scratch_begin(0, 0);
+      RAD_ScriptLine *wl = rad_script->wait_line;
+      String8 *field_args = wl->args + 2;
+      U64 field_args_count = wl->args_count - 4;
+      String8 actual = {0};
+      String8 field_error = {0};
+      B32 pass = 0;
+      B32 op_valid = 1;
+      if(rad_script_field(scratch.arena, field_args, field_args_count, &actual, &field_error))
+      {
+        op_valid = rad_script_compare(actual, wl->args[wl->args_count-2], wl->args[wl->args_count-1], &pass);
+      }
+      B32 keep_waiting = (!pass && op_valid && now_us < rad_script->wait_until_us);
+      if(!keep_waiting)
+      {
+        if(pass)
+        {
+          rad_script->pass_count += 1;
+          rad_script_resultf("PASS %I64u: %S", wl->line_num, wl->text);
+        }
+        else if(!op_valid)
+        {
+          rad_script->error_count += 1;
+          rad_script_resultf("ERROR %I64u: wait_until: bad operator (or not a number)", wl->line_num);
+        }
+        else
+        {
+          rad_script->fail_count += 1;
+          rad_script_resultf("FAIL %I64u: %S (timed out; got \"%S\"%s%S)", wl->line_num, wl->text,
+                             escaped_from_raw_str8(scratch.arena, actual), field_error.size ? ", " : "", field_error);
+        }
+      }
+      scratch_end(scratch);
+      if(keep_waiting)
+      {
+        return;
+      }
+    }break;
     case RAD_ScriptWaitKind_Time:
     if(now_us < rad_script->wait_until_us)
     {

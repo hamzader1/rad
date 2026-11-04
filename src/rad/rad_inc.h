@@ -8,6 +8,7 @@
 #include "rad_widgets.h"
 #include "rad_views.h"
 #include "rad_cargo.h"
+#include "rad_lsp.h"
 #include "rad_script.h"
 
 #endif // RAD_INC_H

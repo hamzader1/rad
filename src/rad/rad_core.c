@@ -727,9 +727,9 @@ rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab)
   }
 
   dr_fstrs_push_new(arena, &result, &params, name);
-  if(str8_match(tab->string, str8_lit("problems"), 0) && rad_cargo->diags_count != 0)
+  if(str8_match(tab->string, str8_lit("problems"), 0) && rad_problems->count != 0)
   {
-    dr_fstrs_push_new(arena, &result, &params, push_str8f(arena, " %I64u", rad_cargo->diags_count), .color = rgba_secondary);
+    dr_fstrs_push_new(arena, &result, &params, push_str8f(arena, " %I64u", rad_problems->count), .color = rgba_secondary);
   }
   if(rad_tab_is_dirty(tab))
   {
@@ -2032,6 +2032,25 @@ rad_window_frame(RAD_Window *ws)
         }
 
         ui_spacer(ui_pct(1, 0));
+
+        // rad: not in raddbg: the language server's work (indexing, cargo
+        // check), next to the version, in the version's style
+        {
+          B32 lsp_busy = 0;
+          String8 lsp_status = rad_lsp_status_string(scratch.arena, &lsp_busy);
+          if(lsp_status.size != 0)
+            UI_FontSize(ui_top_font_size()*0.85f)
+            UI_PrefWidth(ui_text_dim(10, 1))
+            UI_TextAlignment(UI_TextAlign_Center)
+          {
+            if(lsp_busy)
+            {
+              RAD_Font(RAD_FontSlot_Icons) ui_label(rad_icon_kind_text_table[RAD_IconKind_Refresh]);
+            }
+            ui_label(lsp_status);
+            ui_spacer(ui_em(1.5f, 1.f));
+          }
+        }
 
         // rad: version
         UI_FontSize(ui_top_font_size()*0.85f)
@@ -3875,10 +3894,10 @@ rad_exec_cmd(RAD_Cmd *cmd)
     }break;
     case RAD_CmdKind_NextError:
     case RAD_CmdKind_PrevError:
-    if(window != &cfg_nil_node && rad_cargo->diags_count != 0)
+    if(window != &cfg_nil_node && rad_problems->count != 0)
     {
-      U64 count = rad_cargo->diags_count;
-      U64 current = Min(rad_cargo->diag_cursor, count);
+      U64 count = rad_problems->count;
+      U64 current = Min(rad_problems->cursor, count);
       U64 next = 0;
       if(cmd->kind == RAD_CmdKind_NextError)
       {
@@ -4218,6 +4237,8 @@ rad_init(CmdLine *cmdln)
 
   //- rad: cargo integration (output, diagnostics, runner thread)
   rad_cargo_init();
+  rad_lsp_init();
+  rad_lsp->disabled = (cmd_line_string(cmdln, str8_lit("script")).size != 0);
 
   //- rad: user data file (session; port of raddbg's user file): --user:<path>,
   // else %APPDATA%/rad/default.rad_user; scripted tests use none unless given
@@ -4858,6 +4879,8 @@ rad_frame(void)
   // command, keep the Output tab's text current
   //
   rad_cargo_tick();
+  rad_lsp_tick();
+  rad_problems_tick();
 
   //////////////////////////////
   //- rad: compute all ambiguous paths from view titles (port of raddbg's)
@@ -5007,6 +5030,7 @@ rad_frame(void)
   if(rad_state->quit)
   {
     rad_cargo_shutdown();
+    rad_lsp_shutdown();
   }
 
   //////////////////////////////
