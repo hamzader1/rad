@@ -360,6 +360,39 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   {
     value = push_str8f(arena, "%.0f", floor_f32((F32)rad_state->settings.font_size*rad_state->first_window->font_scale));
   }
+  else if(str8_match(name, str8_lit("settings_rows"), 0) ||
+          str8_match(name, str8_lit("settings_selected"), 0) ||
+          str8_match(name, str8_lit("settings_filter"), 0) ||
+          str8_match(name, str8_lit("settings_filter_focused"), 0))
+  {
+    // rad: the Settings tab: rows shown, selected setting, filter
+    CFG_Node *tab = rad_script_window_tab(str8_lit("settings"));
+    if(tab == &cfg_nil_node)
+    {
+      *error_out = str8_lit("settings: no settings tab");
+      result = 0;
+    }
+    else
+    {
+      RAD_SettingsState *ss = &rad_view_state_from_cfg(tab)->ss;
+      if(str8_match(name, str8_lit("settings_rows"), 0))
+      {
+        value = push_str8f(arena, "%I64u", ss->layout_rows_count);
+      }
+      else if(str8_match(name, str8_lit("settings_selected"), 0))
+      {
+        value = (ss->cursor.y >= 1 && (U64)ss->cursor.y <= ss->layout_rows_count ? rad_setting_info_table[ss->layout_row_settings[ss->cursor.y-1]].name : str8_lit(""));
+      }
+      else if(str8_match(name, str8_lit("settings_filter"), 0))
+      {
+        value = push_str8_copy(arena, str8(ss->filter_buffer, ss->filter_size));
+      }
+      else
+      {
+        value = push_str8f(arena, "%i", (int)!!ss->filter_focused);
+      }
+    }
+  }
   else if(str8_match(name, str8_lit("menu_bar_focused"), 0))
   {
     // rad: 1 if the menu bar has the keyboard (Alt tapped)
@@ -1242,6 +1275,64 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
       pos = center_2f32(rect);
       args_used = 2;
       result = 1;
+    }
+  }
+
+  //- rad: Settings tab: a setting's row, toggle switch / slider, revert
+  // button; the filter; an option of the open options menu (1-based)
+  else if(str8_match(kind, str8_lit("setting_row"), 0) ||
+          str8_match(kind, str8_lit("setting_control"), 0) ||
+          str8_match(kind, str8_lit("setting_revert"), 0) ||
+          str8_match(kind, str8_lit("settings_filter"), 0) ||
+          str8_match(kind, str8_lit("setting_option"), 0))
+  {
+    CFG_Node *tab = rad_script_window_tab(str8_lit("settings"));
+    if(tab == &cfg_nil_node)
+    {
+      *error_out = push_str8f(arena, "%S: no settings tab", kind);
+    }
+    else
+    {
+      RAD_SettingsState *ss = &rad_view_state_from_cfg(tab)->ss;
+      Rng2F32 rect = {0};
+      U64 used = 1;
+      if(str8_match(kind, str8_lit("settings_filter"), 0))
+      {
+        rect = ss->layout_filter_rect;
+      }
+      else if(str8_match(kind, str8_lit("setting_option"), 0))
+      {
+        S64 n = 0;
+        used = 2;
+        if(args_count >= 2 && try_s64_from_str8_c_rules(args[1], &n) && n >= 1 && (U64)n <= ss->layout_menu_count &&
+           ss->layout_menu_frame+1 >= rad_state->frame_index)
+        {
+          rect = ss->layout_menu_rects[n-1];
+        }
+      }
+      else
+      {
+        used = 2;
+        for EachElement(idx, rad_setting_info_table)
+        {
+          if(args_count >= 2 && str8_match(rad_setting_info_table[idx].name, args[1], 0))
+          {
+            rect = (str8_match(kind, str8_lit("setting_row"), 0)     ? ss->layout_row_rects[idx] :
+                    str8_match(kind, str8_lit("setting_control"), 0) ? ss->layout_control_rects[idx] :
+                    ss->layout_revert_rects[idx]);
+          }
+        }
+      }
+      if(rect.x1 <= rect.x0 || rect.y1 <= rect.y0)
+      {
+        *error_out = push_str8f(arena, "%S: not visible", kind);
+      }
+      else
+      {
+        pos = center_2f32(rect);
+        args_used = used;
+        result = 1;
+      }
     }
   }
 

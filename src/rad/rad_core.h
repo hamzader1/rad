@@ -318,6 +318,7 @@ internal RAD_Settings rad_default_settings(void);
 internal RAD_Settings rad_settings_from_cfg(void);
 internal CFG_Node *rad_setting_cfg_node(String8 name);
 internal void rad_setting_set_f64(String8 name, F64 value);
+internal void rad_setting_revert(String8 name);
 internal String8 rad_setting_value_string(Arena *arena, RAD_Settings *settings, U64 idx);
 internal F64 rad_setting_f64_from_settings(RAD_Settings *settings, U64 idx);
 internal F32 rad_code_font_size(RAD_Window *ws);

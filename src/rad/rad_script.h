@@ -85,6 +85,11 @@
 //   output <line> <col>         a visible text position in the Output tab
 //   output_text "<text>"        the first Output line containing it, at its start
 //   problem <n>                 middle of visible Problems row n (1-based)
+//   setting_row <name>          middle of a visible Settings row
+//   setting_control <name>      its toggle switch or slider
+//   setting_revert <name>       its revert button (only on changed settings)
+//   settings_filter             the Settings filter row
+//   setting_option <n>          option n (1-based) of the open options menu
 //   completion <n>              middle of visible completion list row n (1-based)
 //   completion_list             middle of the completion list
 //   code_below <col>            under the editor's last line (2 lines down), at a
@@ -106,6 +111,10 @@
 //   panel_count                 number of leaf panels in the window
 //   zoomed                      1 if a panel is zoomed (Toggle Panel Zoom)
 //   menu_bar_focused            1 if the menu bar has the keyboard (Alt tapped)
+//   settings_rows               rows the Settings tab shows (the filter's matches)
+//   settings_selected           the selected setting's name ("" = none)
+//   settings_filter             the Settings filter's text
+//   settings_filter_focused     1 if the filter has the keyboard
 //   setting <name>              a setting's value as stored (enums: the option's name)
 //   editor_font_size            the editor view's font size (code font setting)
 //   ui_font_size                the window's font size (UI font setting)

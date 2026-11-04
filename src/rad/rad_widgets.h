@@ -39,6 +39,11 @@ enum
   RAD_CellFlag_Border              = (1<<5),
   RAD_CellFlag_NoBackground        = (1<<6),
   RAD_CellFlag_Button              = (1<<7),
+
+  //- rad: extra widgets (raddbg's toggle switch, slider, revert button)
+  RAD_CellFlag_ToggleSwitch        = (1<<10),
+  RAD_CellFlag_Slider              = (1<<11),
+  RAD_CellFlag_RevertButton        = (1<<12),
 };
 
 typedef struct RAD_CellParams RAD_CellParams;
@@ -51,8 +56,22 @@ struct RAD_CellParams
   String8 search_needle;
   DR_FStrList value_fstrs;
 
+  //- rad: left-hand-side name + description (raddbg's meta_fstrs, description)
+  DR_FStrList meta_fstrs;
+  String8 description;
+
   //- rad: expander r/w info
   B32 *expanded_out;
+
+  //- rad: toggle-switch, slider, revert r/w info
+  B32 *toggled_out;
+  F32 *slider_value_out;
+  B32 *revert_out;
+
+  //- rad: not in raddbg: where the toggle switch / slider and the revert
+  // button are (last layout; scripted input aims with them)
+  Rng2F32 *control_rect_out;
+  Rng2F32 *revert_rect_out;
 
   //- rad: text editing r/w info
   U64 *cursor;

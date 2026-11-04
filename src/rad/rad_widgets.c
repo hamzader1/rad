@@ -278,6 +278,15 @@ rad_cell(RAD_CellParams *params, String8 string)
   B32 is_editing      = (is_focus_active || is_focus_active_disabled);
 
   //////////////////////////////
+  //- rad: determine which sub-cell components we'll build
+  //
+  B32 build_toggle_switch = !!(params->flags & RAD_CellFlag_ToggleSwitch) && !is_focus_active;
+  B32 build_slider        = !!(params->flags & RAD_CellFlag_Slider) && !is_focus_active;
+  B32 build_lhs_name_desc = (params->meta_fstrs.node_count != 0 || params->description.size != 0);
+  B32 build_line_edit     = (params->pre_edit_value.size != 0 || params->value_fstrs.node_count != 0);
+  DR_FStrList lhs_name_fstrs = params->meta_fstrs;
+
+  //////////////////////////////
   //- rad: build top-level box
   //
   if(is_editing)
@@ -285,6 +294,7 @@ rad_cell(RAD_CellParams *params, String8 string)
     ui_set_next_hover_cursor(WM_Cursor_IBar);
   }
   UI_Box *box = ui_build_box_from_key(UI_BoxFlag_MouseClickable|
+                                      (!!build_lhs_name_desc*UI_BoxFlag_DisableFocusBorder)|
                                       (!!(params->flags & RAD_CellFlag_KeyboardClickable)*UI_BoxFlag_KeyboardClickable)|
                                       UI_BoxFlag_ClickToFocus|
                                       (!!(params->flags & RAD_CellFlag_Button)*UI_BoxFlag_DrawHotEffects)|
@@ -338,11 +348,71 @@ rad_cell(RAD_CellParams *params, String8 string)
   }
 
   //////////////////////////////
+  //- rad: build left-hand-side container box
+  //
+  UI_Box *lhs_box = &ui_nil_box;
+  if(build_lhs_name_desc)
+  {
+    UI_Parent(box) UI_WidthFill UI_ChildLayoutAxis(Axis2_Y)
+    {
+      if(ui_top_text_alignment() == UI_TextAlign_Left && (params->flags & (RAD_CellFlag_Expander|RAD_CellFlag_ExpanderSpace|RAD_CellFlag_ExpanderPlaceholder)) == 0)
+      {
+        ui_spacer(ui_em(1.f, 1.f));
+      }
+      lhs_box = ui_build_box_from_stringf(0, "lhs_box");
+    }
+  }
+
+  //////////////////////////////
+  //- rad: build left-hand-side name/desc box
+  //
+  if(build_lhs_name_desc) UI_Parent(lhs_box) UI_Padding(ui_em(3.f, 0.f)) UI_WidthFill UI_HeightFill
+  {
+    FuzzyMatchRangeList fuzzy_matches = {0};
+    if(params->search_needle.size != 0)
+    {
+      fuzzy_matches = dr_fuzzy_match_find_from_fstrs(scratch.arena, &lhs_name_fstrs, params->search_needle);
+    }
+    UI_Row
+    {
+      UI_Box *name_box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
+      ui_box_equip_display_fstrs(name_box, &lhs_name_fstrs);
+      ui_box_equip_fuzzy_match_ranges(name_box, &fuzzy_matches);
+    }
+    if(params->description.size != 0) RAD_Font(RAD_FontSlot_Main) UI_FontSize(ui_top_font_size()*0.85f)
+    {
+      UI_Row
+      {
+        UI_Box *desc_box = ui_label(params->description).box;
+        FuzzyMatchRangeList desc_fuzzy_matches = fuzzy_match_find(scratch.arena, params->search_needle, params->description);
+        ui_box_equip_fuzzy_match_ranges(desc_box, &desc_fuzzy_matches);
+      }
+    }
+  }
+
+  //////////////////////////////
   //- rad: build line edit container box
+  //
+  // NOTE(rad): raddbg builds it only with a value (or while editing); rad's
+  // cells without a name/description column always build it (as before)
   //
   UI_Box *edit_box = &ui_nil_box;
   F32 editable_edit_box_dim = dim_2f32(box->rect).x;
-  UI_Parent(box) UI_PrefWidth(ui_pct(1, 0))
+  UI_Size edit_box_size = ui_pct(1, 0);
+  if(build_lhs_name_desc)
+  {
+    if(is_editing)
+    {
+      editable_edit_box_dim = floor_f32(dim_2f32(box->rect).x*0.5f);
+      edit_box_size = ui_px(editable_edit_box_dim, 1.f);
+    }
+    else
+    {
+      edit_box_size = ui_children_sum(1);
+    }
+  }
+  if(!build_lhs_name_desc || is_editing || build_line_edit)
+    UI_Parent(box) UI_PrefWidth(edit_box_size)
   {
     if(ui_top_px_height() > ui_top_font_size()*3.f)
     {
@@ -374,9 +444,219 @@ rad_cell(RAD_CellParams *params, String8 string)
   //- rad: build scrollable container box
   //
   UI_Box *scrollable_box = &ui_nil_box;
-  UI_Parent(edit_box) UI_PrefWidth(ui_children_sum(0))
+  if(edit_box != &ui_nil_box)
   {
-    scrollable_box = ui_build_box_from_stringf(is_focus_active*(UI_BoxFlag_AllowOverflowX|UI_BoxFlag_Clip), "scroll_box_%p", params->edit_buffer);
+    UI_Parent(edit_box) UI_PrefWidth(ui_children_sum(0))
+    {
+      scrollable_box = ui_build_box_from_stringf(is_focus_active*(UI_BoxFlag_AllowOverflowX|UI_BoxFlag_Clip), "scroll_box_%p", params->edit_buffer);
+    }
+  }
+
+  //////////////////////////////
+  //- rad: build revert-button
+  //
+  if(params->flags & RAD_CellFlag_RevertButton && !is_editing)
+  {
+    // NOTE(rad): raddbg parents it to the line edit box; a cell with no
+    // value (a toggle switch) has none in rad -> the cell box
+    UI_Parent(edit_box != &ui_nil_box ? edit_box : box)
+      UI_PrefWidth(ui_em(2.f, 1.f))
+    {
+      UI_TagF(".")
+        UI_TagF("weak")
+        UI_TagF("implicit")
+        UI_Column
+        UI_Padding(ui_pct(1, 0))
+        UI_PrefHeight(ui_em(2.f, 1.f))
+        UI_CornerRadius(ui_top_font_size()*0.5f)
+        RAD_Font(RAD_FontSlot_Icons)
+        UI_TextAlignment(UI_TextAlign_Center)
+      {
+        UI_Box *revert_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|
+                                                       UI_BoxFlag_DrawHotEffects|
+                                                       UI_BoxFlag_DrawBorder|
+                                                       UI_BoxFlag_DrawBackground|
+                                                       UI_BoxFlag_DisableFocusOverlay|
+                                                       UI_BoxFlag_DisableFocusBorder|
+                                                       UI_BoxFlag_Clickable,
+                                                       "%S##revert", rad_icon_kind_text_table[RAD_IconKind_Undo]);
+        UI_Signal sig = ui_signal_from_box(revert_box);
+        if(params->revert_rect_out) { params->revert_rect_out[0] = revert_box->rect; }
+        if(ui_hovering(sig)) UI_Tooltip RAD_Font(RAD_FontSlot_Main)
+        {
+          ui_state->tooltip_anchor_key = revert_box->key;
+          ui_label(str8_lit("Revert To Default"));
+        }
+        if(ui_pressed(sig) && params->revert_out)
+        {
+          params->revert_out[0] = 1;
+        }
+      }
+      // TODO(rjf): @hack
+      if(build_toggle_switch || build_slider)
+      {
+        ui_spacer(ui_em(1.f, 1.f));
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: build toggle-switch
+  //
+  if(build_toggle_switch) UI_Parent(box)
+  {
+    B32 is_toggled = !!params->toggled_out[0];
+    F32 toggle_t = ui_anim(ui_key_from_stringf(key, "toggled"), (F32)is_toggled, .initial = (F32)is_toggled, .rate = rad_state->menu_animation_rate);
+    F32 height_px = ceil_f32(ui_top_font_size() * 1.75f);
+    F32 padding_px = ceil_f32((ui_top_px_height() - height_px) / 2.f);
+    UI_PrefWidth(ui_children_sum(1.f))
+      UI_HeightFill
+      UI_Column UI_Padding(ui_px(padding_px, 1.f))
+      UI_Row
+    {
+      if(ui_top_text_alignment() == UI_TextAlign_Center)
+      {
+        ui_spacer(ui_em(1.f, 0.f));
+      }
+      UI_PrefWidth(ui_em(3.5f, 1.f))
+        UI_PrefHeight(ui_px(height_px, 1.f))
+        UI_CornerRadius(floor_f32(height_px/2.f - 1.f))
+        UI_TagF(is_toggled ? "good_pop" : "")
+        UI_GroupKey(ui_key_from_stringf(ui_key_zero(), "toggle_switch_group_key"))
+      {
+        UI_Box *switch_box = ui_build_box_from_stringf(UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_Clickable, "toggle_switch");
+        UI_Parent(switch_box)
+        {
+          RAD_Font(RAD_FontSlot_Icons) UI_PrefWidth(ui_pct(toggle_t, 0)) UI_Transparency(1.f - toggle_t)
+          {
+            ui_build_box_from_stringf(UI_BoxFlag_DisableTextTrunc | (toggle_t > 0.001f ? UI_BoxFlag_DrawText : 0),
+                                      "%S", rad_icon_kind_text_table[RAD_IconKind_Check]);
+          }
+          UI_BackgroundColor(ui_color_from_name(str8_lit("text")))
+            UI_PrefWidth(ui_px(height_px, 1.f))
+          {
+            F32 extratoggler_padding_px = floor_f32(ui_top_font_size()*0.35f);
+            F32 toggler_size_px = ceil_f32(height_px - extratoggler_padding_px*2.f) - 1.f;
+            UI_Column UI_Padding(ui_px(extratoggler_padding_px, 1.f))
+              UI_Row UI_Padding(ui_px(extratoggler_padding_px, 1.f))
+              UI_PrefWidth(ui_px(toggler_size_px, 1.f))
+              UI_PrefHeight(ui_px(toggler_size_px, 1.f))
+              UI_CornerRadius(floor_f32(toggler_size_px/2.f - 1.f))
+            {
+              ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawDropShadow, ui_key_zero());
+            }
+          }
+          ui_spacer(ui_pct(1.f-toggle_t, 0));
+        }
+        UI_Signal switch_sig = ui_signal_from_box(switch_box);
+        if(params->control_rect_out) { params->control_rect_out[0] = switch_box->rect; }
+
+        // rjf: press -> toggle, & gather this key
+        if(ui_pressed(switch_sig))
+        {
+          if(ui_dragging(switch_sig))
+          {
+            ui_store_drag_struct(&switch_box->key);
+          }
+          params->toggled_out[0] ^= 1;
+        }
+
+        // rjf: dragging -> check if key is in batch of touched keys. if so, do nothing, otherwise, toggle.
+        // always store this new key if not in batch
+        if(ui_dragging(switch_sig))
+        {
+          String8 all_keys_data = ui_get_drag_data(sizeof(UI_Key));
+          UI_Key *keys = (UI_Key *)all_keys_data.str;
+          U64 keys_count = all_keys_data.size / sizeof(UI_Key);
+          B32 key_is_touched = 0;
+          for EachIndex(idx, keys_count)
+          {
+            if(ui_key_match(keys[idx], switch_box->key))
+            {
+              key_is_touched = 1;
+              break;
+            }
+          }
+          if(!key_is_touched)
+          {
+            params->toggled_out[0] ^= 1;
+            UI_Key *new_keys = push_array(scratch.arena, UI_Key, keys_count+1);
+            MemoryCopy(new_keys, keys, sizeof(UI_Key)*keys_count);
+            new_keys[keys_count] = switch_box->key;
+            ui_store_drag_data(str8((U8 *)new_keys, sizeof(UI_Key) * (keys_count+1)));
+          }
+        }
+      }
+      if(ui_top_text_alignment() == UI_TextAlign_Center)
+      {
+        ui_spacer(ui_em(1.f, 0.f));
+      }
+    }
+    if(ui_top_text_alignment() == UI_TextAlign_Left)
+    {
+      ui_spacer(ui_em(1.f, 1.f));
+    }
+  }
+
+  //////////////////////////////
+  //- rad: build slider
+  //
+  if(build_slider) UI_Parent(box)
+  {
+    F32 height_px = ceil_f32(ui_top_font_size() * 1.75f);
+    F32 padding_px = ceil_f32((ui_top_px_height() - height_px) / 2.f);
+    UI_PrefWidth(ui_children_sum(1.f))
+      UI_HeightFill
+      UI_Column UI_Padding(ui_px(padding_px, 1.f))
+      UI_Row
+      UI_PrefWidth(ui_pct(0.5f - 0.2f*(!!build_lhs_name_desc), 0.f))
+      UI_PrefHeight(ui_px(height_px, 1.f))
+      UI_CornerRadius(floor_f32(height_px/2.f - 1.f))
+    {
+      F32 extratoggler_padding_px = floor_f32(ui_top_font_size()*0.35f);
+      F32 toggler_size_px = ceil_f32(height_px - extratoggler_padding_px*2.f) - 1.f;
+      ui_set_next_hover_cursor(WM_Cursor_LeftRight);
+      UI_Box *slider_box = ui_build_box_from_stringf(UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_Clickable, "slider");
+      if(params->control_rect_out) { params->control_rect_out[0] = slider_box->rect; }
+      UI_Parent(slider_box) UI_TagF("pop")
+      {
+        UI_Signal sig = ui_signal_from_box(slider_box);
+        if(ui_dragging(sig))
+        {
+          if(ui_pressed(sig))
+          {
+            ui_store_drag_struct(params->slider_value_out);
+          }
+          F32 draggable_region_size_px = dim_2f32(slider_box->rect).x - (extratoggler_padding_px*2 + toggler_size_px);
+          F32 initial_pct = *ui_get_drag_struct(F32);
+          F32 current_pct = initial_pct + (ui_drag_delta().x / draggable_region_size_px);
+          params->slider_value_out[0] = current_pct;
+        }
+
+        UI_Box *fill_box = &ui_nil_box;
+        UI_PrefWidth(ui_children_sum(0))
+          UI_MinWidth(toggler_size_px + extratoggler_padding_px*2)
+          fill_box = ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder, ui_key_zero());
+        UI_Parent(fill_box)
+        {
+          ui_spacer(ui_pct(Clamp(0, params->slider_value_out[0], 1), 0.f));
+          UI_BackgroundColor(ui_color_from_name(str8_lit("text")))
+            UI_PrefWidth(ui_px(height_px, 1.f))
+          {
+            UI_Column UI_Padding(ui_px(extratoggler_padding_px, 1.f))
+              UI_Row UI_Padding(ui_px(extratoggler_padding_px, 1.f))
+              UI_PrefWidth(ui_px(toggler_size_px, 1.f))
+              UI_PrefHeight(ui_px(toggler_size_px, 1.f))
+              UI_CornerRadius(floor_f32(toggler_size_px/2.f - 1.f))
+            {
+              ui_build_box_from_key(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawDropShadow, ui_key_zero());
+            }
+          }
+        }
+        ui_spacer(ui_pct(1-Clamp(0, params->slider_value_out[0], 1), 0.f));
+      }
+    }
+    ui_spacer(ui_em(1.f, 1.f));
   }
 
   //////////////////////////////
@@ -552,7 +832,7 @@ rad_cell(RAD_CellParams *params, String8 string)
   //
   U64 mouse_off = 0;
   F32 cursor_off = 0;
-  UI_Parent(scrollable_box)
+  if(scrollable_box != &ui_nil_box) UI_Parent(scrollable_box)
   {
     FuzzyMatchRangeList fuzzy_matches = {0};
     if(params->search_needle.size != 0)
@@ -611,6 +891,7 @@ rad_cell(RAD_CellParams *params, String8 string)
   //////////////////////////////
   //- rad: focus cursor
   //
+  if(scrollable_box != &ui_nil_box)
   {
     F32 visible_dim_px = editable_edit_box_dim - expander_size_px - ui_top_font_size()*params->depth;
     if(visible_dim_px > 0)

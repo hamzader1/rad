@@ -98,7 +98,7 @@ rad_view_state_animate(void)
         vs->loading_t_target = 0;
       }
 
-      UI_ScrollPt2 *scroll_pts[] = {&vs->cv.scroll_pos, &vs->ex.scroll_pos, &vs->pr.scroll_pos};
+      UI_ScrollPt2 *scroll_pts[] = {&vs->cv.scroll_pos, &vs->ex.scroll_pos, &vs->pr.scroll_pos, &vs->ss.scroll_pos};
       for EachElement(idx, scroll_pts)
       {
         UI_ScrollPt2 *scroll_pos = scroll_pts[idx];
@@ -3062,6 +3062,449 @@ rad_problems_view_ui(CFG_Node *tab, Rng2F32 rect)
     rad_goto_diagnostic(cfg_window_from_cfg(tab), goto_num);
     pr->cursor = pr->mark = v2s64(0, (S64)goto_num);
   }
+
+  scratch_end(scratch);
+}
+
+////////////////////////////////
+//~ rad: Settings View
+
+internal void
+rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
+{
+  // NOTE(rad): raddbg's User Settings lister (a query view with big rows:
+  // `do_big_rows`, 5 font sizes): name + description on the left; toggle
+  // switch, value + slider, revert button on the right (rd_cell). rad shows
+  // it as a tab, with a filter row on top in the query bar's look. Enums
+  // and the theme open a menu of their options (raddbg: an expandable row).
+  Temp scratch = scratch_begin(0, 0);
+  RAD_ViewState *vs = rad_view_state_from_cfg(tab);
+  RAD_SettingsState *ss = &vs->ss;
+  RAD_Settings *settings = &rad_state->settings;
+  UI_Key menu_key = ui_key_from_stringf(ui_key_zero(), "_settings_options_menu_%p", tab);
+
+  //////////////////////////////
+  //- rad: unpack
+  //
+  F32 filter_row_height_px = ui_top_px_height();
+  F32 row_height_px = floor_f32(ui_top_font_size()*(settings->density == 1 ? 4.f : 5.f));
+  Vec2F32 rect_dim = dim_2f32(rect);
+  F32 list_height_px = Max(0, rect_dim.y - filter_row_height_px);
+  F32 contents_width_px = (rect_dim.x - floor_f32(ui_bottom_font_size()*1.5f));
+  ss->layout_frame = rad_state->frame_index;
+  MemoryZeroArray(ss->layout_row_rects);
+  MemoryZeroArray(ss->layout_control_rects);
+  MemoryZeroArray(ss->layout_revert_rects);
+
+  //////////////////////////////
+  //- rad: rows: the settings whose name, description or group match the filter
+  //
+  String8 needle = str8(ss->filter_buffer, ss->filter_size);
+  S64 rows_count = 0;
+  for EachElement(idx, rad_setting_info_table)
+  {
+    RAD_SettingInfo *info = &rad_setting_info_table[idx];
+    B32 matches = (needle.size == 0);
+    String8 haystacks[] = {info->display_name, info->description, info->group};
+    for EachElement(h_idx, haystacks)
+    {
+      FuzzyMatchRangeList m = fuzzy_match_find(scratch.arena, needle, haystacks[h_idx]);
+      if(!matches && m.count != 0 && m.count == m.needle_part_count)
+      {
+        matches = 1;
+      }
+    }
+    if(matches)
+    {
+      ss->layout_row_settings[rows_count] = idx;
+      rows_count += 1;
+    }
+  }
+  ss->layout_rows_count = (U64)rows_count;
+  ss->cursor.y = ss->mark.y = Clamp(0, ss->cursor.y, rows_count);
+  U64 selected_setting = (ss->cursor.y >= 1 ? ss->layout_row_settings[ss->cursor.y-1] : max_U64);
+
+  //////////////////////////////
+  //- rad: a setting's value -> slider position, and back
+  //
+  #define rad_setting_pct_from_value(info, v) ((F32)(((v) - (info)->min) / Max(1e-9, (info)->max - (info)->min)))
+
+  //////////////////////////////
+  //- rad: keyboard (list has it): Up/Down select (scroll list), Enter/Space
+  // toggle or open the options, Left/Right step a value or an option; typing
+  // goes to the filter. Filter has it: Down/Enter go to the list, Esc clears.
+  //
+  B32 open_menu_for_selected = 0;
+  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active())
+  {
+    for(UI_Event *evt = 0; ui_next_event(&evt);)
+    {
+      if(ss->filter_focused)
+      {
+        if(evt->kind == UI_EventKind_Press && evt->modifiers == 0 && (evt->key == WM_Key_Down || evt->key == WM_Key_Return))
+        {
+          ss->filter_focused = 0;
+          if(ss->cursor.y == 0 && rows_count != 0)
+          {
+            ss->cursor = ss->mark = v2s64(0, 1);
+          }
+          ui_eat_event(evt);
+        }
+        else if(evt->kind == UI_EventKind_Press && evt->modifiers == 0 && evt->key == WM_Key_Esc)
+        {
+          if(ss->filter_size != 0)
+          {
+            ss->filter_size = ss->filter_cursor = ss->filter_mark = 0;
+          }
+          else
+          {
+            ss->filter_focused = 0;
+          }
+          ui_eat_event(evt);
+        }
+        continue;
+      }
+      if(evt->kind == UI_EventKind_Text && evt->string.size != 0 && !str8_match(evt->string, str8_lit(" "), 0) &&
+         str8_find_needle(evt->string, 0, str8_lit("\n"), 0) == evt->string.size)
+      {
+        // rad: typing -> the filter (the filter cell takes this event below)
+        ss->filter_focused = 1;
+        continue;
+      }
+      if(selected_setting == max_U64 || evt->modifiers != 0)
+      {
+        continue;
+      }
+      RAD_SettingInfo *info = &rad_setting_info_table[selected_setting];
+      F64 v = rad_setting_f64_from_settings(settings, selected_setting);
+      B32 activate = ((evt->kind == UI_EventKind_Press && evt->key == WM_Key_Return) ||
+                      (evt->kind == UI_EventKind_Text && str8_match(evt->string, str8_lit(" "), 0)));
+      S32 step = 0;
+      if(evt->kind == UI_EventKind_Navigate && !(evt->flags & UI_EventFlag_KeepMark) && evt->delta_unit == UI_EventDeltaUnit_Char && evt->delta_2s32.y == 0)
+      {
+        step = (evt->delta_2s32.x < 0 ? -1 : evt->delta_2s32.x > 0 ? +1 : 0);
+      }
+      if(activate)
+      {
+        if(info->kind == RAD_SettingKind_Bool)
+        {
+          rad_setting_set_f64(info->name, v != 0 ? 0 : 1);
+        }
+        else if(info->kind == RAD_SettingKind_Enum || info->kind == RAD_SettingKind_Theme)
+        {
+          open_menu_for_selected = 1;
+        }
+        ui_eat_event(evt);
+      }
+      else if(evt->kind == UI_EventKind_Text && str8_match(evt->string, str8_lit("\n"), 0))
+      {
+        ui_eat_event(evt);
+      }
+      else if(step != 0)
+      {
+        F64 step_size = (info->kind == RAD_SettingKind_F32 ? 0.05 : 1.0);
+        F64 max = (info->kind == RAD_SettingKind_Theme ? (F64)(RAD_ThemePreset_COUNT-1) : info->max);
+        if(info->kind == RAD_SettingKind_Bool)
+        {
+          rad_setting_set_f64(info->name, step > 0 ? 1 : 0);
+        }
+        else
+        {
+          rad_setting_set_f64(info->name, Clamp(info->min, v + step*step_size, max));
+        }
+        ui_eat_event(evt);
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: column: filter row, then the list
+  //
+  UI_WidthFill UI_HeightFill UI_Column
+  {
+    //- rad: filter row (the query bar's look: rad_view_ui)
+    UI_Box *filter_row = &ui_nil_box;
+    UI_PrefHeight(ui_px(filter_row_height_px, 1.f))
+    {
+      if(ss->filter_focused)
+      {
+        ui_set_next_border_color(ui_color_from_name(str8_lit("border")));
+      }
+      filter_row = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawDropShadow, "###settings_filter_row");
+    }
+    ss->layout_filter_rect = filter_row->rect;
+    UI_Parent(filter_row) UI_WidthFill UI_HeightFill UI_Focus(ss->filter_focused ? UI_FocusKind_On : UI_FocusKind_Off)
+      RAD_Font(RAD_FontSlot_Main)
+      UI_Flags(UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder)
+    {
+      UI_TagF("weak")
+      {
+        ui_spacer(ui_em(0.5f, 1.f));
+        UI_TextAlignment(UI_TextAlign_Center) RAD_Font(RAD_FontSlot_Icons) UI_PrefWidth(ui_em(2.f, 1.f))
+          ui_label(rad_icon_kind_text_table[RAD_IconKind_Find]);
+      }
+      RAD_CellParams params = {0};
+      {
+        params.flags |= RAD_CellFlag_NoBackground;
+        params.cursor               = &ss->filter_cursor;
+        params.mark                 = &ss->filter_mark;
+        params.edit_buffer          = ss->filter_buffer;
+        params.edit_string_size_out = &ss->filter_size;
+        params.edit_buffer_size     = sizeof(ss->filter_buffer);
+        params.pre_edit_value       = needle;
+      }
+      UI_FocusHot(ss->filter_focused ? UI_FocusKind_On : UI_FocusKind_Off)
+        UI_FocusActive(ss->filter_focused ? UI_FocusKind_On : UI_FocusKind_Off)
+      {
+        UI_Signal sig = rad_cellf(&params, "Search Settings###settings_filter");
+        if(ui_pressed(sig))
+        {
+          ss->filter_focused = 1;
+          rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
+        }
+      }
+    }
+
+    //- rad: nothing matches -> say so
+    if(rows_count == 0)
+    {
+      UI_WidthFill UI_HeightFill UI_Column UI_Padding(ui_pct(1, 0))
+      {
+        UI_PrefWidth(ui_children_sum(1)) UI_PrefHeight(ui_em(3, 1))
+          UI_Row UI_Padding(ui_pct(1, 0))
+          UI_PrefWidth(ui_text_dim(1, 1))
+          UI_TagF("weak")
+        {
+          ui_labelf("No settings match \"%S\".", needle);
+        }
+      }
+    }
+
+    //- rad: the list (same scroll list and rows as the Problems view)
+    if(rows_count != 0)
+    {
+      UI_ScrollListParams scroll_list_params = {0};
+      {
+        scroll_list_params.flags         = UI_ScrollListFlag_All;
+        scroll_list_params.row_height_px = row_height_px;
+        scroll_list_params.dim_px        = v2f32(rect_dim.x, list_height_px);
+        scroll_list_params.cursor_range  = r2s64(v2s64(0, 0), v2s64(0, rows_count));
+        scroll_list_params.item_range    = r1s64(0, rows_count);
+        scroll_list_params.cursor_min_is_empty_selection[Axis2_Y] = 1;
+      }
+      Rng1S64 visible_row_rng = {0};
+      UI_ScrollListSignal scroll_list_sig = {0};
+      UI_Focus(ss->filter_focused ? UI_FocusKind_Off : UI_FocusKind_On)
+        UI_ScrollList(&scroll_list_params, &ss->scroll_pos.y, &ss->cursor, &ss->mark, &visible_row_rng, &scroll_list_sig)
+        UI_Focus(UI_FocusKind_Null)
+        UI_PrefHeight(ui_px(row_height_px, 1.f))
+      {
+        ui_set_next_pref_height(ui_children_sum(1));
+        ui_set_next_child_layout_axis(Axis2_Y);
+        UI_Box *table = ui_build_box_from_string(0, str8_lit("table"));
+        UI_Parent(table)
+          for(S64 row_idx = visible_row_rng.min; row_idx <= visible_row_rng.max && row_idx < rows_count; row_idx += 1)
+        {
+          U64 setting_idx = ss->layout_row_settings[row_idx];
+          RAD_SettingInfo *info = &rad_setting_info_table[setting_idx];
+          B32 row_selected = (ss->cursor.y == row_idx+1);
+          F64 value = rad_setting_f64_from_settings(settings, setting_idx);
+          String8 value_string = rad_setting_value_string(scratch.arena, settings, setting_idx);
+          CFG_Node *value_cfg = rad_setting_cfg_node(info->name);
+          B32 is_set = (value_cfg != &cfg_nil_node && value != info->default_value);
+
+          //- rad: name, value
+          DR_FStrList meta_fstrs = {0};
+          DR_FStrList value_fstrs = {0};
+          {
+            DR_FStrParams params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+            dr_fstrs_push_new(scratch.arena, &meta_fstrs, &params, info->display_name);
+            if(info->kind == RAD_SettingKind_U64 || info->kind == RAD_SettingKind_F32)
+            {
+              dr_fstrs_push_new(scratch.arena, &value_fstrs, &params, value_string,
+                                .font = rad_font_from_slot(RAD_FontSlot_Code),
+                                .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Code),
+                                .color = rad_rgba_from_code_color_slot(RAD_CodeColorSlot_CodeNumeric));
+            }
+            else if(info->kind == RAD_SettingKind_Enum || info->kind == RAD_SettingKind_Theme)
+            {
+              String8 display = value_string;
+              if(info->kind == RAD_SettingKind_Theme)
+              {
+                display = rad_theme_preset_display_string_table[Min((U64)value, RAD_ThemePreset_COUNT-1)];
+              }
+              dr_fstrs_push_new(scratch.arena, &value_fstrs, &params, display);
+              dr_fstrs_push_new(scratch.arena, &value_fstrs, &params, str8_lit("  "));
+              dr_fstrs_push_new(scratch.arena, &value_fstrs, &params, rad_icon_kind_text_table[RAD_IconKind_DownCaret],
+                                .font = rad_font_from_slot(RAD_FontSlot_Icons),
+                                .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons),
+                                .size = ui_top_font_size()*0.8f);
+            }
+          }
+
+          //- rad: build row box
+          UI_BoxFlags row_flags = UI_BoxFlag_DisableFocusOverlay;
+          if(row_idx & 1)
+          {
+            ui_set_next_tag(str8_lit("alt"));
+            row_flags |= UI_BoxFlag_DrawBackground;
+          }
+          ui_set_next_pref_width(ui_px(contents_width_px, 1.f));
+          ui_set_next_focus_hot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off);
+          UI_Box *row_box = ui_build_box_from_stringf(row_flags|((row_idx+1 == rows_count)*UI_BoxFlag_DrawSideBottom)|UI_BoxFlag_Clickable, "setting_row_%S", info->name);
+          ss->layout_row_rects[setting_idx] = row_box->rect;
+
+          //- rad: build cell
+          B32 toggled = (value != 0);
+          F32 slider_value = rad_setting_pct_from_value(info, value);
+          B32 revert = 0;
+          UI_Signal sig = {0};
+          UI_Parent(row_box)
+          {
+            RAD_CellParams cell_params = {0};
+            cell_params.flags            = (RAD_CellFlag_KeyboardClickable|RAD_CellFlag_NoBackground);
+            cell_params.meta_fstrs       = meta_fstrs;
+            cell_params.description      = info->description;
+            cell_params.value_fstrs      = value_fstrs;
+            cell_params.search_needle    = needle;
+            cell_params.toggled_out      = &toggled;
+            cell_params.slider_value_out = &slider_value;
+            cell_params.revert_out       = &revert;
+            cell_params.control_rect_out = &ss->layout_control_rects[setting_idx];
+            cell_params.revert_rect_out  = &ss->layout_revert_rects[setting_idx];
+            if(info->kind == RAD_SettingKind_Bool)
+            {
+              cell_params.flags |= RAD_CellFlag_ToggleSwitch;
+            }
+            if(info->kind == RAD_SettingKind_U64 || info->kind == RAD_SettingKind_F32)
+            {
+              cell_params.flags |= RAD_CellFlag_Slider;
+            }
+            if(is_set)
+            {
+              cell_params.flags |= RAD_CellFlag_RevertButton;
+            }
+            UI_WidthFill
+              UI_FocusHot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off)
+              UI_FocusActive(UI_FocusKind_Off)
+            {
+              sig = rad_cellf(&cell_params, "###setting_%S", info->name);
+            }
+          }
+          UI_Signal row_sig = ui_signal_from_box(row_box);
+
+          //- rad: interactions
+          if(ui_pressed(sig) || ui_pressed(row_sig))
+          {
+            ss->cursor = ss->mark = v2s64(0, row_idx+1);
+            ss->filter_focused = 0;
+            rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
+          }
+          if((ui_clicked(sig) || ui_clicked(row_sig)) &&
+             (info->kind == RAD_SettingKind_Enum || info->kind == RAD_SettingKind_Theme))
+          {
+            ss->menu_setting = setting_idx;
+            ui_ctx_menu_open(menu_key, row_box->key, v2f32(dim_2f32(row_box->rect).x - ui_top_font_size()*20.f, dim_2f32(row_box->rect).y));
+          }
+          if(ui_double_clicked(sig) && info->kind == RAD_SettingKind_Bool)
+          {
+            toggled = !toggled;
+          }
+          if(open_menu_for_selected && row_selected)
+          {
+            ss->menu_setting = setting_idx;
+            ui_ctx_menu_open(menu_key, row_box->key, v2f32(dim_2f32(row_box->rect).x - ui_top_font_size()*20.f, dim_2f32(row_box->rect).y));
+          }
+
+          //- rad: changes -> the user file
+          if(revert)
+          {
+            rad_setting_revert(info->name);
+          }
+          else if(info->kind == RAD_SettingKind_Bool && toggled != (value != 0))
+          {
+            rad_setting_set_f64(info->name, toggled ? 1 : 0);
+          }
+          else if(info->kind == RAD_SettingKind_U64 || info->kind == RAD_SettingKind_F32)
+          {
+            if(slider_value != rad_setting_pct_from_value(info, value))
+            {
+              F64 new_value = info->min + Clamp(0, slider_value, 1)*(info->max - info->min);
+              if(info->kind == RAD_SettingKind_U64)
+              {
+                new_value = round_f64(new_value);
+              }
+              else
+              {
+                new_value = round_f64(new_value*100.0)/100.0;
+              }
+              if(new_value != value)
+              {
+                rad_setting_set_f64(info->name, new_value);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  //////////////////////////////
+  //- rad: options menu (enums, the theme): the cargo profile menu's rows
+  //
+  UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(20.f, 1.f)) UI_TagF("implicit")
+  {
+    U64 setting_idx = Min(ss->menu_setting, RAD_SettingCode_COUNT-1);
+    RAD_SettingInfo *info = &rad_setting_info_table[setting_idx];
+    U64 current = (U64)rad_setting_f64_from_settings(settings, setting_idx);
+    String8List options = {0};
+    if(info->kind == RAD_SettingKind_Theme)
+    {
+      for EachEnumVal(RAD_ThemePreset, preset)
+      {
+        str8_list_push(scratch.arena, &options, rad_theme_preset_display_string_table[preset]);
+      }
+    }
+    else
+    {
+      U8 split = '|';
+      options = str8_split(scratch.arena, info->options, &split, 1, 0);
+    }
+    ss->layout_menu_frame = rad_state->frame_index;
+    ss->layout_menu_count = 0;
+    U64 option_idx = 0;
+    for(String8Node *n = options.first; n != 0; n = n->next, option_idx += 1)
+    {
+      B32 selected = (option_idx == current);
+      ui_set_next_child_layout_axis(Axis2_X);
+      UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|
+                                              UI_BoxFlag_DrawBackground|
+                                              UI_BoxFlag_DrawHotEffects|
+                                              UI_BoxFlag_DrawActiveEffects|
+                                              UI_BoxFlag_Clickable,
+                                              "###setting_option_%I64u", option_idx);
+      UI_Parent(box) UI_HeightFill UI_Padding(ui_em(1.f, 1.f))
+      {
+        RAD_Font(RAD_FontSlot_Icons)
+          UI_PrefWidth(ui_em(2.f, 1.f))
+          UI_TextAlignment(UI_TextAlign_Center)
+          UI_TagF("weak")
+          ui_label(selected ? rad_icon_kind_text_table[RAD_IconKind_Check] : str8_lit(""));
+        UI_PrefWidth(ui_text_dim(10, 1.f)) ui_label(n->string);
+      }
+      if(option_idx < ArrayCount(ss->layout_menu_rects))
+      {
+        ss->layout_menu_rects[option_idx] = box->rect;
+        ss->layout_menu_count = option_idx+1;
+      }
+      if(ui_clicked(ui_signal_from_box(box)))
+      {
+        rad_setting_set_f64(info->name, (F64)option_idx);
+        ui_ctx_menu_close();
+      }
+    }
+  }
+  #undef rad_setting_pct_from_value
 
   scratch_end(scratch);
 }

@@ -181,6 +181,41 @@ struct RAD_ProblemsState
 };
 
 ////////////////////////////////
+//~ rad: Settings View Types
+
+typedef struct RAD_SettingsState RAD_SettingsState;
+struct RAD_SettingsState
+{
+  // rad: selection + scroll (cursor.y = 1-based row, 0 = none)
+  UI_ScrollPt2 scroll_pos;
+  Vec2S64 cursor;
+  Vec2S64 mark;
+
+  // rad: filter row (a line edit; has the keyboard while `filter_focused`)
+  B32 filter_focused;
+  U8 filter_buffer[256];
+  U64 filter_size;
+  U64 filter_cursor;
+  U64 filter_mark;
+
+  // rad: the setting whose options menu is open (enums, the theme)
+  U64 menu_setting;
+
+  // rad: layout of the last build (scripted input aims with it); per
+  // setting, zero if not visible
+  U64 layout_frame;
+  Rng2F32 layout_filter_rect;
+  U64 layout_rows_count;
+  U64 layout_row_settings[RAD_SettingCode_COUNT];
+  Rng2F32 layout_row_rects[RAD_SettingCode_COUNT];
+  Rng2F32 layout_control_rects[RAD_SettingCode_COUNT];
+  Rng2F32 layout_revert_rects[RAD_SettingCode_COUNT];
+  Rng2F32 layout_menu_rects[64];
+  U64 layout_menu_count;
+  U64 layout_menu_frame;
+};
+
+////////////////////////////////
 //~ rad: View State Cache Types
 
 typedef struct RAD_ViewState RAD_ViewState;
@@ -193,6 +228,7 @@ struct RAD_ViewState
   RAD_CodeViewState cv;
   RAD_ExplorerState ex;
   RAD_ProblemsState pr;
+  RAD_SettingsState ss;
 
   // rad: query bar (port of raddbg's RD_ViewState query state; the command
   // and committed input live in the tab's `query` cfg child)
@@ -276,5 +312,10 @@ internal void rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect);
 internal void rad_output_view_ui(CFG_Node *tab, Rng2F32 rect);
 internal void rad_problems_view_ui(CFG_Node *tab, Rng2F32 rect);
 internal void rad_goto_diagnostic(CFG_Node *window, U64 diag_num);
+
+////////////////////////////////
+//~ rad: Settings
+
+internal void rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect);
 
 #endif // RAD_VIEWS_H

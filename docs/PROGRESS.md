@@ -245,7 +245,8 @@ Milestone 6 details (each item with its script):
 - Open files are still checked by file_stream's timestamp poll (async
   threads, about once a second), not by OS notifications.
 - Settings: `RAD_SettingTable` in rad.mdesk, stored in the user file under
-  `settings:`; no Settings view yet (tasks B1).
+  `settings:`, File > Settings tab. A number can't be typed in yet (slider,
+  Left/Right).
 - Tab inserts 4 spaces. No smart indent after `{`.
 - Script mode injects input after the OS layer (as `WM_Event`s), so the
   win32 message translation (WM_KEYDOWN/WM_CHAR -> events) is not covered;
@@ -381,6 +382,22 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-04 (tasks B1 step 2: Settings tab)
+- `rad_settings_view_ui` (rad_views.c): raddbg's User Settings lister as a
+  tab (`settings` tab kind, File > Settings, one per window, opens where
+  files open). Filter row in the query bar's look; rows of `rad_cell`s 5
+  font sizes tall (raddbg's `do_big_rows`; Compact: 4).
+- `rad_cell` gained raddbg's name/description column, toggle switch,
+  slider and revert button (ported from rd_cell), plus rect outputs for
+  scripts. Fix: the "focus cursor" step wrote into `ui_nil_box` (read-only)
+  for cells without a line edit; it now skips them.
+- Code zoom keys moved to Ctrl+Shift+= / Ctrl+Shift+- / Ctrl+0: step 1's
+  Ctrl+Shift+Comma had taken raddbg's Previous Panel binding.
+- Script: fields `settings_rows`, `settings_selected`, `settings_filter`,
+  `settings_filter_focused`; targets `setting_row`, `setting_control`,
+  `setting_revert`, `settings_filter`, `setting_option`; script
+  `settings_view` (33).
+
 ### 2026-11-04 (tasks B1 step 1, B3: settings table, code font zoom)
 - `RAD_SettingTable` (rad.mdesk) generates `RAD_Settings`,
   `RAD_SettingCode`, `rad_setting_info_table` (kind, offset, default,
@@ -392,8 +409,8 @@ of `text_buffer.h`.
   `code_font_size`, `mouse_wheel_zoom`. Fonts: a window keeps a DPI scale;
   UI size = font_size x scale, code size (text and Output views) =
   code_font_size x scale. Alt+= / Alt+- change font_size; Zoom In/Out
-  (Code) Ctrl+Shift+. / Ctrl+Shift+, and Ctrl+wheel (if Mouse Wheel Zoom)
-  change code_font_size; Reset Zoom (Code).
+  (Code) and Ctrl+wheel (if Mouse Wheel Zoom) change code_font_size;
+  Reset Zoom (Code). (Keys: see the B1 step 2 entry.)
 - Script: field `setting <name>`, `editor_font_size`, `ui_font_size`;
   command `set_setting`; script `settings` (21).
 

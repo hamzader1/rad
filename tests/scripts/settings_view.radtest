@@ -1,0 +1,108 @@
+# Settings tab (tasks B1): File > Settings opens one tab where files open;
+# toggle switches, sliders, the options menu (enums, theme), revert, the
+# filter, the keyboard. Changes go to the user file and apply at once.
+
+open ../fixtures/edit.txt
+wait_idle
+cmd settings
+wait_idle
+expect panel == "settings"
+expect tab_count == 3
+expect settings_rows == 23
+expect settings_selected == ""
+expect settings_filter_focused == 0
+
+# a second Settings opens no second tab
+cmd settings
+wait_idle
+expect tab_count == 3
+
+# toggle switch: Background Blur
+expect setting background_blur == 1
+click setting_control background_blur
+wait_idle
+expect setting background_blur == 0
+expect settings_selected == ""
+click setting_control background_blur
+wait_idle
+expect setting background_blur == 1
+
+# revert button: only on changed settings
+click setting_control drop_shadows
+wait_idle
+expect setting drop_shadows == 0
+click setting_revert drop_shadows
+wait_idle
+expect setting drop_shadows == 1
+
+# slider: drag Tab Width far left (the row's middle) -> the min (1); it is
+# below the fold: the filter brings it up
+click settings_filter
+text "tab width"
+wait_idle
+expect settings_rows == 1
+drag setting_control tab_width setting_row tab_width
+wait_idle
+expect setting tab_width == 1
+click setting_revert tab_width
+wait_idle
+expect setting tab_width == 2
+click settings_filter
+key esc
+wait_idle
+expect settings_rows == 23
+
+# options menu: Density -> Compact (setting_option 2)
+click setting_row density
+wait_idle
+expect settings_selected == "density"
+click setting_option 2
+wait_idle
+expect setting density == "Compact"
+click setting_row density
+wait_idle
+click setting_option 1
+wait_idle
+expect setting density == "Comfortable"
+
+# keyboard: Down/Up select, Space toggles, Left/Right step
+click setting_row drop_shadows
+wait_idle
+expect settings_selected == "drop_shadows"
+key space
+wait_idle
+expect setting drop_shadows == 0
+key space
+wait_idle
+expect setting drop_shadows == 1
+key down
+wait_idle
+expect settings_selected == "rounded_corner_amount"
+key left 2
+wait_idle
+expect setting rounded_corner_amount == 0.90
+key right 2
+wait_idle
+expect setting rounded_corner_amount == 1.00
+
+# filter: typing goes to it, rows narrow; Esc clears, Esc again leaves it
+text "font"
+wait_idle
+expect settings_filter_focused == 1
+expect settings_filter == "font"
+expect settings_rows == 7
+key esc
+wait_idle
+expect settings_filter == ""
+expect settings_rows == 23
+key esc
+wait_idle
+expect settings_filter_focused == 0
+click settings_filter
+text "zzzq"
+wait_idle
+expect settings_rows == 0
+key esc
+wait_idle
+expect settings_rows == 23
+quit

@@ -232,6 +232,19 @@ rad_setting_set_f64(String8 name, F64 value)
   }
 }
 
+internal void
+rad_setting_revert(String8 name)
+{
+  // NOTE(rad): back to the default: the user file forgets the value
+  CFG_Node *node = rad_setting_cfg_node(name);
+  if(node != &cfg_nil_node)
+  {
+    cfg_node_release(rad_state->cfg, node);
+  }
+  rad_state->settings = rad_settings_from_cfg();
+  rad_request_frame();
+}
+
 internal F32
 rad_code_font_size(RAD_Window *ws)
 {
@@ -900,6 +913,11 @@ rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab)
     icon_kind = RAD_IconKind_WarningSmall;
     name = str8_lit("Problems");
   }
+  else if(str8_match(tab->string, str8_lit("settings"), 0))
+  {
+    icon_kind = RAD_IconKind_Gear;
+    name = str8_lit("Settings");
+  }
   else
   {
     name = tab->string;
@@ -1363,6 +1381,14 @@ rad_view_ui(CFG_Node *tab, Rng2F32 rect)
     {
       rad_problems_view_ui(tab, rect);
     }
+
+    //////////////////////////////
+    //- rad: settings
+    //
+    else if(str8_match(tab->string, str8_lit("settings"), 0))
+    {
+      rad_settings_view_ui(tab, rect);
+    }
   }
 
   //////////////////////////////
@@ -1633,6 +1659,8 @@ rad_window_frame(RAD_Window *ws)
                     RAD_CmdKind_Save,
                     RAD_CmdKind_SaveAll,
                     RAD_CmdKind_Null,//-
+                    RAD_CmdKind_Settings,
+                    RAD_CmdKind_Null,//-
                     RAD_CmdKind_Exit,
                   };
                   U32 codepoints[] =
@@ -1641,6 +1669,8 @@ rad_window_frame(RAD_Window *ws)
                     'f',
                     's',
                     'a',
+                    0,//-
+                    'e',
                     0,//-
                     'x',
                   };
@@ -4105,6 +4135,25 @@ rad_exec_cmd(RAD_Cmd *cmd)
     case RAD_CmdKind_ClearOutput:
     {
       rad_cargo_clear_output();
+    }break;
+    case RAD_CmdKind_Settings:
+    if(window != &cfg_nil_node)
+    {
+      // rad: one Settings tab per window, opened where files open
+      CFG_Node *tab = rad_tab_from_window_kind(window, str8_lit("settings"));
+      if(tab == &cfg_nil_node)
+      {
+        CFG_Node *panel = rad_editor_panel_from_window(window);
+        if(panel != &cfg_nil_node)
+        {
+          tab = cfg_node_new(rad_state->cfg, panel, str8_lit("settings"));
+        }
+      }
+      if(tab != &cfg_nil_node)
+      {
+        rad_focus_tab(tab);
+        rad_focus_panel(tab->parent);
+      }
     }break;
     case RAD_CmdKind_ShowOutput:
     case RAD_CmdKind_ShowProblems:

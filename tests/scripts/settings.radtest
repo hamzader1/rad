@@ -1,5 +1,5 @@
 # Settings (rad.mdesk RAD_SettingTable, stored in the user file under
-# `settings:`): defaults; the code font size alone (Ctrl+Shift+. / Ctrl+Shift+,,
+# `settings:`): defaults; the code font size alone (Ctrl+Shift+= / Ctrl+Shift+-, Ctrl+0,
 # Ctrl+wheel when Mouse Wheel Zoom is on, Reset); the UI font size alone
 # (Alt+= / Alt+-); enums by option.
 
@@ -13,16 +13,16 @@ expect editor_font_size == 11
 expect ui_font_size == 11
 
 # zoom the code only
-key ctrl+shift+period
+key ctrl+shift+equal
 wait_idle
 expect setting code_font_size == 12
 expect editor_font_size == 12
 expect ui_font_size == 11
-key ctrl+shift+comma 3
+key ctrl+shift+minus 3
 wait_idle
 expect setting code_font_size == 9
 expect editor_font_size == 9
-cmd reset_code_font_size
+key ctrl+0
 wait_idle
 expect editor_font_size == 11
 

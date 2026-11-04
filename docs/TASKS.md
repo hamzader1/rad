@@ -117,7 +117,7 @@ them), then layout (C), tabs (D), the gutter (E), drag and drop (F).
 
 ## B. Settings
 
-- [ ] **B1. Settings storage and Settings view.** No hardcoded values: every
+- [x] **B1. Settings storage and Settings view.** No hardcoded values: every
   setting gets a row in a settings table in `rad.mdesk` (name, type,
   default, range, display name, description), ported from raddbg's
   `RD_SchemaTable` (`@schema user`, `@schema window`), kept in the user file
@@ -126,7 +126,19 @@ them), then layout (C), tabs (D), the gutter (E), drag and drop (F).
   Ctrl+Shift+Comma) that looks like raddbg's settings table (`rad_cell`
   rows, the same check boxes, sliders, text fields) with a filter box.
   Replaces `rad_default_settings`.
-- [ ] **B2. The settings themselves** (first set):
+  Done 2026-11-04 (scripts `settings`, `settings_view`). File > Settings
+  (no key: Ctrl+Shift+Comma is raddbg's Previous Panel). Rows are raddbg's
+  big lister rows (5 font sizes; Compact: 4): name + description, toggle
+  switch, value + slider, revert button (changed settings only); enums and
+  the theme open a menu of their options. Keyboard: Up/Down, Space/Enter,
+  Left/Right; typing filters. Not yet: typing a number into a value.
+- [ ] **B2. The settings themselves** (first set). 2026-11-04: in the table
+  and applied: all animations, opaque backgrounds, blur, drop shadows,
+  rounded corners, density (row and tab heights), UI and code font sizes,
+  smooth/hint text, Mouse Wheel Zoom, line numbers, tab width, scope
+  lines/annotations, theme, Alt focuses the menu bar. Left: tab overflow
+  and close button (D), explorer compact rows and side (C2), scroll past
+  end, font faces, density for panel headers (C).
   - Animations (all), Scrolling Animations ("smooth movement"), Tooltip
     Animations, Menu Animations, Cursor Trail (raddbg's).
   - Transparency: Opaque Backgrounds, Background Blur (raddbg's); Drop
@@ -150,7 +162,8 @@ them), then layout (C), tabs (D), the gutter (E), drag and drop (F).
   Alt+= / Alt+- (raddbg's keys) stay the whole-window font size.
   Done when: a script zooms the code font and checks the UI font did not
   change, and the size is saved in the user file.
-  Done 2026-11-04 (script `settings`). Reset Zoom (Code) has no key yet.
+  Done 2026-11-04 (script `settings`). Keys: Ctrl+Shift+= / Ctrl+Shift+-,
+  Ctrl+0 resets (Ctrl+Shift+Comma stays raddbg's Previous Panel).
 
 ## C. Layout: tool windows
 
