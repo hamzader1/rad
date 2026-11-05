@@ -221,9 +221,11 @@ Milestone 6 details (each item with its script):
    - Logo: the user will supply one later (`data/logo.ico` for the exe,
      window and About; `data/logo.png` for Linux).
    - LICENSE holds Epic's notice only; the user may add their own line.
-2. Speed: the user will come back to what feels slow (2026-11-03: "ignore,
-   we will come back later"). Measured so far: 1 frame from input to
-   screen (release: UI build ~2 ms/frame, input shows in the next frame).
+2. Speed: preliminary findings are in `PERFORMANCE_ISSUES.md`. The strongest
+   code-level suspects are full-file fold regeneration per buffer version,
+   full-text LSP snapshots on the UI thread, and compaction after a 100 ms
+   pause. The current Mac perf script did not produce results in this
+   environment; capture stage timings on macOS before changing the hot paths.
 3. Not yet compared side by side with raddbg.exe: the query bar, the zoom
    button, the loading overlay (line-by-line ports; needs raddbg focused;
    raddbg.exe now builds from the `raddbg-reference` tag, see "Build, run,
@@ -414,6 +416,21 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-05 (performance investigation)
+- Traced typing through the patch-based text buffer, editable code view,
+  document tick, compaction, frame loop, Mac OpenGL present, and rust-analyzer
+  synchronization. Findings and source references: `PERFORMANCE_ISSUES.md`.
+- Confirmed a per-version full-file fold scan, full-document LSP serialization
+  on the UI thread at 150 ms intervals, and whole-document compaction/hash on
+  the UI thread after 100 ms or 32 patches. The old 3,000-line 60 Hz release
+  baseline measured 2.4 ms average UI build and 16.6 ms input-to-present, but
+  it is not a current Mac benchmark and script mode leaves LSP disabled by
+  default.
+- Built a separate optimized ARM64 executable. The Mac perf script did not
+  reach script initialization or write results in this desktop environment;
+  startup emitted Launch Services/XPC errors. No current Mac latency is
+  claimed.
 
 ### 2026-11-05 (milestone 12, step 2: Raid runs on the Mac)
 - `src/mac/window_manager` (Cocoa): wm_get_events pumps NSApp's queue itself
