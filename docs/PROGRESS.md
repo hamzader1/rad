@@ -10,13 +10,16 @@ frame is built and how the code view draws text; the script language for UI
 tests is at the top of `src/rad/rad_script.h`. Working rules agreed with the
 user, beyond CLAUDE.md:
 - Commit and push to `origin/main` after each finished change (standing OK).
-  Stage paths explicitly (metagen leaves ~50 unchanged generated files
-  marked modified).
+  Stage paths explicitly (metagen leaves ~20 unchanged generated files
+  marked modified). But after an `.mdesk` change, stage the generated files
+  that really changed: `git diff --ignore-cr-at-eol --stat -- '*generated*'`
+  lists them (until 2026-11-05 `rad.meta.*` in git lagged rad.mdesk by
+  tasks G2-G7; builds rerun metagen, so only the repo copy was stale).
 - Text with backslashes (Windows paths, C escapes) must not go through a
   Bash heredoc: `\r` and `\n` turn into real control characters. Write such
   edit scripts with the file-writing tool and run `python -I <file>`.
 
-## Status (2026-11-04)
+## Status (2026-11-05)
 
 Windows only for now; macOS is milestones 11-12, at the very end (decided 2026-11-03).
 Plan revised 2026-11-03 (see CLAUDE.md section 6). Builds: unoptimized day to day; an
@@ -33,7 +36,7 @@ optimized build in `build\release\rad.exe` at the end of every milestone.
 | 7. Rust syntax highlighting          | Done. Rust lexing in the `text` layer (see below, `docs/notes/04-syntax-highlighting.md`); 14 scripts, 242 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 8. Cargo integration                 | Done. `json` layer; cargo runner (Build, Check, Run, Test, Stop; Debug/Release), Output + Problems tabs, diagnostics in the editor, clickable locations, Run in a terminal window, top-bar run toolbar with the user's icons (see journal). 18 scripts, 368 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 9. LSP client                        | Done. `lsp` layer; one rust-analyzer per Cargo workspace: diagnostics (Problems + editor), hover, Go To Definition (F12, Ctrl+click, Alt+Left back), completion list (as you type, `.`, `::`, Ctrl+Space; imports) (see journal). 22 scripts, 453 checks, pass (debug and release, `build\release\rad.exe` 2026-11-04). |
-| 10. Remove debugger, rebrand         | Not started. |
+| 10. Remove debugger, rebrand         | In progress. Step 1 done (2026-11-05): debugger, debug-info layers, tools and their third-party code out of the repo and the build (421 files; tag `raddbg-reference` keeps them). Step 2: rebrand (needs the user's choice of name and logo). |
 | 11-13. Mac foundation, Mac UI, debugging | Not started. |
 
 Milestone 3 details:
@@ -203,18 +206,25 @@ Milestone 6 details (each item with its script):
 
 ## Next steps
 
-0. **`docs/TASKS.md` first** (user's list of 2026-11-04 + suggestions:
-   fixes, settings, tool windows, tabs, gutter/folding, drag and drop).
-   It is the whole focus until done; milestone 10 waits. Hint images are
-   in `.dev_hints/` (private, git-ignored, never push it).
-1. Milestone 10 (remove the debugger and rebrand): debugger-only layers
-   out of the repo and the build, keep the MIT notice. The last Windows
-   step; until then `raddbg.exe` stays the visual reference.
+0. `docs/TASKS.md` (A-H) is done. Hint images are in `.dev_hints/`
+   (private, git-ignored, never push it).
+1. Milestone 10, step 2: rebrand. Needs the user's decisions: product
+   name (exe, window class, user-file folder `%APPDATA%/rad`, user-file
+   header), logo (`data/logo.ico`, `data/logo.png`). Then: README.md
+   (still raddbg's), LICENSE (keep Epic's MIT notice, add ours), the
+   strings left from raddbg in kept code: `BUILD_ISSUES_LINK_STRING_LITERAL`
+   (`base_context_cracking.h`), `raddbg_crash_dump.dmp` (`win32_base.c`),
+   X11 class `raddbg`/`RADDBG` (`linux_window_manager.c`), the `raddbg`
+   symlink name (`linux_shell.c`). Keep the "Built on the RAD Debugger
+   codebase (MIT license)" line in About. Then the milestone's release
+   build into `build\release\rad.exe`.
 2. Speed: the user will come back to what feels slow (2026-11-03: "ignore,
    we will come back later"). Measured so far: 1 frame from input to
    screen (release: UI build ~2 ms/frame, input shows in the next frame).
 3. Not yet compared side by side with raddbg.exe: the query bar, the zoom
-   button, the loading overlay (line-by-line ports; needs raddbg focused).
+   button, the loading overlay (line-by-line ports; needs raddbg focused;
+   raddbg.exe now builds from the `raddbg-reference` tag, see "Build, run,
+   test").
 4. For milestone 11 (Mac, at the end), already known: `base_core.h:276-277`
    and `base_core.c:667` need ARM64 guards; drop `-mcx16` on ARM64.
 
@@ -306,7 +316,14 @@ Milestone 6 details (each item with its script):
   MSVC 14.44, Windows SDK 10.0.26100), `cd` to the repo, then:
   - `build rad` -> `build\rad.exe`
   - `build rad_tests` -> `build\rad_tests.exe` (prints the check count)
-  - `build raddbg` -> reference build for side-by-side UI screenshots
+  - `build` with no target builds `rad`. Only `rad` and `rad_tests` are left
+    (milestone 10).
+- raddbg.exe, the reference for side-by-side UI screenshots, builds from
+  the `raddbg-reference` tag in a second worktree:
+  `git worktree add ..\rad_reference raddbg-reference`, then in that folder
+  `tests\shell_build.bat raddbg` -> `..\rad_reference\build\raddbg.exe`.
+  (A copy built before the removal may still sit in `build\raddbg.exe`;
+  builds here no longer write or delete it.)
 - Run: `build\rad.exe [file ...]`. With no file it shows the start page.
 - Log: `%APPDATA%\rad\logs\ui_thread.rad_log` (written by `log_infof`).
 - Every build reruns metagen, which writes `generated/*.meta.*` (and
@@ -381,6 +398,50 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-05 (milestone 10, step 1: the debugger out of the repo)
+- The rule (user): remove only what is unused now AND not needed later.
+- Measured: the include closure of `rad_main.c`, `rad_tests.c` and
+  `metagen_main.c` (every `#include "..."` on both sides of every `#if`, so
+  Linux files count as used): 194 files. base; win32 + linux (base, shell,
+  window_manager; win32/x64); artifact_cache, mdesk, window_manager, shell,
+  config, content, file_stream, text, text_buffer, mutable_text, json, lsp,
+  font_provider (dwrite, freetype), render (d3d11, opengl, stub), font_cache,
+  draw, ui; `lib_raddbg_markup` (via `base_markup.h`); `x64/x64_exceptions.h`
+  (linux base); third_party martins_hash, martins_memfun, radsort, stb,
+  xxHash. Every other folder was included only from debugger or tool entry
+  points (raddbg, torture, radlink, radbin, raddump, scratch, mule).
+- Checked against later milestones: Mac (11-12) needs base, linux/base as
+  the template, window_manager, shell, render/opengl, font_provider/freetype:
+  all kept. Debugging (13, lldb-dap): DAP is JSON over stdio with LSP's
+  framing (json + lsp); lldb does symbols, unwinding, expressions and
+  disassembly, so no engine or debug-info layer is needed; raddbg's views
+  are read from the tag when ported. C/C++ later: clangd over LSP and the
+  `text` layer's C lexer. http/socket: no planned use (and no Mac backend);
+  restore from the tag if that changes.
+- Removed (421 files): `raddbg`, the engine and debug-info layers, the tools,
+  `zydis`/`blake3`/`sinfl`/`rad_lzb_simple`/`martins_bitscan` (list in
+  CLAUDE.md section 3); all of `x64/` but `x64_exceptions.h`; the empty
+  `metagen_base`/`metagen_os` stubs; `natvis/raddbg.natstepfilter`;
+  `obsolete/`; root `run_tests.bat/.sh` (radlink/radbin torture tests),
+  `launch.vs.json`, `project.4coder`, `project.raddbg`, `CHANGELOG.md`
+  (raddbg's); `data/` fonts nothing embeds (Inconsolata, Roboto,
+  liberation-mono).
+- Kept on purpose: `natvis/base.natvis` (linked into rad.pdb),
+  `base/tests/base_tests.c` (a base test program, useful for the macOS
+  runner in milestone 11), `data/icons.ttf` (input of make_rad_icons.py),
+  `data/logo.png` (linux shell), `lib_raddbg_markup`. Kept layers are not
+  trimmed inside (unused ui widgets etc. may serve later ports).
+- build.bat / build.sh: targets `rad` and `rad_tests` only, default `rad`;
+  dropped the blake3 assembly, Oodle, PGO (its training run was radlink's),
+  com_shim. Kept: msvc/clang, debug/release, asan, ubsan, telemetry, spall,
+  opengl, dwarf, git hash, natvis, icon, metagen. `.gitattributes`: lines
+  for removed files dropped.
+- Tag `raddbg-reference` (pushed) = the last commit with all of it.
+- Checked: metagen rebuilt from scratch and run (12 mdesk files, 31
+  tables); kept layers' generated output unchanged apart from CRLF, except
+  `rad.meta.*`, stale in git since G2-G7 (now committed); `rad_tests`
+  37,610,802 checks, 0 failing; all 40 UI scripts pass (548 checks, debug).
 
 ### 2026-11-04 (tasks H1-H3: feedback on G)
 - H1: completion rows push the label as one plain fstr (`text` color).

@@ -5,8 +5,8 @@ cd "$(dirname "$0")"
 # --- Unpack Arguments --------------------------------------------------------
 auto_compile_flags=""
 for arg in "$@"; do declare $arg='1'; done
-if [[ "$#" == "0" ]]; then raddbg='1'; fi
-if [[ "$#" == "1" && "${release:-0}" == "1" ]]; then raddbg='1'; fi
+if [[ "$#" == "0" ]]; then rad='1'; fi
+if [[ "$#" == "1" && "${release:-0}" == "1" ]]; then rad='1'; fi
 if [[ "${asan:-0}" == "1" ]]; then
   echo "[asan enabled]"
   auto_compile_flags="$auto_compile_flags -fsanitize=address"
@@ -51,9 +51,8 @@ if   [[ "${release:-0}" == "1" ]]; then echo "[release mode]"; compile="$compile
 elif [[ "${debug:-1}"   == "1" ]]; then echo "[debug mode]";   compile="$compiler $cc_debug";
 fi
 
-oodle_flags=()
 compile() {
-  $compile "${oodle_flags[@]}" -Wl,--start-group "$@" blake3.a -latomic -Wl,--end-group
+  $compile -Wl,--start-group "$@" -latomic -Wl,--end-group
 }
 
 # --- Prep Directories --------------------------------------------------------
@@ -71,75 +70,15 @@ if [[ ! -v no_meta ]]; then
 fi
 cd ..
 
-# --- Assemble BLAKE3 ---------------------------------------------------------
-if [[ ! -f "build/blake3.a" ]]; then
-  echo "[assembling blake3]"
-  $compiler -c -g -o build/blake3_sse2_x86-64_unix.o   src/third_party/blake3/blake3_sse2_x86-64_unix.S
-  $compiler -c -g -o build/blake3_sse41_x86-64_unix.o  src/third_party/blake3/blake3_sse41_x86-64_unix.S
-  $compiler -c -g -o build/blake3_avx2_x86-64_unix.o   src/third_party/blake3/blake3_avx2_x86-64_unix.S
-  $compiler -c -g -o build/blake3_avx512_x86-64_unix.o src/third_party/blake3/blake3_avx512_x86-64_unix.S
-  $ar rs build/blake3.a build/blake3_*_unix.o
-fi
-
-# --- Set up Oodle SDK -------------------------------------------------------
-if [[ "${radcobj:-0}" == "1" ]]; then oodle=1; fi
-if [[ "${oodle:-0}" == "1" ]]; then
-  oodle_sdk_path="${OODLE_SDK_DIR:-}"
-  if [[ -z "$oodle_sdk_path" ]]; then
-    for sdk in "$PWD"/local/oodle2*; do
-      if [[ -f "$sdk/linux/include/oodle2.h" ]]; then
-        if [[ -n "$oodle_sdk_path" ]]; then
-          echo "Multiple Oodle SDKs found: $oodle_sdk_path and $sdk/linux" >&2
-          echo "Set OODLE_SDK_DIR to select the SDK root." >&2
-          exit 1
-        fi
-        oodle_sdk_path="$sdk/linux"
-      fi
-    done
-  fi
-  if [[ -z "$oodle_sdk_path" ]]; then
-    echo "Oodle SDK not found. Put an oodle2* SDK with a linux subdirectory in $PWD/local or set OODLE_SDK_DIR." >&2
-    exit 1
-  fi
-  if [[ -f "$oodle_sdk_path/linux/include/oodle2.h" ]]; then
-    oodle_sdk_path="$oodle_sdk_path/linux"
-  fi
-  if [[ ! -f "$oodle_sdk_path/include/oodle2.h" ]]; then
-    echo "Oodle SDK directory '$oodle_sdk_path' must contain include/oodle2.h" >&2
-    exit 1
-  fi
-  oodle_sdk_path="$(cd "$oodle_sdk_path" && pwd)"
-  echo "[Oodle SDK: $oodle_sdk_path]"
-  # Keep the include path as one argument, including when it contains spaces.
-  oodle_flags=(-DOODLE_SDK=1 "-I$oodle_sdk_path/include")
-  for library in "$oodle_sdk_path"/lib/liboo2corelinux64.so "$oodle_sdk_path"/lib/liboo2corelinux64.so.*; do
-    if [[ -f "$library" ]]; then
-      cp -- "$library" "$PWD/build/"
-    fi
-  done
-fi
-
 # --- Build Everything (@build_targets) ---------------------------------------
 cd build
-if [[ "${radcobj:-0}" == "1" ]]; then
-  didbuild=1
-  $compile "${oodle_flags[@]}" -DOODLE_STATIC=1 -fPIC -c ../src/linker/radcobj_main.c -o radcobj.o
-  $ar rcs libradcobj.a radcobj.o
-fi
-if [[ "${raddbg:-0}"               == "1" ]]; then didbuild=1 && compile ../src/raddbg/raddbg_main.c $cc_icon $cc_link $cc_os_gfx $cc_render $cc_font_provider -o raddbg; fi
-if [[ "${raddbg_non_graphical:-0}" == "1" ]]; then didbuild=1 && compile ../src/raddbg/raddbg_main.c -DWM_STUB=1 -DR_BACKEND=R_BACKEND_STUB $cc_link $cc_os_gfx $cc_render $cc_font_provider -o raddbg_non_graphical; fi
 if [[ "${rad:-0}"                  == "1" ]]; then didbuild=1 && compile ../src/rad/rad_main.c $cc_icon $cc_link $cc_os_gfx $cc_render $cc_font_provider -o rad; fi
 if [[ "${rad_tests:-0}"            == "1" ]]; then didbuild=1 && compile ../src/rad/tests/rad_tests.c $cc_link -o rad_tests; fi
-if [[ "${raddbg_server:-0}"        == "1" ]]; then didbuild=1 && compile ../src/raddbg_server/raddbg_server_main.c $cc_link -o raddbg_server; fi
-if [[ "${radbin:-0}"               == "1" ]]; then didbuild=1 && compile ../src/radbin/radbin_main.c   $cc_link -o radbin; fi
-if [[ "${radlink:-0}"              == "1" ]]; then didbuild=1 && compile ../src/linker/lnk.c           $cc_link -o radlink; fi
-if [[ "${torture:-0}"              == "1" ]]; then didbuild=1 && compile ../src/torture/torture_main.c $cc_link $cc_os_gfx $cc_render $cc_font_provider -o torture; fi
-if [[ "${ryan_scratch:-0}"         == "1" ]]; then didbuild=1 && compile ../src/scratch/ryan_scratch.c $cc_link $cc_os_gfx $cc_render $cc_font_provider -o ryan_scratch; fi
 cd ..
 
 # --- Warn On No Builds -------------------------------------------------------
 if [[ "${didbuild:-0}" == "0" ]]; then
-  echo "[WARNING] no valid build target specified; must use build target names as arguments to this script, like \`./build.sh raddbg\` or \`./build.sh radlink\`."
+  echo "[WARNING] no valid build target specified; must use build target names as arguments to this script, like \`./build.sh rad\` or \`./build.sh rad_tests\`."
   exit 1
 fi
 

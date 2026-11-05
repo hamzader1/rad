@@ -81,10 +81,20 @@ Required features, in priority order:
     patch list, compacted in the background into new lexed blobs; undo/redo with
     groups, version counter, save, disk-change tracking. Depends on `base`,
     `content`, `text` only; tested by `rad_tests`.
-  - `raddbg` (`RD_`): the debugger frontend that ties everything together.
-- Debugger-only layers (candidates for pruning at the end): `demon`, `ctrl`,
-  `dbg_engine`, `dbg_info`, `eval`, `eval_visualization`, `disasm`, `rdi_*`, `pdb`,
-  `coff`, `pe`, `dwarf`, `elf`, `codeview`, `regs`, `msf`, `msvc_crt`, `linker`, `radbin`.
+  - `json` (`JSON_`) and `lsp` (`LSP_`), ours: JSON parser/writer and the language
+    server client (framing, JSON-RPC, process with pipes).
+- **Removed in milestone 10 (2026-11-05):** the `raddbg` frontend (`RD_`), the
+  debugger engine and debug-info layers (`demon`, `dbg_engine`, `dbg_info`,
+  `dbg_server`, `eval`, `eval2`, `eval_visualization`, `disasm`, `unwind`, `eh_frame`,
+  `arch`, `rdi*`, `lib_rdi*`, `pdb`, `msf`, `codeview`, `coff`, `pe`, `elf`, `dwarf`,
+  `gnu`, `obj`, `llvm`, `minidump`, `msvc_crt`, `stap`, `symbol_server`, `http`,
+  `socket`, `compression`), the tools (`linker`, `radbin`, `raddump`, `raddbg_server`,
+  `strip_lib_debug`, `com_shim`, `torture`, `mule`, `scratch`) and the third-party
+  code only they used (`zydis`, `blake3`, `sinfl`, `rad_lzb_simple`,
+  `martins_bitscan`). All of it is in git tag **`raddbg-reference`** (the last commit
+  with it): use it to build `raddbg.exe` for side-by-side UI checks and to read
+  raddbg's views when porting them (e.g. debugger views in milestone 13). Paths like
+  `src/raddbg/...` in notes and code comments refer to that tag.
 - Build: `build.bat` on Windows (needs MSVC/Windows SDK or Clang), `build.sh` on Linux.
   Metagen (`.mdesk` files) generates tables and enums; do not edit generated output.
 
