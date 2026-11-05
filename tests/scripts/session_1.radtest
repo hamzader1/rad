@@ -1,4 +1,4 @@
-#! args: --user:"{work}\session.rad_user"
+#! args: --user:"{work}/session.rad_user"
 # Session memory, part 1 (part 2 restarts rad on the same user file):
 # set up a folder, tabs and a panel layout, then quit (rad saves at exit).
 

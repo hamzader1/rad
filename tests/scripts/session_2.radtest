@@ -1,4 +1,4 @@
-#! args: --user:"{work}\session.rad_user"
+#! args: --user:"{work}/session.rad_user"
 # Session memory, part 2: rad restarted on part 1's user file restores the
 # explorer folder, the panels and the tabs (focused panel and tab too).
 

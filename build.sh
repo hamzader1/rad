@@ -46,10 +46,9 @@ if [[ "$os_name" == "Darwin" ]]; then
   else
     cc_font_provider="-I/opt/homebrew/include/freetype2 -L/opt/homebrew/lib -lfreetype"
   fi
-  # TODO(rad): milestone 12 in progress; WM_STUB / R_BACKEND=0 (stub) until the
-  # Cocoa window manager and the macOS OpenGL backend land.
-  cc_os_gfx="-DWM_STUB=1 -framework Cocoa"
-  cc_render="-DR_BACKEND=0 -framework OpenGL"
+  cc_font_provider="$cc_font_provider -framework CoreText"
+  cc_os_gfx="-framework Cocoa"
+  cc_render="-framework OpenGL"
   cc_icon=""
   cc_objc="-x objective-c -fno-objc-arc"
 else

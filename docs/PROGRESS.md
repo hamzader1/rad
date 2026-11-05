@@ -40,7 +40,7 @@ Older entries below say `rad.exe`.
 | 9. LSP client                        | Done. `lsp` layer; one rust-analyzer per Cargo workspace: diagnostics (Problems + editor), hover, Go To Definition (F12, Ctrl+click, Alt+Left back), completion list (as you type, `.`, `::`, Ctrl+Space; imports) (see journal). 22 scripts, 453 checks, pass (debug and release, `build\release\rad.exe` 2026-11-04). |
 | 10. Remove debugger, rebrand         | Done. Debugger, debug-info layers, tools and their third-party code out of the repo and the build (421 files; tag `raddbg-reference` keeps them). Renamed to Raid: `raid.exe`, title/About, `%APPDATA%\raid\` (the old session file is imported once), README. Logo unchanged (the user's, later). 42 scripts, 833 checks, pass (debug and release, `build\release\raid.exe` 2026-11-05). |
 | 11. Mac foundation                  | Done (on the Mac, not from Windows). `src/mac/base` (from `src/linux/base`), ARM64 in `base`, `./build.sh rad_tests` on macOS: 37,610,802 checks, 0 failures (debug and release, ARM64, macOS 15.7). CI: `.github/workflows/macos.yml`. |
-| 12. Mac UI                           | In progress. Step 1 done: `bash build.sh raid` links on the Mac (Objective-C unity build) with the stub window manager and stub renderer; Mac shell (NSAlert, NSOpenPanel, NSWorkspace). Next: Cocoa window manager. Plan: `docs/notes/03-feasibility-spike.md`. |
+| 12. Mac UI                           | In progress. Raid runs on the Mac: Cocoa window manager, OpenGL 4.1 (sRGB present pass), FreeType + CoreText font names, Mac shell incl. Terminal.app runs. `tests/run_scripts.sh`: 42 scripts, 834 checks, all pass (debug). Not done: visual check vs Windows screenshots, IME/dead keys, file drop, .app bundle, release build. |
 | 13. Debugging                        | Not started. |
 
 Milestone 3 details:
@@ -414,6 +414,44 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-05 (milestone 12, step 2: Raid runs on the Mac)
+- `src/mac/window_manager` (Cocoa): wm_get_events pumps NSApp's queue itself
+  (nextEventMatchingMask; NSApp never runs its loop); input translated
+  before AppKit dispatch, key events never handed to AppKit (no beeps,
+  key-ups with Cmd held). Pixels + DPI like Windows (96 x backing scale).
+  Cmd and Control = Ctrl, Option = Alt; Cmd+Q closes the window. Custom
+  border: transparent full-size title bar, traffic lights hidden, rad's
+  own buttons; title-bar drag via performWindowDragWithEvent, edges resize
+  natively. Live resize draws whole frames from windowDidResize (no
+  nested pump). Trackpad scroll accumulated into 40-unit steps (2.5 units
+  per point; tune by feel). Script mode (wm_sim_*) wired like Linux.
+- `src/render/opengl/mac`: one NSOpenGLContext (4.1 core) shared by all
+  windows. Apple's gl3.h prototypes collide with the backend's function
+  pointers: renamed away around the include (list = R_OGL_ProcedureXList).
+  First run looked too dark (user): macOS's window framebuffer ignores
+  GL_FRAMEBUFFER_SRGB, so the linear staging showed raw. Now a present pass
+  encodes sRGB (render_opengl.c, `#if OS_MAC`), and windows are tagged
+  sRGB (no wide-gamut shift). Checked by readback: the frame's colors are
+  the theme's hex values (#202020, #252525, #d4d4d4). Debug aid:
+  `RAID_SCREENSHOT=<png>` writes the 60th frame (no Screen Recording
+  permission needed). glDebugMessageCallback is absent on macOS (guarded).
+- Fonts: FreeType opens a path, else a file name in the Mac font folders,
+  else a family name via CoreText (case-insensitive; .ttc faces picked by
+  PostScript name).
+- Shell: `sh_launch_in_terminal` opens a Terminal.app window running a
+  script (title, cd, command, exit code -> done file, "[process exited with
+  code N]", any key). Raid holds a watcher process; a guardian in the
+  script kills it when the watcher dies (Stop). Hidden (script mode): /bin/sh
+  with output to the pipe. Visible mode NOT yet tried by hand.
+- Base (Mac and Linux): a ProcessGroup held one pid, so Cargo's run (build
+  and program in one group) could not launch the program. Now up to 16
+  members, each its own process group, all killed on close. Linux: same
+  edit, not compiled.
+- Tests: `tests/run_scripts.sh` (bash port of run_scripts.ps1). Scripts made
+  portable: `#! args` paths use `/`; cargo_run checks `src` and `main.rs:23:9`
+  separately; `#! mac: "a" => "b"` header lines swap Windows font names for
+  Mac ones (settings_more). 42 scripts, 834 checks, all pass.
 
 ### 2026-11-05 (milestone 12, step 1: raid links on the Mac)
 - Port surface checked: only `window_manager`, `shell`, the GL backend's

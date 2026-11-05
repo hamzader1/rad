@@ -31,7 +31,9 @@ expect cargo_exit_code == 101
 expect output_has "hello from cargo_run" == 0
 expect output_has "test tests::adds ... ok" == 1
 expect output_has "test tests::fails ... FAILED" == 1
-expect output_has "panicked at src\\main.rs:23:9:" == 1
+# (rustc prints src\\main.rs on Windows, src/main.rs elsewhere)
+expect output_has "panicked at src" == 1
+expect output_has "main.rs:23:9:" == 1
 
 # double-click the panic line -> the assertion in the editor (Find brings
 # it into view on any window size)

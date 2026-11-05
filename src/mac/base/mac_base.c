@@ -1841,10 +1841,15 @@ process_send_ctrl_c(Process process)
   return result;
 }
 
+// rad: a group holds several processes (like a win32 job object): rad's Cargo
+// runs put the build and then the program into one group. Each member is
+// launched as the leader of its own process group, so closing kills every
+// member's whole process tree.
 typedef struct MAC_ProcessGroup MAC_ProcessGroup;
 struct MAC_ProcessGroup
 {
-  pid_t pid;
+  pid_t pids[16];
+  U32 pid_count;
   B32 kill_on_close;
 };
 
@@ -1860,8 +1865,22 @@ internal B32
 process_group_add(ProcessGroup group, Process process)
 {
   MAC_ProcessGroup *mac_group = (MAC_ProcessGroup *)group.u64[0];
-  if(mac_group == 0 || mac_group->pid != 0 || process_match(process, process_zero())) { return 0; }
-  mac_group->pid = (pid_t)process.u64[0];
+  if(mac_group == 0 || process_match(process, process_zero())) { return 0; }
+  
+  // rad: forget members that are gone (and reaped)
+  U32 kept = 0;
+  for(U32 idx = 0; idx < mac_group->pid_count; idx += 1)
+  {
+    if(kill(-mac_group->pids[idx], 0) == 0 || errno == EPERM)
+    {
+      mac_group->pids[kept] = mac_group->pids[idx];
+      kept += 1;
+    }
+  }
+  mac_group->pid_count = kept;
+  if(mac_group->pid_count >= ArrayCount(mac_group->pids)) { return 0; }
+  mac_group->pids[mac_group->pid_count] = (pid_t)process.u64[0];
+  mac_group->pid_count += 1;
   return 1;
 }
 
@@ -1871,9 +1890,12 @@ process_group_close(ProcessGroup group)
   MAC_ProcessGroup *mac_group = (MAC_ProcessGroup *)group.u64[0];
   if(mac_group != 0)
   {
-    if(mac_group->kill_on_close && mac_group->pid != 0)
+    if(mac_group->kill_on_close)
     {
-      kill(-mac_group->pid, SIGKILL);
+      for(U32 idx = 0; idx < mac_group->pid_count; idx += 1)
+      {
+        kill(-mac_group->pids[idx], SIGKILL);
+      }
     }
     free(mac_group);
   }

@@ -8,6 +8,8 @@
 # include "render/opengl/win32/render_opengl_win32.c"
 #elif OS_LINUX
 # include "render/opengl/linux/render_opengl_linux.c"
+#elif OS_MAC
+# include "render/opengl/mac/render_opengl_mac.c"
 #else
 # error OS portion of OpenGL rendering backend not defined.
 #endif
@@ -224,7 +226,7 @@ r_init(CmdLine *cmdln)
 #if BUILD_DEBUG
   debug_mode = 1;
 #endif
-  if(debug_mode)
+  if(debug_mode && glDebugMessageCallback != 0) // rad: absent on macOS (GL 4.1)
   {
     glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
     glDebugMessageCallback(r_ogl_debug_message_callback, 0);
@@ -459,6 +461,11 @@ r_window_end_frame(WM_Window os, R_Handle r)
   R_OGL_Window *window = (R_OGL_Window *)r.u64[0];
   
   //- rjf: blit window's main staging frame buffer to window frame buffer
+#if OS_MAC
+  // rad: macOS's window framebuffer ignores GL_FRAMEBUFFER_SRGB, so a plain
+  // blit would show linear values (too dark); encode to sRGB in a shader pass
+  r_ogl_mac_present(window->stage_target.color_texture, window->last_client_rect_dim);
+#else
   glBindFramebufferScope(GL_READ_FRAMEBUFFER, window->stage_target.fbo) glBindFramebufferScope(GL_DRAW_FRAMEBUFFER, 0)
   {
     glBlitFramebuffer(0, 0, (S32)window->last_client_rect_dim.x, (S32)window->last_client_rect_dim.y,
@@ -466,6 +473,7 @@ r_window_end_frame(WM_Window os, R_Handle r)
                       GL_COLOR_BUFFER_BIT,
                       GL_NEAREST);
   }
+#endif
   
   //- rjf: swap buffers
   r_ogl_os_window_swap(os, r);

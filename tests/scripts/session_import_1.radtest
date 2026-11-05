@@ -1,4 +1,4 @@
-#! args: --appdata:"{work}\session_import_1\fixtures\appdata"
+#! args: --appdata:"{work}/session_import_1/fixtures/appdata"
 # The rename to Raid (milestone 10), part 1: with no Raid user file yet
 # (<appdata>/raid/default.raid_user), the session is read from the file of
 # before the rename (<appdata>/rad/default.rad_user, "// rad" header) and

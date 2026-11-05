@@ -1784,10 +1784,15 @@ process_send_ctrl_c(Process process)
   return result;
 }
 
+// rad: a group holds several processes (like a win32 job object): rad's Cargo
+// runs put the build and then the program into one group. Each member is
+// launched as the leader of its own process group, so closing kills every
+// member's whole process tree.
 typedef struct LNX_ProcessGroup LNX_ProcessGroup;
 struct LNX_ProcessGroup
 {
-  pid_t pid;
+  pid_t pids[16];
+  U32 pid_count;
   B32 kill_on_close;
 };
 
@@ -1803,8 +1808,22 @@ internal B32
 process_group_add(ProcessGroup group, Process process)
 {
   LNX_ProcessGroup *lnx_group = (LNX_ProcessGroup *)group.u64[0];
-  if(lnx_group == 0 || lnx_group->pid != 0 || process_match(process, process_zero())) { return 0; }
-  lnx_group->pid = (pid_t)process.u64[0];
+  if(lnx_group == 0 || process_match(process, process_zero())) { return 0; }
+  
+  // rad: forget members that are gone (and reaped)
+  U32 kept = 0;
+  for(U32 idx = 0; idx < lnx_group->pid_count; idx += 1)
+  {
+    if(kill(-lnx_group->pids[idx], 0) == 0 || errno == EPERM)
+    {
+      lnx_group->pids[kept] = lnx_group->pids[idx];
+      kept += 1;
+    }
+  }
+  lnx_group->pid_count = kept;
+  if(lnx_group->pid_count >= ArrayCount(lnx_group->pids)) { return 0; }
+  lnx_group->pids[lnx_group->pid_count] = (pid_t)process.u64[0];
+  lnx_group->pid_count += 1;
   return 1;
 }
 
@@ -1814,9 +1833,12 @@ process_group_close(ProcessGroup group)
   LNX_ProcessGroup *lnx_group = (LNX_ProcessGroup *)group.u64[0];
   if(lnx_group != 0)
   {
-    if(lnx_group->kill_on_close && lnx_group->pid != 0)
+    if(lnx_group->kill_on_close)
     {
-      kill(-lnx_group->pid, SIGKILL);
+      for(U32 idx = 0; idx < lnx_group->pid_count; idx += 1)
+      {
+        kill(-lnx_group->pids[idx], SIGKILL);
+      }
     }
     free(lnx_group);
   }

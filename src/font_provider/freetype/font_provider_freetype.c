@@ -30,13 +30,117 @@ fp_init(void)
   FT_Init_FreeType(&fp_ft_state->library);
 }
 
+#if OS_MAC
+internal String8
+fp_ft_mac_path_from_family_name(Arena *arena, String8 name, String8 *postscript_name_out)
+{
+  // rad: like DirectWrite's FindFamilyName: a family name (case does not
+  // matter) -> the file of its regular face, via CoreText
+  String8 result = {0};
+  @autoreleasepool
+  {
+    NSString *wanted = [[[NSString alloc] initWithBytes:name.str length:name.size encoding:NSUTF8StringEncoding] autorelease];
+    NSString *family = nil;
+    NSArray *families = [(NSArray *)CTFontManagerCopyAvailableFontFamilyNames() autorelease];
+    for(NSString *f in families)
+    {
+      if([f caseInsensitiveCompare:wanted] == NSOrderedSame) { family = f; break; }
+    }
+    if(family != nil)
+    {
+      NSDictionary *attributes = @{(NSString *)kCTFontFamilyNameAttribute: family};
+      CTFontDescriptorRef descriptor = CTFontDescriptorCreateWithAttributes((CFDictionaryRef)attributes);
+      CTFontRef font = CTFontCreateWithFontDescriptor(descriptor, 12.0, 0);
+      NSURL *url = [(NSURL *)CTFontCopyAttribute(font, kCTFontURLAttribute) autorelease];
+      NSString *postscript_name = [(NSString *)CTFontCopyPostScriptName(font) autorelease];
+      if(url != nil && url.path != nil)
+      {
+        result = str8_copy(arena, str8_cstring((char *)url.path.UTF8String));
+        *postscript_name_out = str8_copy(arena, str8_cstring((char *)postscript_name.UTF8String));
+      }
+      CFRelease(font);
+      CFRelease(descriptor);
+    }
+  }
+  return result;
+}
+#endif
+
+internal FT_Face
+fp_ft_face_from_path(String8 path, String8 postscript_name)
+{
+  // rad: one face of a file; in a collection (.ttc) the one with the given
+  // PostScript name, else the first
+  Temp scratch = scratch_begin(0, 0);
+  char *path_cstr = (char *)push_str8_copy(scratch.arena, path).str;
+  FT_Face face = 0;
+  if(FT_New_Face(fp_ft_state->library, path_cstr, 0, &face) == 0 && face->num_faces > 1 && postscript_name.size != 0)
+  {
+    FT_Long face_count = face->num_faces;
+    for(FT_Long idx = 0; idx < face_count; idx += 1)
+    {
+      FT_Face candidate = 0;
+      if(FT_New_Face(fp_ft_state->library, path_cstr, idx, &candidate) != 0) { continue; }
+      const char *ps = FT_Get_Postscript_Name(candidate);
+      if(ps != 0 && str8_match(str8_cstring((char *)ps), postscript_name, 0))
+      {
+        FT_Done_Face(face);
+        face = candidate;
+        break;
+      }
+      FT_Done_Face(candidate);
+    }
+  }
+  scratch_end(scratch);
+  return face;
+}
+
 fp_hook FP_Handle
 fp_font_open(String8 path)
 {
   Temp scratch = scratch_begin(0, 0);
-  String8 path_copy = push_str8_copy(scratch.arena, path);
   FP_FT_Font font = {0};
-  FT_New_Face(fp_ft_state->library, (char *)path_copy.str, 0, &font.face);
+
+  //- rad: the path as given
+  if(path.size != 0 && properties_from_file_path(path).created != 0)
+  {
+    font.face = fp_ft_face_from_path(path, str8_zero());
+  }
+
+#if OS_MAC
+  //- rad: a file name in the font folders (like DirectWrite's user/system
+  // font folders), then a family name
+  if(font.face == 0 && path.size != 0)
+  {
+    String8 home = str8_cstring(getenv("HOME"));
+    String8 folders[] =
+    {
+      push_str8f(scratch.arena, "%S/Library/Fonts", home),
+      str8_lit("/Library/Fonts"),
+      str8_lit("/System/Library/Fonts"),
+      str8_lit("/System/Library/Fonts/Supplemental"),
+    };
+    for EachElement(idx, folders)
+    {
+      String8 candidate = push_str8f(scratch.arena, "%S/%S", folders[idx], path);
+      if(properties_from_file_path(candidate).created != 0)
+      {
+        font.face = fp_ft_face_from_path(candidate, str8_zero());
+        if(font.face != 0) { break; }
+      }
+    }
+  }
+  if(font.face == 0 && path.size != 0)
+  {
+    String8 postscript_name = {0};
+    String8 family_path = fp_ft_mac_path_from_family_name(scratch.arena, path, &postscript_name);
+    if(family_path.size != 0)
+    {
+      font.face = fp_ft_face_from_path(family_path, postscript_name);
+    }
+  }
+#endif
+
   FP_Handle handle = fp_ft_handle_from_font(font);
   scratch_end(scratch);
   return handle;

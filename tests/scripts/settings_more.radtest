@@ -1,3 +1,5 @@
+#! mac: "consola.ttf" => "Monaco.ttf"
+#! mac: "cascadia code" => "menlo"
 # Settings (task B2, the rest): Scroll Past End, Tab Close Button, and the
 # UI Font / Code Font text settings (raddbg's main_font / code_font: a name
 # or a path, edited in place in the Settings tab; one that does not open
