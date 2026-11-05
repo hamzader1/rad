@@ -221,11 +221,12 @@ Milestone 6 details (each item with its script):
    - Logo: the user will supply one later (`data/logo.ico` for the exe,
      window and About; `data/logo.png` for Linux).
    - LICENSE holds Epic's notice only; the user may add their own line.
-2. Speed: preliminary findings are in `PERFORMANCE_ISSUES.md`. The strongest
-   code-level suspects are full-file fold regeneration per buffer version,
-   full-text LSP snapshots on the UI thread, and compaction after a 100 ms
-   pause. The current Mac perf script did not produce results in this
-   environment; capture stage timings on macOS before changing the hot paths.
+2. Speed: expanded findings and available Mac script measurements are in
+   `PERFORMANCE_ISSUES.md`. LSP-on runs show p95 UI-build times of 21.68 ms
+   on a ~3k-line file and 68.07 ms on a ~10k-line file, but the recorded
+   build flags are unknown. A release rebuild succeeded, but its script
+   launch stalled on Launch Services/XPC errors. Fix that launch path, then
+   capture stage timings on a verified release build before ranking changes.
 3. Not yet compared side by side with raddbg.exe: the query bar, the zoom
    button, the loading overlay (line-by-line ports; needs raddbg focused;
    raddbg.exe now builds from the `raddbg-reference` tag, see "Build, run,
@@ -417,6 +418,26 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-05 (performance follow-up)
+- Corrected the first report's claim that no Mac timing results existed:
+  completed `.perf_tmp` script outputs were present but had not been included.
+  The paired 3k-line LSP-off/LSP-on runs and 5k/10k LSP-on runs are recorded
+  in `PERFORMANCE_ISSUES.md`; compiler flags were not captured, so they are
+  not labeled release measurements.
+- Deeper source tracing found that semantic tokens and document symbols are
+  mapped across the buffer change log after each edit. Each offset performs
+  validation and remapping passes through intervening edits; token/symbol
+  counts multiply this work. LSP response JSON is parsed on the UI thread,
+  and the 150 ms change delay requests more frames while it waits.
+- Confirmed the Mac backend uses swap interval 1 and samples the main
+  screen's maximum refresh rate at startup. A 120 Hz display can present at
+  120 Hz when frames meet the ~8.3 ms budget, but moving displays may leave
+  the startup rate stale.
+- Rebuilt the optimized Mac executable successfully. Its script launch
+  stalled with Launch Services/XPC errors and produced no release timings;
+  the original `build/raid` was restored. A verified release comparison and
+  per-stage profile remain open work.
+
 ### 2026-11-05 (performance investigation)
 - Traced typing through the patch-based text buffer, editable code view,
   document tick, compaction, frame loop, Mac OpenGL present, and rust-analyzer
@@ -427,10 +448,10 @@ of `text_buffer.h`.
   baseline measured 2.4 ms average UI build and 16.6 ms input-to-present, but
   it is not a current Mac benchmark and script mode leaves LSP disabled by
   default.
-- Built a separate optimized ARM64 executable. The Mac perf script did not
-  reach script initialization or write results in this desktop environment;
-  startup emitted Launch Services/XPC errors. No current Mac latency is
-  claimed.
+- Built a separate optimized ARM64 executable. The first Mac perf-script
+  attempt did not reach script initialization; a later follow-up found
+  completed local script output, but the flags were not recorded. See the
+  follow-up entry for the release launch retry and its limits.
 
 ### 2026-11-05 (milestone 12, step 2: Raid runs on the Mac)
 - `src/mac/window_manager` (Cocoa): wm_get_events pumps NSApp's queue itself
