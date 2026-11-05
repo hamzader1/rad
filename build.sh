@@ -39,15 +39,19 @@ cc_link_dll="-fPIC"
 
 # --- External Libraries ------------------------------------------------------
 if [[ "$os_name" == "Darwin" ]]; then
-  # macOS: FreeType from Homebrew; X11/GL/EGL not needed yet (M12)
+  # macOS: FreeType from Homebrew (brew install freetype pkg-config); Cocoa and
+  # OpenGL from the SDK. The UI backends are Objective-C, so raid compiles as it.
   if [[ -x "$(command -v pkg-config)" ]]; then
     cc_font_provider="$(pkg-config --cflags --libs freetype2)"
   else
     cc_font_provider="-I/opt/homebrew/include/freetype2 -L/opt/homebrew/lib -lfreetype"
   fi
-  cc_os_gfx=""
-  cc_render=""
+  # TODO(rad): milestone 12 in progress; WM_STUB / R_BACKEND=0 (stub) until the
+  # Cocoa window manager and the macOS OpenGL backend land.
+  cc_os_gfx="-DWM_STUB=1 -framework Cocoa"
+  cc_render="-DR_BACKEND=0 -framework OpenGL"
   cc_icon=""
+  cc_objc="-x objective-c -fno-objc-arc"
 else
   # Linux
   # sudo apt install -y pkg-config libfreetype6-dev libx11-dev libxext-dev libxfixes-dev libxrandr-dev libgl-dev libegl-dev
@@ -61,6 +65,7 @@ else
     cc_render="-lGL -lEGL"
   fi
   cc_icon="-DLNX_WM_ICON=1"
+  cc_objc=""
 fi
 
 # --- Choose Compile/Link Lines -----------------------------------------------
@@ -101,7 +106,7 @@ cd ..
 
 # --- Build Everything (@build_targets) ---------------------------------------
 cd build
-if [[ "${raid:-0}"                 == "1" ]]; then didbuild=1 && compile ../src/rad/rad_main.c $cc_icon $cc_link $cc_os_gfx $cc_render $cc_font_provider -o raid; fi
+if [[ "${raid:-0}"                 == "1" ]]; then didbuild=1 && compile $cc_objc ../src/rad/rad_main.c $cc_icon $cc_link $cc_os_gfx $cc_render $cc_font_provider -o raid; fi
 if [[ "${rad_tests:-0}"            == "1" ]]; then didbuild=1 && compile ../src/rad/tests/rad_tests.c $cc_link -o rad_tests; fi
 cd ..
 

@@ -40,7 +40,7 @@ Older entries below say `rad.exe`.
 | 9. LSP client                        | Done. `lsp` layer; one rust-analyzer per Cargo workspace: diagnostics (Problems + editor), hover, Go To Definition (F12, Ctrl+click, Alt+Left back), completion list (as you type, `.`, `::`, Ctrl+Space; imports) (see journal). 22 scripts, 453 checks, pass (debug and release, `build\release\rad.exe` 2026-11-04). |
 | 10. Remove debugger, rebrand         | Done. Debugger, debug-info layers, tools and their third-party code out of the repo and the build (421 files; tag `raddbg-reference` keeps them). Renamed to Raid: `raid.exe`, title/About, `%APPDATA%\raid\` (the old session file is imported once), README. Logo unchanged (the user's, later). 42 scripts, 833 checks, pass (debug and release, `build\release\raid.exe` 2026-11-05). |
 | 11. Mac foundation                  | Done (on the Mac, not from Windows). `src/mac/base` (from `src/linux/base`), ARM64 in `base`, `./build.sh rad_tests` on macOS: 37,610,802 checks, 0 failures (debug and release, ARM64, macOS 15.7). CI: `.github/workflows/macos.yml`. |
-| 12. Mac UI                           | Not started. |
+| 12. Mac UI                           | In progress. Step 1 done: `bash build.sh raid` links on the Mac (Objective-C unity build) with the stub window manager and stub renderer; Mac shell (NSAlert, NSOpenPanel, NSWorkspace). Next: Cocoa window manager. Plan: `docs/notes/03-feasibility-spike.md`. |
 | 13. Debugging                        | Not started. |
 
 Milestone 3 details:
@@ -414,6 +414,21 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-05 (milestone 12, step 1: raid links on the Mac)
+- Port surface checked: only `window_manager`, `shell`, the GL backend's
+  `r_ogl_os_*` seam and `font_provider` are per-OS; everything above has no
+  OS switches (details and order: `docs/notes/03-feasibility-spike.md`).
+- On macOS `raid` compiles as Objective-C (`-x objective-c`, no ARC; C is
+  valid Objective-C, so the unity build stays one translation unit).
+  `src/mac/mac_cocoa.h` imports Cocoa once, with our `internal`/`global`/
+  `local_persist` macros and CarbonCore's `FileInfo` kept out of its way.
+- `src/mac/shell`: NSAlert, NSOpenPanel (file/folder), Finder reveal,
+  `openURL`. Not done: install/uninstall (needs an .app bundle) and
+  `sh_launch_in_terminal` (returns no process, like Linux).
+- Font provider: FreeType on macOS. Family names (H3) need CoreText; not yet.
+- Built with `-DWM_STUB=1 -DR_BACKEND=0` for now (build.sh TODO): 0 warnings,
+  starts and runs (no window).
 
 ### 2026-11-05 (milestone 11: Mac foundation; milestone 11 done)
 - Done on the Mac itself (we are on one now), not "compile-only from

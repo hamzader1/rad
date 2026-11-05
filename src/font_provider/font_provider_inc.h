@@ -16,7 +16,7 @@
 #if !defined(FP_BACKEND)
 # if OS_WINDOWS
 #  define FP_BACKEND FP_BACKEND_DWRITE
-# elif OS_LINUX
+# elif OS_LINUX || OS_MAC
 #  define FP_BACKEND FP_BACKEND_FREETYPE
 # endif
 #endif
