@@ -4,11 +4,11 @@
 :: build.bat's bare `metagen.exe` call fails), loads the VS 2022 Build Tools
 :: x64 environment, then calls build.bat with the same arguments.
 ::
-::   tests\shell_build.bat rad              -> build\rad.exe (debug)
-::   tests\shell_build.bat rad release      -> build\rad.exe (optimized)
+::   tests\shell_build.bat raid             -> build\raid.exe (debug)
+::   tests\shell_build.bat raid release     -> build\raid.exe (optimized)
 ::   tests\shell_build.bat rad_tests
 ::
-:: If build\rad.exe is running, linking fails (LNK1104): use
+:: If build\raid.exe is running, linking fails (LNK1104): use
 :: tests\shell_build_copy.bat instead.
 set NoDefaultCurrentDirectoryInExePath=
 set "PATH=C:\Program Files (x86)\Microsoft Visual Studio\Installer;%PATH%"

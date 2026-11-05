@@ -1,0 +1,12 @@
+#! args: --appdata:"{work}\session_import_1\fixtures\appdata"
+# The rename to Raid, part 2: restarted on the same appdata folder, the
+# session comes from the new file part 1 wrote ("// raid" header): it has
+# part 1's code font size (15), the old file has 14. The old file is still
+# unchanged.
+
+wait_idle
+expect panel == "getting_started"
+expect explorer_visible == 1
+expect setting code_font_size == 15
+expect file_size ../../session_import_1/fixtures/appdata/rad/default.rad_user == 395
+quit

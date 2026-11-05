@@ -6019,7 +6019,7 @@ rad_user_data_string(Arena *arena)
   Temp scratch = scratch_begin(&arena, 1);
   CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
   String8List strings = {0};
-  str8_list_pushf(scratch.arena, &strings, "// rad %s user file\n\n", BUILD_VERSION_STRING_LITERAL);
+  str8_list_pushf(scratch.arena, &strings, "// raid %s user file\n\n", BUILD_VERSION_STRING_LITERAL);
   for(CFG_Node *child = user->first; child != &cfg_nil_node; child = child->next)
   {
     str8_list_push(scratch.arena, &strings, cfg_string_from_tree(scratch.arena, rad_state->cfg_schema_table, str8_chop_last_slash(rad_state->user_path), child));
@@ -6040,10 +6040,13 @@ rad_user_data_load(String8 path)
   Temp scratch = scratch_begin(0, 0);
   B32 result = 0;
   String8 data = data_from_file_path(scratch.arena, path);
-  B32 file_is_okay = (data.size == 0 || str8_match(str8_prefix(data, 7), str8_lit("// rad "), 0));
+  // (headers: "// raid <version> user file"; "// rad " before the rename)
+  B32 file_is_okay = (data.size == 0 ||
+                      str8_match(str8_prefix(data, 8), str8_lit("// raid "), 0) ||
+                      str8_match(str8_prefix(data, 7), str8_lit("// rad "), 0));
   if(!file_is_okay)
   {
-    log_user_errorf("\"%S\" is not a rad user file; it is left as it is, and the session is not saved.", path);
+    log_user_errorf("\"%S\" is not a " BUILD_TITLE " user file; it is left as it is, and the session is not saved.", path);
     rad_state->user_path = str8_zero();
   }
   else if(data.size != 0)
@@ -6129,7 +6132,7 @@ rad_init(CmdLine *cmdln)
   rad_state->log = log_alloc();
   log_select(rad_state->log);
   {
-    rad_state->log_path = push_str8f(rad_state->arena, "%S/ui_thread.rad_log", g_logs_folder);
+    rad_state->log_path = push_str8f(rad_state->arena, "%S/ui_thread." RAD_LOG_FILE_EXTENSION, g_logs_folder);
     write_data_to_file_path(rad_state->log_path, str8_zero());
   }
   rad_state->num_frames_requested = 2;
@@ -6172,21 +6175,41 @@ rad_init(CmdLine *cmdln)
   rad_lsp->disabled = (cmd_line_string(cmdln, str8_lit("script")).size != 0);
 
   //- rad: user data file (session; port of raddbg's user file): --user:<path>,
-  // else %APPDATA%/rad/default.rad_user; scripted tests use none unless given
+  // else %APPDATA%/raid/default.raid_user (--appdata:<folder> stands for
+  // %APPDATA%); scripted tests use none unless given. while the default file
+  // does not exist, the one from before the rename (%APPDATA%/rad/
+  // default.rad_user) is read instead, and the session is written to the new
+  // file at the next save check; the old file is never changed.
   B32 user_loaded = 0;
   {
     String8 user_path = cmd_line_string(cmdln, str8_lit("user"));
-    if(user_path.size == 0 && cmd_line_string(cmdln, str8_lit("script")).size == 0)
+    String8 appdata = cmd_line_string(cmdln, str8_lit("appdata"));
+    String8 import_path = {0};
+    if(user_path.size == 0 && (cmd_line_string(cmdln, str8_lit("script")).size == 0 || appdata.size != 0))
     {
-      String8 folder = push_str8f(scratch.arena, "%S/rad", get_process_info()->user_program_config_data_path);
+      if(appdata.size == 0)
+      {
+        appdata = get_process_info()->user_program_config_data_path;
+      }
+      appdata = path_absolute_dst_from_relative_dst_src(scratch.arena, appdata, get_process_info()->initial_path);
+      String8 folder = push_str8f(scratch.arena, "%S/" RAD_DATA_FOLDER_NAME, appdata);
       make_directory(folder);
-      user_path = push_str8f(scratch.arena, "%S/default.rad_user", folder);
+      user_path = push_str8f(scratch.arena, "%S/default." RAD_USER_FILE_EXTENSION, folder);
+      String8 old_path = push_str8f(scratch.arena, "%S/" RAD_OLD_DATA_FOLDER_NAME "/" RAD_OLD_USER_FILE_NAME, appdata);
+      if(!file_path_exists(user_path) && file_path_exists(old_path))
+      {
+        import_path = path_normalized_from_string(scratch.arena, old_path);
+      }
     }
     if(user_path.size != 0)
     {
       user_path = path_absolute_dst_from_relative_dst_src(scratch.arena, user_path, get_process_info()->initial_path);
       rad_state->user_path = path_normalized_from_string(rad_state->arena, user_path);
-      user_loaded = rad_user_data_load(rad_state->user_path);
+      user_loaded = rad_user_data_load(import_path.size != 0 ? import_path : rad_state->user_path);
+      if(import_path.size != 0)
+      {
+        rad_state->user_data_hash = 0;
+      }
     }
   }
 

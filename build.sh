@@ -5,8 +5,8 @@ cd "$(dirname "$0")"
 # --- Unpack Arguments --------------------------------------------------------
 auto_compile_flags=""
 for arg in "$@"; do declare $arg='1'; done
-if [[ "$#" == "0" ]]; then rad='1'; fi
-if [[ "$#" == "1" && "${release:-0}" == "1" ]]; then rad='1'; fi
+if [[ "$#" == "0" ]]; then raid='1'; fi
+if [[ "$#" == "1" && "${release:-0}" == "1" ]]; then raid='1'; fi
 if [[ "${asan:-0}" == "1" ]]; then
   echo "[asan enabled]"
   auto_compile_flags="$auto_compile_flags -fsanitize=address"
@@ -14,7 +14,7 @@ fi
 
 # --- Mix Git Commit ID -------------------------------------------------------
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  auto_compile_flags="$auto_compile_flags -DBUILD_GIT_HASH=\"$(git describe --always --dirty)\" -DBUILD_GIT_HASH_FULL=$(git rev-parse HEAD)"
+  auto_compile_flags="$auto_compile_flags -DBUILD_GIT_HASH=\"$(git describe --always --dirty --match "v[0-9]*")\" -DBUILD_GIT_HASH_FULL=$(git rev-parse HEAD)"
 fi
 
 # --- Compile/Link Line Definitions -------------------------------------------
@@ -72,13 +72,13 @@ cd ..
 
 # --- Build Everything (@build_targets) ---------------------------------------
 cd build
-if [[ "${rad:-0}"                  == "1" ]]; then didbuild=1 && compile ../src/rad/rad_main.c $cc_icon $cc_link $cc_os_gfx $cc_render $cc_font_provider -o rad; fi
+if [[ "${raid:-0}"                 == "1" ]]; then didbuild=1 && compile ../src/rad/rad_main.c $cc_icon $cc_link $cc_os_gfx $cc_render $cc_font_provider -o raid; fi
 if [[ "${rad_tests:-0}"            == "1" ]]; then didbuild=1 && compile ../src/rad/tests/rad_tests.c $cc_link -o rad_tests; fi
 cd ..
 
 # --- Warn On No Builds -------------------------------------------------------
 if [[ "${didbuild:-0}" == "0" ]]; then
-  echo "[WARNING] no valid build target specified; must use build target names as arguments to this script, like \`./build.sh rad\` or \`./build.sh rad_tests\`."
+  echo "[WARNING] no valid build target specified; must use build target names as arguments to this script, like \`./build.sh raid\` or \`./build.sh rad_tests\`."
   exit 1
 fi
 

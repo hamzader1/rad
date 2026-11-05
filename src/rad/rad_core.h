@@ -17,6 +17,23 @@
 // Where the debugger reads settings through its config tree + expression
 // evaluator, this layer uses `RAD_Settings`, filled with the exact defaults
 // from the debugger's user/window schemas (`raddbg/raddbg.mdesk`).
+//
+// The product is called Raid (BUILD_TITLE, the window title and About);
+// the layer keeps its code name `rad`. Paths to raddbg's sources refer to
+// the git tag `raddbg-reference`.
+
+////////////////////////////////
+//~ rad: Product Names On Disk
+
+// folder under %APPDATA% (config, logs, cache), and the extensions of the
+// user file and the log
+#define RAD_DATA_FOLDER_NAME     "raid"
+#define RAD_USER_FILE_EXTENSION  "raid_user"
+#define RAD_LOG_FILE_EXTENSION   "raid_log"
+
+// before the rename (milestone 10): read once when no Raid user file exists
+#define RAD_OLD_DATA_FOLDER_NAME "rad"
+#define RAD_OLD_USER_FILE_NAME   "default.rad_user"
 
 ////////////////////////////////
 //~ rad: Font Slots

@@ -1,7 +1,7 @@
 @echo off
 :: Builds build\<name>.exe (default rad_probe) with build.bat's compile line
-:: for `rad`, so tests can run while build\rad.exe is open (then linking
-:: build\rad.exe fails with LNK1104). Run tests\shell_build.bat rad once
+:: for `raid`, so tests can run while build\raid.exe is open (then linking
+:: build\raid.exe fails with LNK1104). Run tests\shell_build.bat raid once
 :: first: it runs metagen, this does not.
 ::
 ::   tests\shell_build_copy.bat [debug|release] [name]

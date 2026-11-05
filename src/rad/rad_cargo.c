@@ -573,7 +573,7 @@ rad_cargo_run_in_terminal__(RAD_CargoRun *run, String8 workspace_root, B32 *wind
   if(!stop_before_launch)
   {
     //- rad: the file the window writes the program's exit code to
-    String8 done_folder = push_str8f(scratch.arena, "%S/rad", get_process_info()->user_program_cache_data_path);
+    String8 done_folder = push_str8f(scratch.arena, "%S/" RAD_DATA_FOLDER_NAME, get_process_info()->user_program_cache_data_path);
     make_directory(done_folder);
     String8 done_path = push_str8f(scratch.arena, "%S/run_%u_%I64u.exit", done_folder, get_process_info()->pid, run->start_us);
     delete_file_at_path(done_path);

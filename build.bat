@@ -2,18 +2,18 @@
 setlocal enabledelayedexpansion
 cd /D "%~dp0"
 
-:: --- Usage Notes (2024/1/10, trimmed to rad's targets 2026-11-05) -----------
+:: --- Usage Notes (2024/1/10, trimmed to Raid's targets 2026-11-05) ----------
 ::
-:: This is the central build script for rad on Windows. It takes a list of
+:: This is the central build script for Raid on Windows. It takes a list of
 :: simple alphanumeric-only arguments which control (a) what is built, (b)
 :: which compiler & linker are used, and (c) extra high-level build options.
-:: By default, if no options are passed, then `rad` is built.
+:: By default, if no options are passed, then `raid` (raid.exe) is built.
 ::
 :: Below is a non-exhaustive list of possible ways to use the script:
-:: `build rad`
-:: `build rad clang`
-:: `build rad release`
-:: `build rad asan telemetry`
+:: `build raid`
+:: `build raid clang`
+:: `build raid release`
+:: `build raid asan telemetry`
 :: `build rad_tests`
 ::
 :: For a full list of possible build targets and their build command lines,
@@ -40,8 +40,8 @@ if "%debug%"=="1"   set release=0 && echo [debug mode]
 if "%release%"=="1" set debug=0 && echo [release mode]
 if "%msvc%"=="1"    set clang=0 && echo [msvc compile]
 if "%clang%"=="1"   set msvc=0 && echo [clang compile]
-if "%~1"==""                     echo [default mode, assuming `rad` build] && set rad=1
-if "%~1"=="release" if "%~2"=="" echo [default mode, assuming `rad` build] && set rad=1
+if "%~1"==""                     echo [default mode, assuming `raid` build] && set raid=1
+if "%~1"=="release" if "%~2"=="" echo [default mode, assuming `raid` build] && set raid=1
 
 :: --- Unpack Command Line Build Arguments ------------------------------------
 set auto_compile_flags=
@@ -54,9 +54,11 @@ if "%dwarf%"=="1" if "%clang%"=="1" set auto_compile_flags=%auto_compile_flags% 
 if "%dwarf%"==""  if "%clang%"=="1" set auto_compile_flags=%auto_compile_flags% -gcodeview
 
 :: --- Mix Git Commit ID ------------------------------------------------------
+:: (only version tags like v1.0 name a build; others, e.g. raddbg-reference,
+:: are not versions, so the hash is shown alone)
 call git rev-parse --is-inside-work-tree >nul 2>&1 && set in_git_tree=1
 if "%in_git_tree%"=="1" (
-  for /f %%i in ('call git describe --always --dirty')   do set auto_compile_flags=!auto_compile_flags! -DBUILD_GIT_HASH=\"%%i\"
+  for /f %%i in ('call git describe --always --dirty --match "v[0-9]*"') do set auto_compile_flags=!auto_compile_flags! -DBUILD_GIT_HASH=\"%%i\"
   for /f %%i in ('call git rev-parse HEAD')              do set auto_compile_flags=!auto_compile_flags! -DBUILD_GIT_HASH_FULL=\"%%i\"
 )
 
@@ -113,13 +115,13 @@ popd
 
 :: --- Build Everything (@build_targets) --------------------------------------
 pushd build
-if "%rad%"=="1"                        set didbuild=1 && %compile% ..\src\rad\rad_main.c                                     %compile_link% %link_icon% %out%rad.exe || exit /b 1
+if "%raid%"=="1"                       set didbuild=1 && %compile% ..\src\rad\rad_main.c                                     %compile_link% %link_icon% %out%raid.exe || exit /b 1
 if "%rad_tests%"=="1"                  set didbuild=1 && %compile% ..\src\rad\tests\rad_tests.c                              %compile_link% %out%rad_tests.exe || exit /b 1
 popd
 
 :: --- Warn On No Builds ------------------------------------------------------
 if "%didbuild%"=="" (
-  echo [WARNING] no valid build target specified; must use build target names as arguments to this script, like `build rad` or `build rad_tests`.
+  echo [WARNING] no valid build target specified; must use build target names as arguments to this script, like `build raid` or `build rad_tests`.
   exit /b 1
 )
 

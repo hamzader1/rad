@@ -4,8 +4,9 @@
 ////////////////////////////////
 //~ rad: Notes
 //
-// `rad` is the IDE build target. It is a unity build of only the
-// non-debugger layers of the RAD Debugger codebase:
+// Raid, the IDE (build target `raid` -> raid.exe; the code layer keeps the
+// name `rad`/`RAD_`). It is a unity build of only the non-debugger layers
+// of the RAD Debugger codebase:
 //
 //   base -> mdesk -> window_manager, shell -> config
 //        -> content, file_stream, artifact_cache -> text, mutable_text
@@ -19,7 +20,7 @@
 ////////////////////////////////
 //~ rad: Build Options
 
-#define BUILD_TITLE "rad"
+#define BUILD_TITLE "Raid"
 #define OS_FEATURE_GRAPHICAL 1
 
 #define WM_INIT_MANUAL 1
@@ -100,9 +101,14 @@ entry_point(CmdLine *cmd_line)
   g_logs_folder = cmd_line_string(cmd_line, str8_lit("logs"));
   if(g_logs_folder.size == 0)
   {
-    String8 user_program_logs_data_path = get_process_info()->user_program_logs_data_path;
-    make_directory(push_str8f(scratch.arena, "%S/rad", user_program_logs_data_path));
-    g_logs_folder = push_str8f(scratch.arena, "%S/rad/logs", user_program_logs_data_path);
+    // --appdata:<folder> stands for %APPDATA% (see rad_init)
+    String8 user_program_logs_data_path = cmd_line_string(cmd_line, str8_lit("appdata"));
+    if(user_program_logs_data_path.size == 0)
+    {
+      user_program_logs_data_path = get_process_info()->user_program_logs_data_path;
+    }
+    make_directory(push_str8f(scratch.arena, "%S/" RAD_DATA_FOLDER_NAME, user_program_logs_data_path));
+    g_logs_folder = push_str8f(scratch.arena, "%S/" RAD_DATA_FOLDER_NAME "/logs", user_program_logs_data_path);
   }
   make_directory(g_logs_folder);
 

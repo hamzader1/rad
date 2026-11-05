@@ -1,0 +1,26 @@
+// rad 0.9.30 user file (from before the rename to Raid; script session_import_1)
+
+settings:
+{
+  code_font_size: 14
+}
+
+window:
+{
+  panels:
+  {
+    1.000000:
+    {
+      0.200000: explorer: selected
+      0.800000: selected getting_started: selected
+    }
+    0.000000:
+    {
+      tabs_on_bottom
+      output: selected
+      problems
+    }
+  }
+  tool_sizes: bottom: 0.250000
+  size: 1920 1080
+}

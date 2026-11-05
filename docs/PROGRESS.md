@@ -23,7 +23,9 @@ user, beyond CLAUDE.md:
 
 Windows only for now; macOS is milestones 11-12, at the very end (decided 2026-11-03).
 Plan revised 2026-11-03 (see CLAUDE.md section 6). Builds: unoptimized day to day; an
-optimized build in `build\release\rad.exe` at the end of every milestone.
+optimized build in `build\release\raid.exe` at the end of every milestone. The product
+is called Raid since milestone 10 (`raid.exe`); the code layer keeps the name `rad`.
+Older entries below say `rad.exe`.
 
 | Milestone (CLAUDE.md section 6)      | State |
 |--------------------------------------|-------|
@@ -36,7 +38,7 @@ optimized build in `build\release\rad.exe` at the end of every milestone.
 | 7. Rust syntax highlighting          | Done. Rust lexing in the `text` layer (see below, `docs/notes/04-syntax-highlighting.md`); 14 scripts, 242 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 8. Cargo integration                 | Done. `json` layer; cargo runner (Build, Check, Run, Test, Stop; Debug/Release), Output + Problems tabs, diagnostics in the editor, clickable locations, Run in a terminal window, top-bar run toolbar with the user's icons (see journal). 18 scripts, 368 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 9. LSP client                        | Done. `lsp` layer; one rust-analyzer per Cargo workspace: diagnostics (Problems + editor), hover, Go To Definition (F12, Ctrl+click, Alt+Left back), completion list (as you type, `.`, `::`, Ctrl+Space; imports) (see journal). 22 scripts, 453 checks, pass (debug and release, `build\release\rad.exe` 2026-11-04). |
-| 10. Remove debugger, rebrand         | In progress. Step 1 done (2026-11-05): debugger, debug-info layers, tools and their third-party code out of the repo and the build (421 files; tag `raddbg-reference` keeps them). Step 2: rebrand (needs the user's choice of name and logo). |
+| 10. Remove debugger, rebrand         | Done. Debugger, debug-info layers, tools and their third-party code out of the repo and the build (421 files; tag `raddbg-reference` keeps them). Renamed to Raid: `raid.exe`, title/About, `%APPDATA%\raid\` (the old session file is imported once), README. Logo unchanged (the user's, later). 42 scripts, 833 checks, pass (debug and release, `build\release\raid.exe` 2026-11-05). |
 | 11-13. Mac foundation, Mac UI, debugging | Not started. |
 
 Milestone 3 details:
@@ -208,16 +210,13 @@ Milestone 6 details (each item with its script):
 
 0. `docs/TASKS.md` (A-H) is done. Hint images are in `.dev_hints/`
    (private, git-ignored, never push it).
-1. Milestone 10, step 2: rebrand. Needs the user's decisions: product
-   name (exe, window class, user-file folder `%APPDATA%/rad`, user-file
-   header), logo (`data/logo.ico`, `data/logo.png`). Then: README.md
-   (still raddbg's), LICENSE (keep Epic's MIT notice, add ours), the
-   strings left from raddbg in kept code: `BUILD_ISSUES_LINK_STRING_LITERAL`
-   (`base_context_cracking.h`), `raddbg_crash_dump.dmp` (`win32_base.c`),
-   X11 class `raddbg`/`RADDBG` (`linux_window_manager.c`), the `raddbg`
-   symlink name (`linux_shell.c`). Keep the "Built on the RAD Debugger
-   codebase (MIT license)" line in About. Then the milestone's release
-   build into `build\release\rad.exe`.
+1. Milestone 10 is the last Windows milestone. Next in the plan:
+   milestone 11 (Mac foundation, compile-only, from Windows). Ask the user
+   first: the open items below (speed, side-by-side checks) may come
+   before it.
+   - Logo: the user will supply one later (`data/logo.ico` for the exe,
+     window and About; `data/logo.png` for Linux).
+   - LICENSE holds Epic's notice only; the user may add their own line.
 2. Speed: the user will come back to what feels slow (2026-11-03: "ignore,
    we will come back later"). Measured so far: 1 frame from input to
    screen (release: UI build ~2 ms/frame, input shows in the next frame).
@@ -314,30 +313,35 @@ Milestone 6 details (each item with its script):
 
 - Open "x64 Native Tools Command Prompt for VS 2022" (VS 2022 Build Tools,
   MSVC 14.44, Windows SDK 10.0.26100), `cd` to the repo, then:
-  - `build rad` -> `build\rad.exe`
+  - `build raid` -> `build\raid.exe` (source: `src\rad\rad_main.c`)
   - `build rad_tests` -> `build\rad_tests.exe` (prints the check count)
-  - `build` with no target builds `rad`. Only `rad` and `rad_tests` are left
-    (milestone 10).
+  - `build` with no target builds `raid`. Only `raid` and `rad_tests` are
+    left (milestone 10).
 - raddbg.exe, the reference for side-by-side UI screenshots, builds from
   the `raddbg-reference` tag in a second worktree:
   `git worktree add ..\rad_reference raddbg-reference`, then in that folder
   `tests\shell_build.bat raddbg` -> `..\rad_reference\build\raddbg.exe`.
   (A copy built before the removal may still sit in `build\raddbg.exe`;
   builds here no longer write or delete it.)
-- Run: `build\rad.exe [file ...]`. With no file it shows the start page.
-- Log: `%APPDATA%\rad\logs\ui_thread.rad_log` (written by `log_infof`).
-- Every build reruns metagen, which writes `generated/*.meta.*` (and
-  `src/lib_rdi/rdi.c/.h`) with CRLF. `git status` then shows ~50 modified
-  files with no real change. Never stage those; stage paths explicitly.
+- Run: `build\raid.exe [folder or file ...]`. With no file it shows the
+  start page.
+- Data: `%APPDATA%\raid\` (`--appdata:<folder>` stands for `%APPDATA%`):
+  session and settings `default.raid_user` (imported once from
+  `%APPDATA%\rad\default.rad_user` while it does not exist), log
+  `logs\ui_thread.raid_log` (written by `log_infof`; `--logs:<dir>`
+  elsewhere), rust-analyzer's stderr `logs\rust-analyzer_<n>.log`.
+- Every build reruns metagen, which writes `generated/*.meta.*` with CRLF.
+  `git status` then shows ~20 modified files with no real change. Stage
+  paths explicitly (see the rule at the top for real changes).
 - Building from Claude Code's shell (no developer prompt):
-  `cmd /c tests\shell_build.bat rad [release]` (any build.bat target). It
+  `cmd /c tests\shell_build.bat raid [release]` (any build.bat target). It
   unsets `NoDefaultCurrentDirectoryInExePath` (which breaks build.bat's bare
   `metagen.exe` call), loads `vcvars64.bat`, then calls `build.bat`.
 - UI tests: `powershell -ExecutionPolicy Bypass -File tests\run_scripts.ps1
-  [-Exe build\rad.exe] [-Filter scroll]`. They take no focus, so they can
+  [-Exe build\raid.exe] [-Filter scroll]`. They take no focus, so they can
   run while you work. A new check = a line in a `tests\scripts\*.radtest`
   (language at the top of `src/rad/rad_script.h`).
-- If `build\rad.exe` is open, linking it fails (LNK1104): build a copy with
+- If `build\raid.exe` is open, linking it fails (LNK1104): build a copy with
   `cmd /c tests\shell_build_copy.bat [debug|release] [name]` (default
   `build\rad_probe.exe`) and pass it to the runner with `-Exe`.
 - Screenshots: `tests\screenshot.ps1 -Script <file> -Out <png>` runs a
@@ -399,6 +403,37 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-05 (milestone 10, step 2: Raid; milestone 10 done)
+- The user named the product Raid; the logo stays until theirs comes.
+- Product-facing: `BUILD_TITLE "Raid"` (window title, start page, About,
+  status bar, rust-analyzer's `clientInfo`); build target `raid` ->
+  `raid.exe` (build.bat, build.sh, run_scripts.ps1 and screenshot.ps1
+  defaults); `%APPDATA%\raid\` with `default.raid_user` and
+  `logs\ui_thread.raid_log` (names in rad_core.h "Product Names On Disk");
+  user-file header `// raid <version> user file` (`// rad ` still read);
+  crash dump `Raid_crash_dump.dmp`; issues link -> github.com/hamzader1/rad;
+  X11 class `raid`/`Raid` and the `~/.local/bin/raid` link (linux, not
+  compiled). The layer keeps its code name (`src/rad/`, `RAD_`, `rad_tests`,
+  `.radtest`): renaming identifiers would show nowhere.
+- Session import: while `<appdata>/raid/default.raid_user` does not exist,
+  the user file is read from `<appdata>/rad/default.rad_user` and the hash
+  reset, so the first save check writes the new file; the old one is never
+  written. New `--appdata:<folder>` (stands for %APPDATA%; in script mode
+  it opts into the default user file) makes that testable: scripts
+  `session_import_1/2` (fixture `tests/fixtures/appdata/rad/`). Found
+  while writing it: tab paths in a user file are taken as written (only
+  schema `path` fields are resolved against the file's folder, and rad's
+  tabs have no schema), so the fixture holds no file paths.
+- `git describe` matched the new `raddbg-reference` tag ("raddbg-
+  reference-1-g<hash>" in the start page and status bar): build.bat and
+  build.sh now describe with `--match "v[0-9]*"` (version tags only).
+- README.md rewritten for Raid (credit and MIT notice kept); LICENSE
+  unchanged (Epic's notice).
+- Checked: screenshot (start page "Raid", status bar
+  "Raid (0.9.30 ALPHA) ... [<hash>]"); rad_tests 37,610,802 checks, 0 failing;
+  all 42 UI scripts pass (833 checks) on debug and on release
+  (`build\release\raid.exe`, the milestone build).
+
 ### 2026-11-05 (milestone 10, step 1: the debugger out of the repo)
 - The rule (user): remove only what is unused now AND not needed later.
 - Measured: the include closure of `rad_main.c`, `rad_tests.c` and
@@ -441,7 +476,8 @@ of `text_buffer.h`.
 - Checked: metagen rebuilt from scratch and run (12 mdesk files, 31
   tables); kept layers' generated output unchanged apart from CRLF, except
   `rad.meta.*`, stale in git since G2-G7 (now committed); `rad_tests`
-  37,610,802 checks, 0 failing; all 40 UI scripts pass (548 checks, debug).
+  37,610,802 checks, 0 failing; all 40 UI scripts pass (822 checks, debug; first written as 548, a
+  count cut short by `tail`).
 
 ### 2026-11-04 (tasks H1-H3: feedback on G)
 - H1: completion rows push the label as one plain fstr (`text` color).

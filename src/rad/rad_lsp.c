@@ -327,7 +327,7 @@ rad_lsp_server_launch(RAD_LspServer *s)
   rad_lsp->servers_started += 1;
 
   //- rad: log file: <logs>/rust-analyzer_<n>.log (the server's stderr)
-  String8 rad_folder = push_str8f(scratch.arena, "%S/rad", get_process_info()->user_program_logs_data_path);
+  String8 rad_folder = push_str8f(scratch.arena, "%S/" RAD_DATA_FOLDER_NAME, get_process_info()->user_program_logs_data_path);
   String8 logs_folder = push_str8f(scratch.arena, "%S/logs", rad_folder);
   make_directory(rad_folder);
   make_directory(logs_folder);
@@ -354,7 +354,7 @@ rad_lsp_server_launch(RAD_LspServer *s)
     String8 name_json = json_escaped_from_str8(scratch.arena, str8_skip_last_slash(root));
     String8 init = push_str8f(scratch.arena,
                               "{\"processId\":%u,"
-                              "\"clientInfo\":{\"name\":\"rad\"},"
+                              "\"clientInfo\":{\"name\":\"" BUILD_TITLE "\"},"
                               "\"rootUri\":%S,"
                               "\"workspaceFolders\":[{\"uri\":%S,\"name\":%S}],"
                               "\"capabilities\":{"

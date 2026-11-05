@@ -1,7 +1,7 @@
 # Screenshot of rad while it runs a script, without taking focus.
 #
 #   powershell -ExecutionPolicy Bypass -File tests\screenshot.ps1 -Script <file.radtest> -Out <file.png>
-#              [-Exe build\rad.exe] [-AfterMs 3500]
+#              [-Exe build\raid.exe] [-AfterMs 3500]
 #
 # The script should end with `wait <ms>` (longer than -AfterMs) and `quit`, so
 # the window is still open when the picture is taken. It runs on a fresh copy
@@ -25,7 +25,7 @@ public static class RadShot {
 [void][RadShot]::SetProcessDPIAware()
 
 $tests = $PSScriptRoot
-if ($Exe -eq "") { $Exe = Join-Path $tests "..\build\rad.exe" }
+if ($Exe -eq "") { $Exe = Join-Path $tests "..\build\raid.exe" }
 $Exe = (Resolve-Path $Exe).Path
 $Script = (Resolve-Path $Script).Path
 $Out = [IO.Path]::GetFullPath($Out)

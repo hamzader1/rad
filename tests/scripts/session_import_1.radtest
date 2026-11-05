@@ -1,0 +1,21 @@
+#! args: --appdata:"{work}\session_import_1\fixtures\appdata"
+# The rename to Raid (milestone 10), part 1: with no Raid user file yet
+# (<appdata>/raid/default.raid_user), the session is read from the file of
+# before the rename (<appdata>/rad/default.rad_user, "// rad" header) and
+# written to the new file at the first save check; the old file is left as
+# it is. --appdata:<folder> stands for %APPDATA%.
+
+wait_idle
+# the old file's layout and its code font size (default 11)
+expect panel_count == 1
+expect explorer_visible == 1
+expect panel == "getting_started"
+expect setting code_font_size == 14
+wait 500
+expect file_size ../fixtures/appdata/raid/default.raid_user > 300
+# a change only the new file will have (part 2)
+set_setting code_font_size 15
+wait 2500
+expect setting code_font_size == 15
+expect file_size ../fixtures/appdata/rad/default.rad_user == 395
+quit

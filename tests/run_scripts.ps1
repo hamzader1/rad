@@ -1,6 +1,6 @@
 # Runs rad's scripted tests (script language: src/rad/rad_script.h).
 #
-#   powershell -ExecutionPolicy Bypass -File tests\run_scripts.ps1 [-Exe build\rad.exe] [-Filter name] [-TimeoutSec 120]
+#   powershell -ExecutionPolicy Bypass -File tests\run_scripts.ps1 [-Exe build\raid.exe] [-Filter name] [-TimeoutSec 120]
 #
 # Each script runs on a fresh copy of tests\ in %TEMP%\rad_script_tests\<name>,
 # so scripts may edit and save fixture files. rad opens its window without
@@ -11,7 +11,7 @@ param([string]$Exe = "", [string]$Filter = "*", [int]$TimeoutSec = 120)
 $ErrorActionPreference = 'Stop'
 
 $tests = $PSScriptRoot
-if ($Exe -eq "") { $Exe = Join-Path $tests "..\build\rad.exe" }
+if ($Exe -eq "") { $Exe = Join-Path $tests "..\build\raid.exe" }
 $Exe = (Resolve-Path $Exe).Path
 $work = Join-Path $env:TEMP "rad_script_tests"
 if (Test-Path $work) { Remove-Item -Recurse -Force $work }

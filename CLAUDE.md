@@ -1,9 +1,14 @@
-# CLAUDE.md — Rust IDE built on the RAD Debugger codebase
+# CLAUDE.md — Raid, a Rust IDE built on the RAD Debugger codebase
 
 ## 1. Goal
 
 Build a native IDE for **Rust** (C/C++ later) by forking the RAD Debugger
 (https://github.com/EpicGames/raddebugger, MIT license).
+
+The product is called **Raid** (decided 2026-11-05): `raid.exe`, window title and
+About, `%APPDATA%\raid\`. The code layer keeps its code name `rad` (`src/rad/`,
+`RAD_`, `rad_tests`, `.radtest` scripts). The logo stays raddbg's until the user
+supplies a new one.
 
 The thing I care about most is the **UI**. It must look and behave **identically** to
 the RAD Debugger UI (layout, panels, tabs, theming, fonts, animations, feel).
@@ -69,8 +74,8 @@ Required features, in priority order:
     - `shell` (`SH_`): native dialogs, message boxes, file browser.
     - Per-platform implementations live in `src/win32/` and `src/linux/`
       (subfolders `base`, `window_manager`, `shell`, ...).
-  - `rad` (`RAD_`, `src/rad/`): the IDE frontend and build target (`build rad` ->
-    `rad.exe`). Unity build of only the non-debugger layers; see section 2 (option B).
+  - `rad` (`RAD_`, `src/rad/`): the IDE frontend and build target (`build raid` ->
+    `raid.exe`). Unity build of only the non-debugger layers; see section 2 (option B).
     `rad.mdesk` holds copies of raddbg's icon/theme/code-color tables plus the IDE
     command table.
   - `text` (`TXT_`): text processing, lexing and parsing of source code, async.
@@ -180,14 +185,14 @@ Mac 9/10 -> 11/12, debugging 11 -> 13.
 12. **Mac UI, on the Mac.** `window_manager` (Cocoa), `render` (OpenGL 3.3 core first,
     Metal if needed), `font_provider` (FreeType first). Needs Claude Code running on
     the Mac. Biggest single risk of the port.
-    Done when: `rad` runs on the Mac and matches the Windows screenshots (glyph
+    Done when: Raid runs on the Mac and matches the Windows screenshots (glyph
     rasterization aside).
 13. **Debugging (later, optional).** Proposed: LLDB via `lldb-dap`. Decide then.
 
-Builds: day to day, build unoptimized (`build rad`, fast to compile). At the end of
-every milestone, also build an optimized one for the user to test: `build rad release`,
-then copy `build\rad.exe` to `build\release\rad.exe` (the next debug build overwrites
-`build\rad.exe`). No Linux build/CI for now (decided 2026-11-03).
+Builds: day to day, build unoptimized (`build raid`, fast to compile). At the end of
+every milestone, also build an optimized one for the user to test: `build raid release`,
+then copy `build\raid.exe` to `build\release\raid.exe` (the next debug build overwrites
+`build\raid.exe`). No Linux build/CI for now (decided 2026-11-03).
 
 ## 7. Portability rules (follow from day one, even while the work is Windows-only)
 
