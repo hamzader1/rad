@@ -225,10 +225,11 @@ Partial answers (checked in the code 2026-11-02):
   (`src/render/opengl/generated/render_opengl.meta.h:26`) and requests a 3.3 context
   (`src/render/opengl/linux/egl/render_opengl_linux_egl.c:119`). That is below the
   macOS 4.1 core limit. Not run on a Mac yet.
-- x64 intrinsics: yes. `src/base/base_core.h:276-277` includes `immintrin.h` and
-  `emmintrin.h` for every clang/gcc build, with no arch guard, and
-  `src/base/base_core.c:667` uses SSE2 `_mm_*` calls. Both break ARM64 and need
-  guards plus a portable fallback. Atomics use `__atomic_*` builtins (portable).
+- x64 intrinsics: yes, fixed in milestone 11 (2026-11-05): the `immintrin.h`/
+  `emmintrin.h` includes in `base_core.h` are x86/x64-only now, `base_core.c`'s
+  SSE2 code already had a portable fallback, and `ARCH_64BIT` covers ARM64.
+  `base` and `rad_tests` build and pass on ARM64 macOS. Atomics use
+  `__atomic_*` builtins (portable).
 - Linux-only APIs that `src/mac/base` must replace: `futex` syscall, `memfd_create`,
   `/proc/self`, `sys/sysinfo.h` (in `src/linux/base`), `epoll` (socket), `eventfd`
   (window_manager). The Linux window manager is X11 only; nothing to reuse for Cocoa.

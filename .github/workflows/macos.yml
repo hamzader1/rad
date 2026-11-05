@@ -1,0 +1,19 @@
+name: macOS
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rad_tests:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build rad_tests (debug)
+        run: bash build.sh rad_tests
+      - name: Run rad_tests
+        run: ./build/rad_tests
+      - name: Build rad_tests (release)
+        run: bash build.sh rad_tests release
+      - name: Run rad_tests (release)
+        run: ./build/rad_tests

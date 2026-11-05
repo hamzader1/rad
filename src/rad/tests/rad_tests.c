@@ -27,6 +27,7 @@
 #include "base/base_inc.h"
 #include "win32/win32_inc.h"
 #include "linux/linux_inc.h"
+#include "mac/mac_inc.h"
 #include "artifact_cache/artifact_cache.h"
 #include "content/content.h"
 #include "text/text.h"
@@ -37,6 +38,7 @@
 #include "base/base_inc.c"
 #include "win32/win32_inc.c"
 #include "linux/linux_inc.c"
+#include "mac/mac_inc.c"
 #include "artifact_cache/artifact_cache.c"
 #include "content/content.c"
 #include "text/text.c"
@@ -99,7 +101,7 @@ test_check_patched(char *test_name, U64 step, TXT_Patched *patched, String8 expe
   if(patched->size != expected.size || !str8_match(actual, expected, 0))
   {
     good = 0;
-    printf("FAIL %s step %I64u: bytes differ (size %I64u, expected %I64u)\n", test_name, step, patched->size, expected.size);
+    printf("FAIL %s step %llu: bytes differ (size %llu, expected %llu)\n", test_name, step, patched->size, expected.size);
   }
 
   //- rad: lines
@@ -108,7 +110,7 @@ test_check_patched(char *test_name, U64 step, TXT_Patched *patched, String8 expe
   if(patched->line_map.total_line_count != expected_info.lines_count)
   {
     good = 0;
-    printf("FAIL %s step %I64u: line count %I64u, expected %I64u\n", test_name, step, patched->line_map.total_line_count, expected_info.lines_count);
+    printf("FAIL %s step %llu: line count %llu, expected %llu\n", test_name, step, patched->line_map.total_line_count, expected_info.lines_count);
   }
   for(U64 line_num = 1; good && line_num <= expected_info.lines_count; line_num += 1)
   {
@@ -118,7 +120,7 @@ test_check_patched(char *test_name, U64 step, TXT_Patched *patched, String8 expe
     if(actual_range.min != expected_range.min || actual_range.max != expected_range.max)
     {
       good = 0;
-      printf("FAIL %s step %I64u: line %I64u range [%I64u, %I64u), expected [%I64u, %I64u)\n", test_name, step, line_num, actual_range.min, actual_range.max, expected_range.min, expected_range.max);
+      printf("FAIL %s step %llu: line %llu range [%llu, %llu), expected [%llu, %llu)\n", test_name, step, line_num, actual_range.min, actual_range.max, expected_range.min, expected_range.max);
     }
   }
 
@@ -133,7 +135,7 @@ test_check_patched(char *test_name, U64 step, TXT_Patched *patched, String8 expe
       if(actual_line_num != line_num)
       {
         good = 0;
-        printf("FAIL %s step %I64u: offset %I64u -> line %I64u, expected %I64u\n", test_name, step, off, actual_line_num, line_num);
+        printf("FAIL %s step %llu: offset %llu -> line %llu, expected %llu\n", test_name, step, off, actual_line_num, line_num);
       }
     }
   }
@@ -306,7 +308,7 @@ test_random_edits(char *test_name, U64 seed, U64 edits_count, B32 crlf)
     TXT_Patched patched = txt_patched_from_info_data_patches(scratch.arena, &info, base, &patches);
     if(!test_check_patched(test_name, edit_idx, &patched, expected))
     {
-      printf("  last edit: [%I64u, %I64u) <- \"%.*s\"\n", range.min, range.max, str8_varg(escaped_from_raw_str8(scratch.arena, replace)));
+      printf("  last edit: [%llu, %llu) <- \"%.*s\"\n", range.min, range.max, str8_varg(escaped_from_raw_str8(scratch.arena, replace)));
       break;
     }
   }
@@ -886,7 +888,7 @@ test_rust_tokens(void)
     test_checks += 1;
     if(!tiles || next_off != src.size || error_count != 0)
     {
-      printf("FAIL rust_tokens: tiles %i, end %I64u of %I64u, %I64u error tokens\n", tiles, next_off, src.size, error_count);
+      printf("FAIL rust_tokens: tiles %i, end %llu of %llu, %llu error tokens\n", tiles, next_off, src.size, error_count);
       test_failures += 1;
     }
   }
@@ -953,7 +955,7 @@ test_rust_tokens(void)
        got->range.min != want.min || got->range.max != want.max)
     {
       String8 got_string = (got != 0) ? str8_substr(src, got->range) : str8_lit("(none)");
-      printf("FAIL rust_tokens: `%.*s` expected %s [%I64u, %I64u), got %s [%I64u, %I64u) `%.*s`\n",
+      printf("FAIL rust_tokens: `%.*s` expected %s [%llu, %llu), got %s [%llu, %llu) `%.*s`\n",
              str8_varg(target), test_token_kind_names[expects[idx].kind], want.min, want.max,
              got ? test_token_kind_names[got->kind] : "-", got ? got->range.min : 0, got ? got->range.max : 0,
              str8_varg(got_string));
@@ -996,7 +998,7 @@ test_rust_check_resume(char *test_name, U64 step, TXT_Patched *patched, String8 
         if(kinds[off] != part.v[idx].kind)
         {
           String8 line_string = str8_substr(text, line);
-          printf("FAIL %s step %I64u: line %I64u col %I64u is %s from the line's context (pt %s at %I64u), %s in the whole text: `%.*s`\n",
+          printf("FAIL %s step %llu: line %llu col %llu is %s from the line's context (pt %s at %llu), %s in the whole text: `%.*s`\n",
                  test_name, step, line_num, off-line.min+1, test_token_kind_names[part.v[idx].kind],
                  test_token_kind_names[ctx.kind], ctx.off, test_token_kind_names[kinds[off]], str8_varg(line_string));
           for(U64 num = 1; num <= patched->token_pt_map.total_pt_count; num += 1)
@@ -1004,12 +1006,12 @@ test_rust_check_resume(char *test_name, U64 step, TXT_Patched *patched, String8 
             TXT_TokenPt dbg = txt_token_pt_from_num(&patched->token_pt_map, num);
             if(dbg.off + 80 > line.min && dbg.off < line.max + 40)
             {
-              printf("  DEBUG pt %I64u: %s at %I64u aux %I64u\n", num, test_token_kind_names[dbg.kind], dbg.off, dbg.aux);
+              printf("  DEBUG pt %llu: %s at %llu aux %llu\n", num, test_token_kind_names[dbg.kind], dbg.off, dbg.aux);
             }
           }
           for EachNode(rn, TXT_TokenPtMapRangeNode, patched->token_pt_map.first_range)
           {
-            printf("  DEBUG range [%I64u, %I64u) delta %I64d\n", rn->num_range.min, rn->num_range.max, rn->delta);
+            printf("  DEBUG range [%llu, %llu) delta %lld\n", rn->num_range.min, rn->num_range.max, rn->delta);
           }
           good = 0;
           break;
@@ -1154,7 +1156,7 @@ test_json_expect_error(char *test_name, String8 input, U64 expected_error_off)
   test_checks += 1;
   if(parsed.ok || !json_value_is_nil(parsed.root) || parsed.error_off != expected_error_off)
   {
-    printf("FAIL %s: `%.*s` ok %i, error at %I64u, expected an error at %I64u\n", test_name, str8_varg(input), parsed.ok, parsed.error_off, expected_error_off);
+    printf("FAIL %s: `%.*s` ok %i, error at %llu, expected an error at %llu\n", test_name, str8_varg(input), parsed.ok, parsed.error_off, expected_error_off);
     test_failures += 1;
   }
   scratch_end(scratch);
@@ -1200,7 +1202,7 @@ test_json_random_text(Arena *arena, U64 *rng, U64 depth)
       for EachIndex(idx, count)
       {
         if(idx != 0) { str8_list_push(arena, &parts, str8_lit(",")); }
-        if(is_object) { str8_list_pushf(arena, &parts, "\"k%I64u\":", idx); }
+        if(is_object) { str8_list_pushf(arena, &parts, "\"k%llu\":", idx); }
         str8_list_push(arena, &parts, test_json_random_text(arena, rng, depth+1));
       }
       str8_list_push(arena, &parts, is_object ? str8_lit("}") : str8_lit("]"));
@@ -1300,7 +1302,7 @@ test_json(void)
     test_checks += 1;
     if(!parsed.ok || !str8_match(rewritten, text, 0))
     {
-      printf("FAIL json_random seed %I64u: ok %i\n  in:  %.*s\n  out: %.*s\n", seed, parsed.ok, str8_varg(text), str8_varg(rewritten));
+      printf("FAIL json_random seed %llu: ok %i\n  in:  %.*s\n  out: %.*s\n", seed, parsed.ok, str8_varg(text), str8_varg(rewritten));
       test_failures += 1;
     }
     for(U64 prefix_size = 0; prefix_size < text.size; prefix_size += 1)
@@ -1316,7 +1318,7 @@ test_json(void)
         test_checks += 1;
         if(p.root->kind != JSON_ValueKind_Number)
         {
-          printf("FAIL json_prefix seed %I64u: prefix %I64u of `%.*s` parsed\n", seed, prefix_size, str8_varg(text));
+          printf("FAIL json_prefix seed %llu: prefix %llu of `%.*s` parsed\n", seed, prefix_size, str8_varg(text));
           test_failures += 1;
         }
       }
@@ -1362,7 +1364,7 @@ test_lsp_expect_bodies(char *test_name, String8 stream, U64 chunk_size, String8 
   test_checks += 1;
   if(!good || got_count != expected_count || !!p.failed != !!expect_failed)
   {
-    printf("FAIL %s (chunks of %I64u): %I64u messages (expected %I64u), failed %i (expected %i), bodies %s\n",
+    printf("FAIL %s (chunks of %llu): %llu messages (expected %llu), failed %i (expected %i), bodies %s\n",
            test_name, chunk_size, got_count, expected_count, p.failed, expect_failed, good ? "ok" : "differ");
     test_failures += 1;
   }
@@ -1386,10 +1388,10 @@ test_lsp(void)
       str8_lit("{\"jsonrpc\":\"2.0\",\"method\":\"$/progress\",\"params\":{\"value\":{\"kind\":\"end\"}}}"),
     };
     String8List stream_parts = {0};
-    str8_list_pushf(scratch.arena, &stream_parts, "Content-Length: %I64u\r\n\r\n%S", bodies[0].size, bodies[0]);
-    str8_list_pushf(scratch.arena, &stream_parts, "content-length:%I64u\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n%S", bodies[1].size, bodies[1]);
+    str8_list_pushf(scratch.arena, &stream_parts, "Content-Length: %llu\r\n\r\n%S", bodies[0].size, bodies[0]);
+    str8_list_pushf(scratch.arena, &stream_parts, "content-length:%llu\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n%S", bodies[1].size, bodies[1]);
     str8_list_pushf(scratch.arena, &stream_parts, "Content-Length: 0\r\n\r\n");
-    str8_list_pushf(scratch.arena, &stream_parts, "Content-Length:  %I64u \r\n\r\n%S", bodies[3].size, bodies[3]);
+    str8_list_pushf(scratch.arena, &stream_parts, "Content-Length:  %llu \r\n\r\n%S", bodies[3].size, bodies[3]);
     String8 stream = str8_list_join(scratch.arena, &stream_parts, 0);
     test_lsp_expect_bodies("lsp_one", lsp_frame_from_body(scratch.arena, bodies[0]), 0, bodies, 1, 0);
     for(U64 chunk_size = 0; chunk_size <= stream.size; chunk_size += 1)
@@ -1493,7 +1495,7 @@ internal void
 test_section_end(char *section_name, U64 *start_us)
 {
   U64 end_us = now_time_us();
-  printf("  %-44s %8I64u ms\n", section_name, (end_us - *start_us)/1000);
+  printf("  %-44s %8llu ms\n", section_name, (end_us - *start_us)/1000);
   fflush(stdout);
   *start_us = end_us;
 }
@@ -1604,7 +1606,7 @@ entry_point(CmdLine *cmd_line)
   test_buffer_large();
   test_section_end("buffer: large text (~2 MB)", &section_start_us);
 
-  printf("%I64u checks, %I64u failing test(s)\n", test_checks, test_failures);
+  printf("%llu checks, %llu failing test(s)\n", test_checks, test_failures);
   fflush(stdout);
   abort_self(test_failures == 0 ? 0 : 1);
 }

@@ -39,7 +39,9 @@ Older entries below say `rad.exe`.
 | 8. Cargo integration                 | Done. `json` layer; cargo runner (Build, Check, Run, Test, Stop; Debug/Release), Output + Problems tabs, diagnostics in the editor, clickable locations, Run in a terminal window, top-bar run toolbar with the user's icons (see journal). 18 scripts, 368 checks, pass (debug and release, `build\release\rad.exe` 2026-11-03). |
 | 9. LSP client                        | Done. `lsp` layer; one rust-analyzer per Cargo workspace: diagnostics (Problems + editor), hover, Go To Definition (F12, Ctrl+click, Alt+Left back), completion list (as you type, `.`, `::`, Ctrl+Space; imports) (see journal). 22 scripts, 453 checks, pass (debug and release, `build\release\rad.exe` 2026-11-04). |
 | 10. Remove debugger, rebrand         | Done. Debugger, debug-info layers, tools and their third-party code out of the repo and the build (421 files; tag `raddbg-reference` keeps them). Renamed to Raid: `raid.exe`, title/About, `%APPDATA%\raid\` (the old session file is imported once), README. Logo unchanged (the user's, later). 42 scripts, 833 checks, pass (debug and release, `build\release\raid.exe` 2026-11-05). |
-| 11-13. Mac foundation, Mac UI, debugging | Not started. |
+| 11. Mac foundation                  | Done (on the Mac, not from Windows). `src/mac/base` (from `src/linux/base`), ARM64 in `base`, `./build.sh rad_tests` on macOS: 37,610,802 checks, 0 failures (debug and release, ARM64, macOS 15.7). CI: `.github/workflows/macos.yml`. |
+| 12. Mac UI                           | Not started. |
+| 13. Debugging                        | Not started. |
 
 Milestone 3 details:
 - The buffer is the `text_buffer` layer (`TB_`), used by the code view.
@@ -210,10 +212,12 @@ Milestone 6 details (each item with its script):
 
 0. `docs/TASKS.md` (A-H) is done. Hint images are in `.dev_hints/`
    (private, git-ignored, never push it).
-1. Milestone 10 is the last Windows milestone. Next in the plan:
-   milestone 11 (Mac foundation, compile-only, from Windows). Ask the user
-   first: the open items below (speed, side-by-side checks) may come
-   before it.
+1. Milestone 12 (Mac UI), on the Mac: `window_manager` (Cocoa), `render`
+   (OpenGL 3.3 core first), `font_provider` (FreeType), then a Mac runner
+   for the `.radtest` scripts (`run_scripts.ps1` is PowerShell) and
+   screenshots (`screencapture -l <window id>`). First check: how
+   `window_manager` structures its event loop (Cocoa owns the main thread).
+   Not yet seen: the first macOS CI run on GitHub.
    - Logo: the user will supply one later (`data/logo.ico` for the exe,
      window and About; `data/logo.png` for Linux).
    - LICENSE holds Epic's notice only; the user may add their own line.
@@ -224,8 +228,6 @@ Milestone 6 details (each item with its script):
    button, the loading overlay (line-by-line ports; needs raddbg focused;
    raddbg.exe now builds from the `raddbg-reference` tag, see "Build, run,
    test").
-4. For milestone 11 (Mac, at the end), already known: `base_core.h:276-277`
-   and `base_core.c:667` need ARM64 guards; drop `-mcx16` on ARM64.
 
 ## TODO (later)
 
@@ -354,6 +356,16 @@ Milestone 6 details (each item with its script):
   in rad (happened once). `PrintWindow` on an idle background rad window
   (not scripted) can block for a minute or return blank pixels.
 
+## Build, run, test (macOS)
+
+- Needs Xcode (or its command-line tools), clang, and for `raid` later
+  FreeType (`brew install freetype pkg-config`).
+- `bash build.sh rad_tests [release]` -> `build/rad_tests` (prints the
+  check count; exit code 0 = pass). `raid` does not build on the Mac yet
+  (milestone 12: window_manager, render, font_provider).
+- CI: `.github/workflows/macos.yml` builds and runs `rad_tests` (debug and
+  release) on every push.
+
 ## Code map (`src/rad/`)
 
 - `rad_main.c`: entry point and unity build (which layers get linked).
@@ -402,6 +414,39 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-05 (milestone 11: Mac foundation; milestone 11 done)
+- Done on the Mac itself (we are on one now), not "compile-only from
+  Windows" as the plan said. Machine: Apple Silicon (arm64), macOS 15.7.3,
+  Homebrew clang 21.1.8, Xcode, FreeType from Homebrew.
+- `base` on ARM64: `ARCH_64BIT` is now set for ARM64 (it was x64 only, so
+  pointer atomics and `IntFromPtr` hit their `#error`s); the "x64 only"
+  `#error` allows ARM64; `immintrin.h`/`emmintrin.h` only on x86/x64
+  (`base_core.c`'s SSE2 code already had a portable `#else`);
+  `PathStyle_SystemAbsolute` and the raddbg-markup stubs cover `OS_MAC`.
+- `src/mac/base/mac_base.{h,c}` (`MAC_`): a copy of the Linux backend with
+  the Linux-only parts replaced: `arc4random_buf` (getrandom),
+  `shm_open`+`shm_unlink` (memfd_create), `pthread_threadid_np` (gettid),
+  `pthread_setname_np` (prctl), dispatch semaphores for unnamed semaphores
+  and polled `sem_trywait` for named ones (macOS has no unnamed `sem_init`
+  and no `sem_timedwait`), a mutex+condvar barrier (no
+  `pthread_barrier_t`), relative condvar waits
+  (`pthread_cond_timedwait_relative_np`; no CLOCK_MONOTONIC condvars),
+  `fcopyfile` (macOS `sendfile` only sends to sockets), `F_PREALLOCATE`
+  (fallocate), `host_statistics64` / `hw.memsize` / `_NSGetExecutablePath`
+  / `sysctl(KERN_PROC)` (sysconf pages, /proc). `<mach/mach.h>` has struct
+  members named `internal`, so `mac_base.h` undefines our `internal` macro
+  around it. Data folders: `~/Library/Application Support/raid/` (settings
+  and logs, like `%APPDATA%`), cache in `~/Library/Caches`.
+- Not ported (same as Linux on ARM64, no users today): memory
+  placeholders and the demand-paging fault handler (`return 0`).
+  File watching polls, like Linux (`file_watch_check` always says changed).
+- `build.sh`: macOS flags (no `-msse2`, `-mcx16`, `-D_GNU_SOURCE`, `-lrt`,
+  GNU linker groups); two `[[ -v ]]` tests replaced (macOS ships bash 3.2).
+  `rad_tests.c` printed with MSVC's `%I64u`; now `%llu` (works on both).
+- `rad_tests`: 37,610,802 checks, 0 failures, debug and release, ~10 s.
+  NOT rebuilt on Windows after the shared `base` edits (no Windows machine
+  here); they are preprocessor-only for MSVC/x64.
 
 ### 2026-11-05 (milestone 10, step 2: Raid; milestone 10 done)
 - The user named the product Raid; the logo stays until theirs comes.
