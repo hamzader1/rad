@@ -1272,6 +1272,7 @@ RAD_SettingTable:
   {density                      Enum  U64 0   0  1  Appearance "Density"                       "Comfortable: raddbg's sizes. Compact: shorter rows, tabs and panel headers." "Comfortable|Compact"}
   {explorer_side                Enum  U64 0   0  1  Explorer   "Explorer Side"                 "The side of the window the explorer is docked to." "Left|Right"}
   {explorer_compact_rows        Bool  B32 0   0  1  Explorer   "Compact Explorer Rows"         "Shorter explorer rows (2 font sizes), for big folders." ""}
+  {explorer_auto_reveal         Bool  B32 1   0  1  Explorer   "Auto Reveal"                   "When another file becomes the active editor's, the explorer selects it (opening its folders) and scrolls to it." ""}
   {tab_overflow                 Enum  U64 0   0  1  Tabs       "Tab Overflow"                  "When the tabs do not fit: one row, scrolled with the mouse wheel, with a list of all tabs (Scroll); or more rows (Wrap)." "Scroll|Wrap"}
   {tab_close_button             Enum  U64 0   0  1  Tabs       "Tab Close Button"              "Which tabs show their close button: the selected and the hovered one (On Hover), or every tab (Always)." "On Hover|Always"}
   {opaque_backgrounds           Bool  B32 0   0  1  Appearance "Opaque Backgrounds"            "Controls whether or not all floating background colors are forced to be fully opaque." ""}

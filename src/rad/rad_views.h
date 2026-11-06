@@ -271,6 +271,12 @@ struct RAD_ExplorerState
   Arena *sel_arena;
   String8 *sel_paths;
   U64 sel_count;
+
+  // rad: Auto Reveal (TODO_2 E6): the active editor's file last revealed;
+  // scroll the cursor's row into view once the rows are rebuilt
+  U8 revealed_path_buffer[4096];
+  U64 revealed_path_size;
+  B32 reveal_scroll;
   B32 menu_is_folder;
   B32 menu_is_root;
 };

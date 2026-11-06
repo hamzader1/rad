@@ -4989,6 +4989,40 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
   }
 
   //////////////////////////////
+  //- rad: not in raddbg: Auto Reveal (TODO_2 E6): when the active editor
+  // shows another file, it is selected here (its folders open)
+  //
+  if(root.size != 0 && rad_state->settings.explorer_auto_reveal && ex->edit_kind == RAD_ExplorerEditKind_None)
+  {
+    Temp scratch = scratch_begin(0, 0);
+    CFG_Node *editor_panel = rad_explorer_target_panel_from_tab(tab);
+    CFG_Node *editor_tab = &cfg_nil_node;
+    for(CFG_Node *window = editor_panel; window != &cfg_nil_node; window = window->parent)
+    {
+      if(str8_match(window->string, str8_lit("window"), 0))
+      {
+        CFG_PanelTree tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+        editor_tab = cfg_panel_node_from_tree_cfg(tree.root, editor_panel)->selected_tab;
+        break;
+      }
+    }
+    String8 active_path = (str8_match(editor_tab->string, str8_lit("text"), 0) ? rad_file_path_from_tab(editor_tab) : str8_zero());
+    active_path = (active_path.size != 0 ? path_normalized_from_string(scratch.arena, active_path) : active_path);
+    if(!str8_match(active_path, str8(ex->revealed_path_buffer, ex->revealed_path_size), 0))
+    {
+      ex->revealed_path_size = Min(active_path.size, sizeof(ex->revealed_path_buffer));
+      MemoryCopy(ex->revealed_path_buffer, active_path.str, ex->revealed_path_size);
+      if(active_path.size != 0 && rad_path_is_under(active_path, root, 0) && !str8_match(active_path, root, 0) &&
+         !str8_match(active_path, str8(ex->selected_path_buffer, ex->selected_path_size), 0))
+      {
+        rad_explorer_select_path(ex, root, active_path);
+        ex->reveal_scroll = 1;
+      }
+    }
+    scratch_end(scratch);
+  }
+
+  //////////////////////////////
   //- rad: rebuild rows when stale: expansions changed, a new root, or the
   // root's folder watch saw a change (no watch -> once a second)
   //
@@ -5264,6 +5298,17 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
     UI_ScrollListSignal scroll_list_sig = {0};
     Vec2S64 cursor_before_list = ex->cursor;
     Vec2S64 mark_before_list = ex->mark;
+    if(ex->reveal_scroll && !ex->rows_dirty)
+    {
+      // rad: Auto Reveal: the cursor's row into view (centered, if it was not)
+      ex->reveal_scroll = 0;
+      S64 visible_rows = (S64)(rect_dim.y / Max(1.f, row_height_px));
+      S64 row = ex->cursor.y-1;
+      if(row >= 0 && (row < ex->scroll_pos.y.idx || row >= ex->scroll_pos.y.idx + visible_rows - 1))
+      {
+        ui_scroll_pt_target_idx(&ex->scroll_pos.y, Clamp(0, row - visible_rows/2, Max(0, rows_count - visible_rows)));
+      }
+    }
     UI_Parent(column)
       UI_Focus(ex->filter_focused ? UI_FocusKind_Off : UI_FocusKind_On)
       UI_ScrollList(&scroll_list_params, &ex->scroll_pos.y, &ex->cursor, &ex->mark, &visible_row_rng, &scroll_list_sig)

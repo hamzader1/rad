@@ -161,6 +161,7 @@ RAD_SettingCode_theme_preset,
 RAD_SettingCode_density,
 RAD_SettingCode_explorer_side,
 RAD_SettingCode_explorer_compact_rows,
+RAD_SettingCode_explorer_auto_reveal,
 RAD_SettingCode_tab_overflow,
 RAD_SettingCode_tab_close_button,
 RAD_SettingCode_opaque_backgrounds,
@@ -300,6 +301,7 @@ U64 theme_preset;
 U64 density;
 U64 explorer_side;
 B32 explorer_compact_rows;
+B32 explorer_auto_reveal;
 U64 tab_overflow;
 U64 tab_close_button;
 B32 opaque_backgrounds;

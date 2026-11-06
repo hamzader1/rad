@@ -456,6 +456,7 @@ of `text_buffer.h`.
   Line Up / Down, Delete Line, Insert Line Below / Above. Toggle
   Fullscreen is F11 now.
 - Auto-closing pairs ( ( [ { " ), setting Auto-Close Brackets.
+- Explorer Auto Reveal (setting): follows the active editor's file.
 
 ### 2026-11-06 (TODO_2: keys, zoom, tabs, status bar, panel font, explorer, inlay hints)
 - `docs/TODO_2.md`: the user's new list (keys, look, diagnostics like Zed,

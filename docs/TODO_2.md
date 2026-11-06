@@ -212,8 +212,12 @@ then inlay hints (the biggest change to the code view).
 - [ ] **E5. [suggestion] Integrated terminal** in the bottom panel: a
   shell on a pseudo-terminal (`base` API: pty spawn) and a VT100/xterm
   parser drawing into a grid. Large; after the rest.
-- [ ] **E6. [suggestion] Reveal the open file in the explorer** when its
+- [x] **E6. [suggestion] Reveal the open file in the explorer** when its
   tab is selected (setting, VS Code's "auto reveal").
+  Done 2026-11-06 (script `explorer_reveal`): setting Auto Reveal (on,
+  Explorer group). When the active editor's file changes, the explorer
+  selects it, opens its folders and scrolls it into view (centered if it
+  was off screen); the explorer's own selection stays until then.
 
 ## F. Second list (user, 2026-11-06)
 

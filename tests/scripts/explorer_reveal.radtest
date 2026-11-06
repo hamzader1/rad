@@ -1,0 +1,29 @@
+# Auto Reveal (TODO_2 E6; setting, on): when the active editor shows another
+# file, the explorer selects it, opening its folders.
+
+open_folder ../fixtures/project
+wait_idle
+expect explorer_rows == 4
+open ../fixtures/project/src/main.rs
+wait_idle
+expect explorer_selected == "main.rs"
+expect explorer_rows == 7
+open ../fixtures/project/README.md
+wait_idle
+expect explorer_selected == "README.md"
+cmd prev_tab
+wait_idle
+expect explorer_selected == "main.rs"
+
+# the explorer's own selection stays until the active file changes
+click explorer Cargo.toml
+wait_idle
+expect explorer_selected == "Cargo.toml"
+
+# setting off: it does not follow
+set_setting explorer_auto_reveal 0
+cmd next_tab
+wait_idle
+expect explorer_selected == "Cargo.toml"
+set_setting explorer_auto_reveal 1
+quit
