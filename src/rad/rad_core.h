@@ -373,6 +373,14 @@ struct RAD_State
   struct RAD_FolderWatch *free_watch;
   U64 watch_fs_change_gen;
   Thread watch_thread;
+  // rad: timed wake-ups (rad_request_frame_at): work that is due later
+  // (a compaction after a typing pause, a delayed LSP send) wakes the UI at
+  // its time instead of keeping it drawing frames until then. The watcher
+  // thread sleeps until `watch_wake_us` (watch_mutex) and then wakes the UI.
+  CondVar watch_cv;
+  U64 watch_wake_us;
+  U64 frame_wake_us;      // this frame's earliest request (UI thread)
+  U64 last_frame_wake_us; // the last frame's; scripts: not idle while set
   U64 docs_fs_change_gen;
   U64 docs_refresh_until_us;
 
@@ -438,6 +446,7 @@ internal F32 rad_code_font_size(RAD_Window *ws);
 
 internal Arena *rad_frame_arena(void);
 internal void rad_request_frame(void);
+internal void rad_request_frame_at(U64 us);
 internal void rad_set_error(String8 string);
 
 ////////////////////////////////

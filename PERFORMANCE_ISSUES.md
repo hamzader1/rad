@@ -2,6 +2,8 @@
 
 Date: 2026-11-05
 
+> **Update 2026-11-06:** findings 2 (folds), 3 (sync, UI-thread parsing), 4 (token/symbol remapping) and 5 (compaction pause, busy frames) are fixed, plus a macOS GL submit stall this report did not cover. Before/after numbers and what is left: `docs/PROGRESS.md`, journal 2026-11-06. Re-measure with `tests/perf/run_perf.sh`.
+
 Scope: Raid's current macOS ARM64 code path and the shared editor/LSP code. This is a source-level investigation plus a release compile attempt. The current Mac typing benchmark did not start successfully, so the findings below distinguish measured behavior from code-path risks.
 
 ## Summary

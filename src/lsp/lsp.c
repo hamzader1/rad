@@ -250,12 +250,38 @@ lsp_client_reader_entry_point(void *p)
     {
       lsp_frame_parser_push(&parser, str8(buffer, read_size));
     }
+    // rad: parse each body here, outside the lock, into its own arena
+    LSP_MessageList parsed = {0};
+    for(;;)
+    {
+      Arena *message_arena = arena_alloc();
+      String8 body = {0};
+      if(!lsp_frame_parser_next(&parser, message_arena, &body))
+      {
+        arena_release(message_arena);
+        break;
+      }
+      LSP_MessageNode *node = push_array(message_arena, LSP_MessageNode, 1);
+      node->arena = message_arena;
+      node->v = lsp_message_from_body(message_arena, body);
+      SLLQueuePush(parsed.first, parsed.last, node);
+      parsed.count += 1;
+    }
     MutexScope(c->mutex)
     {
       c->bytes_received += read_size;
-      for(String8 body = {0}; lsp_frame_parser_next(&parser, c->inbox_arena, &body);)
+      if(parsed.count != 0)
       {
-        str8_list_push(c->inbox_arena, &c->inbox, body);
+        if(c->inbox.last == 0)
+        {
+          c->inbox = parsed;
+        }
+        else
+        {
+          c->inbox.last->next = parsed.first;
+          c->inbox.last = parsed.last;
+          c->inbox.count += parsed.count;
+        }
         any = 1;
       }
       c->framing_failed = parser.failed;
@@ -325,7 +351,6 @@ lsp_client_launch(LSP_ClientParams *params)
   c->next_request_id = 1;
   c->mutex = mutex_alloc();
   c->outbox_cv = cond_var_alloc();
-  c->inbox_arena = arena_alloc();
   for EachElement(idx, c->outbox_arenas)
   {
     c->outbox_arenas[idx] = arena_alloc();
@@ -372,7 +397,7 @@ lsp_client_launch(LSP_ClientParams *params)
     {
       arena_release(c->outbox_arenas[idx]);
     }
-    arena_release(c->inbox_arena);
+    for(LSP_MessageNode *n = c->inbox.first, *next = 0; n != 0; n = next) { next = n->next; arena_release(n->arena); }
     cond_var_release(c->outbox_cv);
     mutex_release(c->mutex);
     arena_release(arena);
@@ -420,7 +445,7 @@ lsp_client_release(LSP_Client *c, U64 exit_wait_us)
   {
     arena_release(c->outbox_arenas[idx]);
   }
-  arena_release(c->inbox_arena);
+  for(LSP_MessageNode *n = c->inbox.first, *next = 0; n != 0; n = next) { next = n->next; arena_release(n->arena); }
   cond_var_release(c->outbox_cv);
   mutex_release(c->mutex);
   arena_release(c->arena);
@@ -479,18 +504,20 @@ lsp_client_respond(LSP_Client *c, String8 id_json, String8 result_json)
   scratch_end(scratch);
 }
 
-internal String8List
-lsp_client_take_inbox(LSP_Client *c, Arena *arena)
+internal LSP_MessageList
+lsp_client_take_messages(LSP_Client *c)
 {
-  String8List result = {0};
+  LSP_MessageList result = {0};
   MutexScope(c->mutex)
   {
-    for(String8Node *n = c->inbox.first; n != 0; n = n->next)
-    {
-      str8_list_push(arena, &result, push_str8_copy(arena, n->string));
-    }
+    result = c->inbox;
     MemoryZeroStruct(&c->inbox);
-    arena_clear(c->inbox_arena);
   }
   return result;
+}
+
+internal void
+lsp_message_node_release(LSP_MessageNode *node)
+{
+  arena_release(node->arena);
 }

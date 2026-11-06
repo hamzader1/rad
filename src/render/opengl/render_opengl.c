@@ -204,6 +204,7 @@ r_init(CmdLine *cmdln)
       glBindBuffer(GL_ARRAY_BUFFER, r_ogl_state->scratch_buffer_64kb);
       glBufferData(GL_ARRAY_BUFFER, KB(64), 0, GL_DYNAMIC_DRAW);
       glBindBuffer(GL_ARRAY_BUFFER, 0);
+      glGenBuffers(1, &r_ogl_state->ui_instance_buffer);
     }
     
     // rjf: white texture
@@ -503,12 +504,47 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
         R_PassParams_UI *params = pass->params_ui;
         R_BatchGroup2DList *rect_batch_groups = &params->rects;
         
+        //- rad: every group's instances packed into one buffer, uploaded
+        // with one call that also orphans the last frame's storage. Was: one
+        // glBufferSubData per batch into a buffer an earlier draw still read;
+        // on macOS (GL on Metal) each of those flushed the context into a new
+        // Metal command buffer, and waited for a free one: most of a frame.
+        Temp scratch = scratch_begin(0, 0);
+        U64 packed_size = 0;
+        for(R_BatchGroup2DNode *group_n = rect_batch_groups->first; group_n != 0; group_n = group_n->next)
+        {
+          packed_size += group_n->batches.byte_count;
+        }
+        U8 *packed = push_array_no_zero(scratch.arena, U8, packed_size+1);
+        {
+          U64 off = 0;
+          for(R_BatchGroup2DNode *group_n = rect_batch_groups->first; group_n != 0; group_n = group_n->next)
+          {
+            for(R_BatchNode *batch_n = group_n->batches.first; batch_n != 0; batch_n = batch_n->next)
+            {
+              MemoryCopy(packed + off, batch_n->v.v, batch_n->v.byte_count);
+              off += batch_n->v.byte_count;
+            }
+          }
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, r_ogl_state->ui_instance_buffer);
+        glBufferData(GL_ARRAY_BUFFER, packed_size, packed, GL_STREAM_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        scratch_end(scratch);
+        U64 group_off = 0;
+
         //- rjf: draw each batch group
         GLuint shader = r_ogl_state->shaders[R_OGL_ShaderKind_Rect];
+        GLint loc_tex_color = glGetUniformLocation(shader, "u_tex_color");
+        GLint loc_channel_map = glGetUniformLocation(shader, "u_texture_sample_channel_map");
+        GLint loc_viewport_size = glGetUniformLocation(shader, "u_viewport_size_px");
+        GLint loc_opacity = glGetUniformLocation(shader, "u_opacity");
+        GLint loc_xform = glGetUniformLocation(shader, "u_xform");
         glUseProgramScope(shader)
           glBindVertexArrayScope(r_ogl_state->all_purpose_vao)
           glBindFramebufferScope(GL_FRAMEBUFFER, w->stage_target.fbo)
         {
+          glBindBuffer(GL_ARRAY_BUFFER, r_ogl_state->ui_instance_buffer);
           for(R_BatchGroup2DNode *group_n = rect_batch_groups->first; group_n != 0; group_n = group_n->next)
           {
             R_BatchList *batches = &group_n->batches;
@@ -526,22 +562,12 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
               }
             }
             
-            //- rjf: get & fill buffer
-            GLuint buffer = r_ogl_instance_buffer_from_size(batches->byte_count);
-            {
-              glBindBuffer(GL_ARRAY_BUFFER, buffer);
-              U64 off = 0;
-              for(R_BatchNode *batch_n = batches->first; batch_n != 0; batch_n = batch_n->next)
-              {
-                glBufferSubData(GL_ARRAY_BUFFER, off, batch_n->v.byte_count, batch_n->v.v);
-                off += batch_n->v.byte_count;
-              }
-            }
-            
-            //- rjf: bind input attributes
+            //- rjf: bind input attributes (rad: at the group's place in the
+            // packed buffer)
             {
               R_OGL_AttributeArray inputs = r_ogl_shader_kind_input_attributes_table[R_OGL_ShaderKind_Rect];
-              U64 off = 0;
+              U64 off = group_off;
+              group_off += batches->byte_count;
               for EachIndex(idx, inputs.count)
               {
                 glEnableVertexAttribArray(inputs.v[idx].index);
@@ -573,16 +599,16 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                 }break;
               }
               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
-              glUniform1i(glGetUniformLocation(shader, "u_tex_color"), 0);
+              glUniform1i(loc_tex_color, 0);
             }
             
             //- rjf: upload misc. uniforms
             {
               Mat4x4F32 texture_sample_channel_map = r_sample_channel_map_from_tex2dformat(texture_fmt);
-              glUniformMatrix4fv(glGetUniformLocation(shader, "u_texture_sample_channel_map"), 1, 0, &texture_sample_channel_map.v[0][0]);
-              glUniform2f(glGetUniformLocation(shader, "u_viewport_size_px"), viewport_dim.x, viewport_dim.y);
-              glUniform1f(glGetUniformLocation(shader, "u_opacity"), 1.f - group_params->transparency);
-              glUniformMatrix3fv(glGetUniformLocation(shader, "u_xform"), 1, 0, &group_params->xform.v[0][0]);
+              glUniformMatrix4fv(loc_channel_map, 1, 0, &texture_sample_channel_map.v[0][0]);
+              glUniform2f(loc_viewport_size, viewport_dim.x, viewport_dim.y);
+              glUniform1f(loc_opacity, 1.f - group_params->transparency);
+              glUniformMatrix3fv(loc_xform, 1, 0, &group_params->xform.v[0][0]);
             }
             
             //- rjf: set up scissor

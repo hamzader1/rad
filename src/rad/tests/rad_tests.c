@@ -744,6 +744,75 @@ test_buffer_disk(void)
 }
 
 internal void
+test_buffer_map_ranges(char *test_name, U64 seed, U64 edits_count)
+{
+  // rad: tb_buffer_map_sorted_ranges (semantic tokens) against mapping each
+  // range end on its own (min: Side_Max, max: Side_Min), after every random
+  // edit: from the first version at once, and step by step from the last
+  // mapped copy (how the editor carries them); also memory_map's no-copy read
+  Temp scratch = scratch_begin(0, 0);
+  U64 rng = seed;
+  String8 base = test_random_text(scratch.arena, &rng, 60, 0);
+  TestBuf t = test_buf_open(base, TXT_LangKind_Rust);
+  U64 count = 0;
+  Rng1U64 *ranges = push_array(scratch.arena, Rng1U64, base.size+1);
+  for(U64 off = 0; off < base.size;)
+  {
+    U64 gap = test_rand(&rng)%4;
+    U64 len = 1 + test_rand(&rng)%6;
+    U64 min = Min(off + gap, base.size);
+    U64 max = Min(min + len, base.size);
+    if(min < max) { ranges[count] = r1u64(min, max); count += 1; }
+    off = max;
+  }
+  U64 version0 = t.buffer->version;
+  Rng1U64 *stepped = push_array(scratch.arena, Rng1U64, count+1);
+  MemoryCopy(stepped, ranges, sizeof(Rng1U64)*count);
+  U64 stepped_version = version0;
+  B32 good_all = 1;
+  B32 good_step = 1;
+  String8 text = base;
+  for EachIndex(edit_idx, edits_count)
+  {
+    Rng1U64 range = test_random_range(&rng, text);
+    String8 replace = test_random_snippet(&rng, 0);
+    if(range.min == range.max && replace.size == 0) { replace = str8_lit("x"); }
+    test_buf_edit(&t, range.min, range.max, replace);
+    text = test_string_replace(scratch.arena, text, range, replace);
+    Temp temp = temp_begin(scratch.arena);
+    Rng1U64 *all = push_array(temp.arena, Rng1U64, count+1);
+    MemoryCopy(all, ranges, sizeof(Rng1U64)*count);
+    good_all = good_all && tb_buffer_map_sorted_ranges(t.buffer, version0, all, count, sizeof(Rng1U64));
+    good_step = good_step && tb_buffer_map_sorted_ranges(t.buffer, stepped_version, stepped, count, sizeof(Rng1U64));
+    stepped_version = t.buffer->version;
+    for EachIndex(idx, count)
+    {
+      U64 min = ranges[idx].min, max = ranges[idx].max;
+      tb_buffer_map_offset(t.buffer, version0, &min);
+      tb_buffer_map_offset_side(t.buffer, version0, &max, Side_Min);
+      good_all = good_all && all[idx].min == min && all[idx].max == max;
+      good_step = good_step && stepped[idx].min == min && stepped[idx].max == max;
+    }
+    temp_end(temp);
+  }
+  test_expect(test_name, "sorted ranges map like their ends one by one", good_all);
+  test_expect(test_name, "sorted ranges map step by step like at once", good_step);
+  {
+    MemoryMap map = {0};
+    U8 a[4] = {'a', 'b', 'c', 'd'};
+    U8 b[2] = {'X', 'Y'};
+    memory_map_push(scratch.arena, &map, r1u64(0, 4), a);
+    String8 one = memory_map_data_from_range_no_copy(scratch.arena, &map, r1u64(1, 3));
+    test_expect(test_name, "no-copy read points into one piece", one.str == a+1 && str8_match(one, str8_lit("bc"), 0));
+    memory_map_push(scratch.arena, &map, r1u64(4, 6), b);
+    String8 two = memory_map_data_from_range_no_copy(scratch.arena, &map, r1u64(2, 6));
+    test_expect(test_name, "no-copy read copies across pieces", str8_match(two, str8_lit("cdXY"), 0));
+  }
+  test_buf_close(&t);
+  scratch_end(scratch);
+}
+
+internal void
 test_buffer_empty(void)
 {
   char *name = "empty";
@@ -1603,6 +1672,11 @@ entry_point(CmdLine *cmd_line)
     test_buffer_random("buffer_random_crlf", seed*0xD1B54A32D192ED03ull, 400, 1);
   }
   test_section_end("buffer: random edits/undo/redo/save", &section_start_us);
+  for(U64 seed = 1; seed <= 20; seed += 1)
+  {
+    test_buffer_map_ranges("buffer_map_ranges", seed*0x9E3779B97F4A7C15ull, 60);
+  }
+  test_section_end("buffer: carrying sorted ranges", &section_start_us);
   test_buffer_large();
   test_section_end("buffer: large text (~2 MB)", &section_start_us);
 

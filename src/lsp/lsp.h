@@ -21,13 +21,15 @@
 // A client runs the server in a process group (closing it kills the server
 // and its children) and two threads:
 //
-//   reader: stdout -> frame parser -> inbox (raw message bodies), then calls
-//           the `wakeup` hook (e.g. to wake the UI thread)
+//   reader: stdout -> frame parser -> JSON parser -> inbox (parsed messages,
+//           each in its own arena, so big answers are not parsed on the
+//           owner's thread), then calls the `wakeup` hook (e.g. to wake the
+//           UI thread)
 //   writer: outbox -> stdin, so callers never block on a full pipe
 //
 // The owner (the UI thread) sends with lsp_client_request/notify/respond and
-// takes what arrived with lsp_client_take_inbox, parsing each body with
-// lsp_message_from_body. Request ids are numbers, counted by the client;
+// takes what arrived with lsp_client_take_messages, releasing each message
+// with lsp_message_node_release once handled. Request ids are numbers, counted by the client;
 // the server's own requests may use any id, kept as JSON text to answer
 // with. The server's stderr (its log) goes to a file, or nowhere.
 
@@ -77,6 +79,24 @@ struct LSP_Message
   JSON_Value *error;    // responses: {code, message} or nil
 };
 
+// NOTE(rad): a message the reader thread parsed, in its own arena (the
+// owner releases it once handled: lsp_message_node_release)
+typedef struct LSP_MessageNode LSP_MessageNode;
+struct LSP_MessageNode
+{
+  LSP_MessageNode *next;
+  Arena *arena;
+  LSP_Message v;
+};
+
+typedef struct LSP_MessageList LSP_MessageList;
+struct LSP_MessageList
+{
+  LSP_MessageNode *first;
+  LSP_MessageNode *last;
+  U64 count;
+};
+
 ////////////////////////////////
 //~ rad: Client
 
@@ -105,8 +125,7 @@ struct LSP_Client
   //- rad: shared, under `mutex`
   Mutex mutex;
   CondVar outbox_cv;
-  Arena *inbox_arena;
-  String8List inbox;
+  LSP_MessageList inbox;        // parsed by the reader thread
   Arena *outbox_arenas[2];
   U64 outbox_arena_idx;
   String8List outbox;
@@ -143,6 +162,7 @@ internal B32 lsp_client_is_alive(LSP_Client *client);
 internal S64 lsp_client_request(LSP_Client *client, String8 method, String8 params_json);
 internal void lsp_client_notify(LSP_Client *client, String8 method, String8 params_json);
 internal void lsp_client_respond(LSP_Client *client, String8 id_json, String8 result_json);
-internal String8List lsp_client_take_inbox(LSP_Client *client, Arena *arena);
+internal LSP_MessageList lsp_client_take_messages(LSP_Client *client);
+internal void lsp_message_node_release(LSP_MessageNode *node);
 
 #endif // LSP_H

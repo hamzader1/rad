@@ -1,0 +1,52 @@
+#! timeout: 300
+# The completion list's size is two settings (Editor group): its width and
+# its most height, in text heights; 30 x 30 (raddbg's size) by default. A
+# long list shows fewer rows when it is lower. The fixture is never saved.
+
+lsp on
+open_folder ../fixtures/lsp_complete
+wait_idle
+open ../fixtures/lsp_complete/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+
+# u32's methods: a long list, default size
+click code 23 1
+wait_idle
+text "    counter.count."
+wait_until 15000 completion_open == 1
+wait_idle
+expect completion_count > 60
+expect completion_width_em == 30
+expect completion_height_em >= 28
+expect completion_height_em <= 30
+expect completion_bottom >= 9
+
+# small
+set_setting completion_width 20
+set_setting completion_height 10
+wait_idle
+expect completion_open == 1
+expect completion_width_em == 20
+expect completion_height_em >= 8
+expect completion_height_em <= 10
+expect completion_bottom < 5
+
+# large
+set_setting completion_width 45
+set_setting completion_height 50
+wait_idle
+expect completion_width_em == 45
+expect completion_height_em >= 48
+expect completion_height_em <= 50
+expect completion_bottom > 14
+
+# out of range values are clamped
+set_setting completion_width 1
+wait_idle
+expect completion_width_em == 15
+key esc
+wait_idle
+expect completion_open == 0
+quit

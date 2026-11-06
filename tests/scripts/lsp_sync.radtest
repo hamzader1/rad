@@ -1,0 +1,57 @@
+#! timeout: 300
+# Incremental document sync: didChange sends only the changed span (range +
+# text, positions in the last sent text) when the server allows it. After
+# edits with multi-byte characters (UTF-8 vs UTF-16 positions), new lines
+# and deletions, rust-analyzer's copy of the text must still match ours:
+# its diagnostics and semantic tokens land on the right lines and columns.
+# The fixture is never saved.
+
+lsp on
+open_folder ../fixtures/lsp_complete
+wait_idle
+open ../fixtures/lsp_complete/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+wait_until 30000 semantic_count > 0
+expect semantic_slot 20 13 == "code_local"
+
+# a syntax error (rust-analyzer finds it without cargo check) after
+# multi-byte characters, on a new line inside main (auto-indent: the old
+# line 20 gets 4 more spaces)
+click code 20 1
+text "    let s = \"😀é\"; let x = ;"
+key return
+wait 1500
+wait_until 60000 lsp_busy == 0
+wait_until 60000 line_diag 20 == "error"
+expect line_diag 21 == ""
+
+# a line with multi-byte characters above everything
+key ctrl+home
+text "// ünïcode 😀 comment"
+key return
+wait 1500
+wait_until 60000 lsp_busy == 0
+wait 1500
+expect line_diag 21 == "error"
+expect line_diag 20 == ""
+expect semantic_slot 22 17 == "code_local"
+expect semantic_slot 2 8 == "code_type"
+
+# delete into the multi-byte characters and type another one (é and ö share
+# their first UTF-8 byte: the sent span must start at a whole character):
+# the error goes, nothing else comes
+click code 21 1
+key end
+key backspace 13
+text "ö\";"
+wait 1500
+wait_until 60000 lsp_busy == 0
+wait_until 60000 line_diag 21 == ""
+expect line 21 == "    let s = \"😀ö\";"
+expect semantic_slot 22 17 == "code_local"
+expect semantic_slot 21 9 == "code_local"
+key ctrl+z 5
+wait_idle
+quit

@@ -214,6 +214,27 @@ tb_buffer_is_busy(TB_Buffer *buffer)
   return (buffer->patches.count != 0);
 }
 
+internal U64
+tb_buffer_compact_due_us(TB_Buffer *buffer)
+{
+  // NOTE(rad): 0: nothing to compact; otherwise when tb_buffer_tick should
+  // run next for it: a compaction in flight (lexing) or due at once -> 1
+  // (now), waiting for the typing pause -> the pause's end
+  U64 result = 0;
+  if(buffer->patches.count != 0)
+  {
+    if(!u128_match(buffer->snapshot_hash, u128_zero()) || buffer->patches.count >= TB_COMPACT_MAX_PATCHES)
+    {
+      result = 1;
+    }
+    else
+    {
+      result = buffer->last_change_us + TB_COMPACT_PAUSE_US;
+    }
+  }
+  return result;
+}
+
 internal TB_Text
 tb_text_from_buffer(Arena *arena, Access *access, TB_Buffer *buffer)
 {
@@ -254,34 +275,99 @@ tb_buffer_map_offset_side(TB_Buffer *buffer, U64 version, U64 *off, Side side)
   // log (too old, from the future, or a reload); `*off` is then unchanged
   // and the caller should clamp it to the text. Side_Max: the offset sticks
   // to the character after it; Side_Min: to the character before it.
+  B32 result = tb_buffer_can_map_from_version(buffer, version);
+  if(result)
+  {
+    U64 o = *off;
+    for(U64 v = version+1; v <= buffer->version; v += 1)
+    {
+      o = tb_change_map_offset(&buffer->change_log[v%TB_CHANGE_LOG_SIZE], o, side);
+    }
+    *off = o;
+  }
+  return result;
+}
+
+internal B32
+tb_buffer_can_map_from_version(TB_Buffer *buffer, U64 version)
+{
+  // NOTE(rad): all changes since `version` are in the log, none a reload
   B32 result = (version <= buffer->version && buffer->version - version <= TB_CHANGE_LOG_SIZE);
   for(U64 v = version+1; result && v <= buffer->version; v += 1)
   {
     TB_Change *change = &buffer->change_log[v%TB_CHANGE_LOG_SIZE];
     result = (change->version == v && !change->reset);
   }
+  return result;
+}
+
+internal U64
+tb_change_map_offset(TB_Change *change, U64 o, Side side)
+{
+  if(o < change->range.min || (side == Side_Min && o == change->range.min))
+  {
+    // rad: before the change (Side_Min: or where it starts): stays
+  }
+  else if(o >= change->range.max)
+  {
+    // rad: after the change (or at an insertion point): shifts
+    o = o - dim_1u64(change->range) + change->new_size;
+  }
+  else
+  {
+    // rad: its next character was replaced: end of the replacement
+    o = change->range.min + change->new_size;
+  }
+  return o;
+}
+
+internal B32
+tb_buffer_map_sorted_ranges(TB_Buffer *buffer, U64 version, Rng1U64 *ranges, U64 count, U64 stride)
+{
+  // NOTE(rad): maps `count` ranges (min: Side_Max, max: Side_Min, as text
+  // spans), `stride` bytes apart, sorted and not overlapping, from `version`
+  // to the current one, in place. One pass per change, and each pass only
+  // touches the ranges that end at or after the change (binary search), so
+  // typing costs O(log n + ranges after the edit), not O(n x changes).
+  // Returns 0 (ranges unchanged) when the log cannot carry them.
+  B32 result = tb_buffer_can_map_from_version(buffer, version);
   if(result)
   {
-    U64 o = *off;
+#define tb_range_at(i) ((Rng1U64 *)((U8 *)ranges + (i)*stride))
     for(U64 v = version+1; v <= buffer->version; v += 1)
     {
       TB_Change *change = &buffer->change_log[v%TB_CHANGE_LOG_SIZE];
-      if(o < change->range.min || (side == Side_Min && o == change->range.min))
+      // rad: first range whose max >= change.min (earlier ones are untouched)
+      U64 lo = 0, hi = count;
+      for(;lo < hi;)
       {
-        // rad: before the change (Side_Min: or where it starts): stays
+        U64 mid = (lo+hi)/2;
+        if(tb_range_at(mid)->max < change->range.min) { lo = mid+1; } else { hi = mid; }
       }
-      else if(o >= change->range.max)
+      if(lo < count && change->range.max == change->range.min && change->new_size != 0)
       {
-        // rad: after the change (or at an insertion point): shifts
-        o = o - dim_1u64(change->range) + change->new_size;
+        // rad: pure insertion: everything at/after the insertion point
+        // shifts by the inserted size (the common typing case: a tight loop)
+        U64 at = change->range.min;
+        U64 d = change->new_size;
+        for(U64 idx = lo; idx < count; idx += 1)
+        {
+          Rng1U64 *r = tb_range_at(idx);
+          if(r->min >= at) { r->min += d; }
+          if(r->max > at)  { r->max += d; }
+        }
       }
       else
       {
-        // rad: its next character was replaced: end of the replacement
-        o = change->range.min + change->new_size;
+        for(U64 idx = lo; idx < count; idx += 1)
+        {
+          Rng1U64 *r = tb_range_at(idx);
+          r->min = tb_change_map_offset(change, r->min, Side_Max);
+          r->max = tb_change_map_offset(change, r->max, Side_Min);
+        }
       }
     }
-    *off = o;
+#undef tb_range_at
   }
   return result;
 }

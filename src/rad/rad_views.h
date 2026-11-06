@@ -73,6 +73,9 @@ struct RAD_CodeViewState
   U64 fold_ranges_count;
   U64 fold_ranges_version;
   B32 fold_ranges_valid;
+  U64 fold_ranges_line_count; // the text's line count at fold_ranges_version
+  B32 fold_ranges_carried; // carried over edits, not scanned: scan again once the text settles
+  Rng1U64 *fold_range_offs; // [fold_ranges_count]: starts of line_min and line_max, at fold_ranges_version
   U64 fold_offs[RAD_CODE_VIEW_FOLDS_MAX];
   U64 fold_count;
   U64 folds_version;

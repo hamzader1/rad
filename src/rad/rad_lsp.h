@@ -171,6 +171,7 @@ struct RAD_LspServer
   RAD_LspServerState state;
   S64 initialize_id;
   B32 utf8_positions;
+  B32 sync_incremental;          // textDocumentSync change kind 2: didChange sends the changed span
   B32 quiescent;                // experimental/serverStatus: no work queued
   String8 health_message;       // (health_arena) serverStatus message, if not ok
   Arena *health_arena;
@@ -363,6 +364,7 @@ struct RAD_LspCompletion
   U64 doc_built_frame;          // last frame the documentation beside it was built
   B32 commit_requested;         // a row was clicked: the code view commits it
   Rng2F32 layout_rect;          // (scripts) popup rect, first visible row, row height
+  F32 layout_font_size;         // (scripts) the font size its em sizes are in
   S64 layout_first_row;
   Rng2F32 layout_first_row_rect;
 };

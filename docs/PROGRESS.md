@@ -19,7 +19,7 @@ user, beyond CLAUDE.md:
   Bash heredoc: `\r` and `\n` turn into real control characters. Write such
   edit scripts with the file-writing tool and run `python -I <file>`.
 
-## Status (2026-11-05)
+## Status (2026-11-06)
 
 Windows only for now; macOS is milestones 11-12, at the very end (decided 2026-11-03).
 Plan revised 2026-11-03 (see CLAUDE.md section 6). Builds: unoptimized day to day; an
@@ -40,7 +40,7 @@ Older entries below say `rad.exe`.
 | 9. LSP client                        | Done. `lsp` layer; one rust-analyzer per Cargo workspace: diagnostics (Problems + editor), hover, Go To Definition (F12, Ctrl+click, Alt+Left back), completion list (as you type, `.`, `::`, Ctrl+Space; imports) (see journal). 22 scripts, 453 checks, pass (debug and release, `build\release\rad.exe` 2026-11-04). |
 | 10. Remove debugger, rebrand         | Done. Debugger, debug-info layers, tools and their third-party code out of the repo and the build (421 files; tag `raddbg-reference` keeps them). Renamed to Raid: `raid.exe`, title/About, `%APPDATA%\raid\` (the old session file is imported once), README. Logo unchanged (the user's, later). 42 scripts, 833 checks, pass (debug and release, `build\release\raid.exe` 2026-11-05). |
 | 11. Mac foundation                  | Done (on the Mac, not from Windows). `src/mac/base` (from `src/linux/base`), ARM64 in `base`, `./build.sh rad_tests` on macOS: 37,610,802 checks, 0 failures (debug and release, ARM64, macOS 15.7). CI: `.github/workflows/macos.yml`. |
-| 12. Mac UI                           | In progress. Raid runs on the Mac: Cocoa window manager, OpenGL 4.1 (sRGB present pass), FreeType + CoreText font names, Mac shell incl. Terminal.app runs. `tests/run_scripts.sh`: 42 scripts, 834 checks, all pass (debug). Not done: visual check vs Windows screenshots, IME/dead keys, file drop, .app bundle, release build. |
+| 12. Mac UI                           | Done (2026-11-06; the user tested it on the Mac). Cocoa window manager, OpenGL 4.1 (sRGB present pass), FreeType + CoreText font names, Mac shell incl. Terminal.app runs. `tests/run_scripts.sh`: 45 scripts, all pass on the release build. Left for later (TODO): IME/dead keys, file drop, .app bundle, a side-by-side screenshot check against Windows. |
 | 13. Debugging                        | Not started. |
 
 Milestone 3 details:
@@ -212,27 +212,26 @@ Milestone 6 details (each item with its script):
 
 0. `docs/TASKS.md` (A-H) is done. Hint images are in `.dev_hints/`
    (private, git-ignored, never push it).
-1. Milestone 12 (Mac UI), on the Mac: `window_manager` (Cocoa), `render`
-   (OpenGL 3.3 core first), `font_provider` (FreeType), then a Mac runner
-   for the `.radtest` scripts (`run_scripts.ps1` is PowerShell) and
-   screenshots (`screencapture -l <window id>`). First check: how
-   `window_manager` structures its event loop (Cocoa owns the main thread).
-   Not yet seen: the first macOS CI run on GitHub.
+1. Speed, continued (see the 2026-11-06 journal entry; measure with
+   `tests/perf/run_perf.sh`): input-to-photon in a visible window is not
+   measured yet (script windows are not vsync-paced). Candidates: fewer
+   frames per input (4, as raddbg; 2 broke the tool-window close button,
+   find out why first), fold ranges from a worker or incrementally, the
+   compaction copy/hash off the UI thread, a quiet-period debounce for the
+   150 ms didChange timer.
    - Logo: the user will supply one later (`data/logo.ico` for the exe,
      window and About; `data/logo.png` for Linux).
    - LICENSE holds Epic's notice only; the user may add their own line.
-2. Speed: expanded findings and available Mac script measurements are in
-   `PERFORMANCE_ISSUES.md`. LSP-on runs show p95 UI-build times of 21.68 ms
-   on a ~3k-line file and 68.07 ms on a ~10k-line file, but the recorded
-   build flags are unknown. A release rebuild succeeded, but its script
-   launch stalled on Launch Services/XPC errors. Fix that launch path, then
-   capture stage timings on a verified release build before ranking changes.
+2. Mac leftovers (TODO below): IME/dead keys, file drop, .app bundle.
 3. Not yet compared side by side with raddbg.exe: the query bar, the zoom
    button, the loading overlay (line-by-line ports; needs raddbg focused;
    raddbg.exe now builds from the `raddbg-reference` tag, see "Build, run,
    test").
 
 ## TODO (later)
+
+- Mac: IME / dead keys, file drop onto the window, an .app bundle, a
+  side-by-side screenshot check against Windows (milestone 12 leftovers).
 
 - Tab drag/drop between panels (port raddbg's: drop sites on tab bars and
   panel edges, the drag visualization, `MoveTab`). Asked for by the user
@@ -241,7 +240,7 @@ Milestone 6 details (each item with its script):
 ## Known limits
 
 - Scope lines and end-of-scope annotations are off while patches exist,
-  i.e. while typing; they come back ~100 ms after typing stops (compaction).
+  i.e. while typing; they come back ~0.5 s after typing stops (compaction).
 - Compaction re-lexes the whole file. Fine for normal files; on very large
   files typed into very fast, patches pile up while a lex is in flight.
 - A tab whose cursor fell more than 1,024 changes behind (hidden while
@@ -364,8 +363,12 @@ Milestone 6 details (each item with its script):
 - Needs Xcode (or its command-line tools), clang, and for `raid` later
   FreeType (`brew install freetype pkg-config`).
 - `bash build.sh rad_tests [release]` -> `build/rad_tests` (prints the
-  check count; exit code 0 = pass). `raid` does not build on the Mac yet
-  (milestone 12: window_manager, render, font_provider).
+  check count; exit code 0 = pass). `bash build.sh raid [release]` ->
+  `build/raid`.
+- `tests/run_scripts.sh [-e build/raid] [-f filter]`: every `.radtest`.
+- `tests/perf/run_perf.sh [-e exe] [-s "3000 10000"] [-l "off on"]`: typing
+  benchmarks on generated Rust crates (MEASURE lines, not pass/fail).
+- Profiling: `sample <pid> 6 -file out.txt` while a script types.
 - CI: `.github/workflows/macos.yml` builds and runs `rad_tests` (debug and
   release) on every push.
 
@@ -417,6 +420,62 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-06 (milestone 12 done; typing speed; completion list size)
+- Milestone 12 closed: the user tested Raid on the Mac; the release build
+  (`./build.sh raid release`) passes every script (the Launch Services stall
+  of 2026-11-05 did not come back). IME, file drop, .app bundle and the
+  screenshot comparison moved to TODO.
+- Speed. New benchmark: `tests/perf/run_perf.sh` (generated Rust crates,
+  human-paced typing and a burst, LSP on/off). Profiled with `sample`.
+  Found and fixed, in order of measured cost:
+  1. Semantic tokens were carried over every change since the server's
+     answer, for every token, on every keystroke (O(tokens x changes); ~87%
+     of frame time at 10k lines with rust-analyzer). Now the last carried
+     copy is moved over the new changes only, in place:
+     `tb_buffer_map_sorted_ranges` (binary search to the first touched
+     token, a tight shift loop for insertions). Document symbols (navbar)
+     the same way (they nest: a plain per-change loop).
+  2. GL submit on macOS: one `glBufferSubData` per batch into a buffer the
+     last draw still used made Apple's GL-on-Metal flush the context into a
+     new Metal command buffer each time (and wait for a free one). Now a UI
+     pass packs all instances and uploads them with one `glBufferData`
+     (orphaning); uniform locations looked up once per pass. Pixels
+     unchanged (screenshot diff: only an animating hover differs).
+  3. Fold ranges: a whole-file copy + scan on every keystroke (~3 ms/MB).
+     Now the last ranges are carried by their line-start offsets while
+     patches exist (no line conversion when one edit kept the line count),
+     and rescanned once the text settles (compaction), without a copy
+     (`memory_map_data_from_range_no_copy`).
+  4. Compaction pause 100 ms -> 500 ms (it copied + hashed the file after
+     most keystrokes at a normal typing pace), and it no longer keeps frames
+     coming while it waits: new `rad_request_frame_at` (the watcher thread
+     wakes the UI at the time). The 150 ms didChange wait uses it too.
+  5. LSP: incremental `didChange` (the span between the common prefix and
+     suffix of the last sent text and this one, never splitting a UTF-8
+     character) when the server's textDocumentSync change kind is 2;
+     positions from the snapshot's line starts (binary search; was a scan
+     from offset 0 per request); the text materialized straight into the
+     snapshot; responses parsed on the client's reader thread
+     (`lsp_client_take_messages`, one arena per message).
+  Script-mode input latency (app side, no vsync), avg / p95, before -> after:
+  3k lines LSP on burst 5.3/8.3 -> 1.6/2.9 ms; 10k LSP on human 6.2/7.4 ->
+  1.7/2.7, burst 13.1/18.3 -> 1.5/2.9; 50k (1.3 MB) LSP off human 7.3/8.0 ->
+  1.7/2.7. Every case is now ~1.5-1.7 ms whatever the file size; the main
+  thread mostly waits in `flushBuffer`. Tried and reverted: 2 frames per
+  input instead of 4 (tool_windows: the close button stopped working).
+- Bug found by the new sync test: arrows, Backspace and Delete stepped by
+  bytes (a raddbg TODO in `ui_single_line_txt_op_from_event`), so
+  Backspace after `é` left a broken byte. They step by UTF-8 characters now.
+- Completion list size: settings "Completion List Width" and "Completion
+  List Height" (Editor group, in text heights, default 30 x 30 = raddbg's).
+- Tests: new `lsp_sync` (incremental sync with multi-byte edits),
+  `lsp_completion_size`; `lsp_semantic` now waits for `u32`'s color (its
+  first answer could come before rust-analyzer resolved builtin types: it
+  failed 4/4 on the old binary on this machine); `settings_view` counts 33
+  rows; `rad_tests`: range carrying against per-offset mapping (random
+  edits) and the no-copy read. 45 scripts pass (release), rad_tests
+  37,610,902 checks, 0 failing.
 
 ### 2026-11-05 (performance follow-up)
 - Corrected the first report's claim that no Mac timing results existed:

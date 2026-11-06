@@ -209,6 +209,8 @@
 //   completion_top completion_bottom   first/last row fully visible in it;
 //                               completion_below: rows under the last visible one;
 //                               completion_selected_visible: 1 if the selection is
+//   completion_width_em completion_height_em   the list's size in font heights
+//                               (settings completion_width/_height; 0: not shown)
 //   diag_count diag_errors diag_warnings   problems: the last cargo command's
 //                               diagnostics and the language servers', merged
 //   diag <n>                    "<kind> <path>:<line>:<col> <message>" (path

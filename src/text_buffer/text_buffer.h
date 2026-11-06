@@ -57,7 +57,7 @@
 ////////////////////////////////
 //~ rad: Tunables
 
-#define TB_COMPACT_PAUSE_US      100000
+#define TB_COMPACT_PAUSE_US      500000 // was 100 ms: shorter than a typing pause, so it copied+hashed the whole text after most keys
 #define TB_COMPACT_MAX_PATCHES   32
 #define TB_UNDO_GROUP_PAUSE_US   1000000
 #define TB_UNDO_GROUP_MAX_SIZE   256
@@ -159,10 +159,14 @@ internal void tb_buffer_tick(TB_Buffer *buffer, Access *access, U64 now_us);
 internal B32 tb_buffer_is_loaded(TB_Buffer *buffer);
 internal B32 tb_buffer_is_dirty(TB_Buffer *buffer);
 internal B32 tb_buffer_is_busy(TB_Buffer *buffer);
+internal U64 tb_buffer_compact_due_us(TB_Buffer *buffer);
 internal TB_Text tb_text_from_buffer(Arena *arena, Access *access, TB_Buffer *buffer);
 internal String8 tb_string_from_buffer(Arena *arena, Access *access, TB_Buffer *buffer);
 internal B32 tb_buffer_map_offset(TB_Buffer *buffer, U64 version, U64 *off);
 internal B32 tb_buffer_map_offset_side(TB_Buffer *buffer, U64 version, U64 *off, Side side);
+internal B32 tb_buffer_can_map_from_version(TB_Buffer *buffer, U64 version);
+internal U64 tb_change_map_offset(TB_Change *change, U64 off, Side side);
+internal B32 tb_buffer_map_sorted_ranges(TB_Buffer *buffer, U64 version, Rng1U64 *ranges, U64 count, U64 stride);
 
 ////////////////////////////////
 //~ rad: Editing

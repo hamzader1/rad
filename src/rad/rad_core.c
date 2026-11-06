@@ -320,6 +320,20 @@ rad_request_frame(void)
 }
 
 internal void
+rad_request_frame_at(U64 us)
+{
+  // NOTE(rad): a frame at (or soon after) `us`; until then rad may sleep
+  if(us <= now_time_us())
+  {
+    rad_request_frame();
+  }
+  else if(rad_state->frame_wake_us == 0 || us < rad_state->frame_wake_us)
+  {
+    rad_state->frame_wake_us = us;
+  }
+}
+
+internal void
 rad_set_error(String8 string)
 {
   rad_state->error_string_size = Min(sizeof(rad_state->error_buffer), string.size);
@@ -5979,9 +5993,36 @@ rad_watch_thread_entry_point(void *p)
   // streamed (open) file change -> flag it and wake the UI thread, which
   // otherwise sleeps until input arrives
   ThreadNameF("rad_watch_thread");
+  U64 next_check_us = now_time_us() + 100000;
   for(;;)
   {
-    sleep_ms(100);
+    B32 wake = 0;
+    MutexScope(rad_state->watch_mutex)
+    {
+      U64 endt_us = next_check_us;
+      if(rad_state->watch_wake_us != 0 && rad_state->watch_wake_us < endt_us)
+      {
+        endt_us = rad_state->watch_wake_us;
+      }
+      if(now_time_us() < endt_us)
+      {
+        cond_var_wait(rad_state->watch_cv, rad_state->watch_mutex, endt_us);
+      }
+      if(rad_state->watch_wake_us != 0 && now_time_us() >= rad_state->watch_wake_us)
+      {
+        rad_state->watch_wake_us = 0;
+        wake = 1;
+      }
+    }
+    if(wake)
+    {
+      wm_send_wakeup_event();
+    }
+    if(now_time_us() < next_check_us)
+    {
+      continue;
+    }
+    next_check_us = now_time_us() + 100000;
     B32 changed = 0;
     U64 fs_gen = fs_change_gen();
     if(fs_gen != rad_state->watch_fs_change_gen)
@@ -6400,6 +6441,7 @@ rad_init(CmdLine *cmdln)
   //- rad: folder watches + watcher thread (wakes the UI on disk changes)
   rad_state->watch_mutex = mutex_alloc();
   rad_state->watch_fs_change_gen = fs_change_gen();
+  rad_state->watch_cv = cond_var_alloc();
   rad_state->watch_thread = thread_launch(rad_watch_thread_entry_point, 0);
 
   ProfEnd();
@@ -6997,6 +7039,23 @@ rad_frame(void)
   {
     rad_state->num_frames_requested -= 1;
   }
+
+  //////////////////////////////
+  //- rad: hand this frame's timed wake-up to the watcher thread
+  //
+  rad_state->last_frame_wake_us = rad_state->frame_wake_us;
+  if(rad_state->frame_wake_us != 0 && rad_state->num_frames_requested == 0)
+  {
+    MutexScope(rad_state->watch_mutex)
+    {
+      if(rad_state->watch_wake_us == 0 || rad_state->frame_wake_us < rad_state->watch_wake_us)
+      {
+        rad_state->watch_wake_us = rad_state->frame_wake_us;
+      }
+    }
+    cond_var_signal(rad_state->watch_cv);
+  }
+  rad_state->frame_wake_us = 0;
 
   //////////////////////////////
   //- rad: submit rendering to all windows

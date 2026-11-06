@@ -193,33 +193,64 @@ rad_lsp_root_from_path(Arena *arena, String8 path)
 //~ rad: Snapshots (the texts sent to a server, by version)
 
 internal RAD_LspSnapshot *
-rad_lsp_snapshot_push(RAD_LspDoc *ld, U64 version, String8 text)
+rad_lsp_snapshot_next(RAD_LspDoc *ld)
 {
+  // NOTE(rad): the slot the next snapshot goes to (the oldest), cleared;
+  // the caller writes its text into its arena, then rad_lsp_snapshot_push
   RAD_LspSnapshot *snap = &ld->snapshots[ld->snapshot_next % RAD_LSP_SNAPSHOT_COUNT];
-  ld->snapshot_next += 1;
   if(snap->arena == 0)
   {
     snap->arena = arena_alloc();
   }
   arena_clear(snap->arena);
+  snap->valid = 0;
+  return snap;
+}
+
+internal RAD_LspSnapshot *
+rad_lsp_snapshot_push(RAD_LspDoc *ld, U64 version, String8 text)
+{
+  // NOTE(rad): `text` must live in rad_lsp_snapshot_next's arena (not copied)
+  RAD_LspSnapshot *snap = &ld->snapshots[ld->snapshot_next % RAD_LSP_SNAPSHOT_COUNT];
+  ld->snapshot_next += 1;
   snap->valid = 1;
   snap->version = version;
-  snap->text = push_str8_copy(snap->arena, text);
+  snap->text = text;
   U64 line_count = 1;
-  for EachIndex(idx, text.size) { line_count += (text.str[idx] == '\n'); }
+  for(U8 *p = text.str, *end = text.str + text.size; p < end && (p = (U8 *)memchr(p, '\n', (size_t)(end - p))) != 0; p += 1)
+  {
+    line_count += 1;
+  }
   snap->line_starts = push_array_no_zero(snap->arena, U64, line_count);
   snap->line_count = line_count;
   snap->line_starts[0] = 0;
   U64 line_idx = 1;
-  for EachIndex(idx, text.size)
+  for(U8 *p = text.str, *end = text.str + text.size; p < end && (p = (U8 *)memchr(p, '\n', (size_t)(end - p))) != 0; p += 1)
   {
-    if(text.str[idx] == '\n')
-    {
-      snap->line_starts[line_idx] = idx+1;
-      line_idx += 1;
-    }
+    snap->line_starts[line_idx] = (U64)(p - text.str) + 1;
+    line_idx += 1;
   }
   return snap;
+}
+
+internal void
+rad_lsp_position_from_snapshot_offset(RAD_LspSnapshot *snap, U64 off, B32 utf8, S64 *line_out, S64 *character_out)
+{
+  // NOTE(rad): as rad_lsp_position_from_offset, but the line comes from the
+  // snapshot's line starts (binary search), not a scan from the text's start
+  off = Min(off, snap->text.size);
+  U64 lo = 0, hi = snap->line_count;
+  for(;lo+1 < hi;)
+  {
+    U64 mid = (lo+hi)/2;
+    if(snap->line_starts[mid] <= off) { lo = mid; } else { hi = mid; }
+  }
+  U64 line_start = (snap->line_count != 0 ? snap->line_starts[lo] : 0);
+  S64 line = 0;
+  S64 character = 0;
+  rad_lsp_position_from_offset(str8_skip(str8_prefix(snap->text, off), line_start), off - line_start, utf8, &line, &character);
+  *line_out = (S64)lo;
+  *character_out = character;
 }
 
 internal RAD_LspSnapshot *
@@ -418,6 +449,7 @@ rad_lsp_server_restart(RAD_LspServer *s)
   s->messages_received = 0;
   s->initialize_id = 0;
   s->utf8_positions = 0;
+  s->sync_incremental = 0;
   arena_clear(s->health_arena);
   s->health_message = str8_zero();
   if(rad_lsp->hover.server == s)
@@ -492,22 +524,53 @@ rad_lsp_server_end(RAD_LspServer *s, B32 clean)
 internal void
 rad_lsp_doc_send(RAD_LspServer *s, RAD_LspDoc *ld, RAD_Document *doc)
 {
-  // NOTE(rad): didOpen the first time, then didChange with the full text
+  // NOTE(rad): didOpen the first time, then didChange: with the changed
+  // span only (the text between the common prefix and suffix of the last
+  // sent text and this one) when the server takes incremental changes, else
+  // the full text. The text goes straight into the next snapshot's arena.
   Temp scratch = scratch_begin(0, 0);
+  RAD_LspSnapshot *prev = (ld->opened ? rad_lsp_snapshot_from_version(ld, ld->sent_version) : 0);
+  RAD_LspSnapshot *next = rad_lsp_snapshot_next(ld);
+  if(prev == next)
+  {
+    prev = 0;
+  }
   Access *access = access_open();
-  String8 text = tb_string_from_buffer(scratch.arena, access, doc->buffer);
+  String8 text = tb_string_from_buffer(next->arena, access, doc->buffer);
   access_close(access);
   U64 version = doc->buffer->version;
   String8 uri_json = json_escaped_from_str8(scratch.arena, ld->uri);
-  String8 text_json = json_escaped_from_str8(scratch.arena, text);
   if(!ld->opened)
   {
+    String8 text_json = json_escaped_from_str8(scratch.arena, text);
     lsp_client_notify(s->client, str8_lit("textDocument/didOpen"),
                       push_str8f(scratch.arena, "{\"textDocument\":{\"uri\":%S,\"languageId\":\"rust\",\"version\":%I64u,\"text\":%S}}", uri_json, version, text_json));
     ld->opened = 1;
   }
+  else if(s->sync_incremental && prev != 0)
+  {
+    String8 old_text = prev->text;
+    U64 max_common = Min(old_text.size, text.size);
+    U64 prefix = 0;
+    for(;prefix+64 <= max_common && MemoryMatch(old_text.str + prefix, text.str + prefix, 64);) { prefix += 64; }
+    for(;prefix < max_common && old_text.str[prefix] == text.str[prefix];) { prefix += 1; }
+    // rad: never split a UTF-8 sequence (positions count whole characters)
+    for(;prefix > 0 && (old_text.str[prefix] & 0xC0) == 0x80;) { prefix -= 1; }
+    U64 suffix = 0;
+    for(;suffix+64 <= max_common - prefix && MemoryMatch(old_text.str + old_text.size - suffix - 64, text.str + text.size - suffix - 64, 64);) { suffix += 64; }
+    for(;suffix < max_common - prefix && old_text.str[old_text.size-1-suffix] == text.str[text.size-1-suffix];) { suffix += 1; }
+    for(;suffix > 0 && (old_text.str[old_text.size-suffix] & 0xC0) == 0x80;) { suffix -= 1; }
+    S64 l0 = 0, c0 = 0, l1 = 0, c1 = 0;
+    rad_lsp_position_from_snapshot_offset(prev, prefix, s->utf8_positions, &l0, &c0);
+    rad_lsp_position_from_snapshot_offset(prev, old_text.size - suffix, s->utf8_positions, &l1, &c1);
+    String8 span_json = json_escaped_from_str8(scratch.arena, str8_substr(text, r1u64(prefix, text.size - suffix)));
+    lsp_client_notify(s->client, str8_lit("textDocument/didChange"),
+                      push_str8f(scratch.arena, "{\"textDocument\":{\"uri\":%S,\"version\":%I64u},\"contentChanges\":[{\"range\":{\"start\":{\"line\":%I64d,\"character\":%I64d},\"end\":{\"line\":%I64d,\"character\":%I64d}},\"text\":%S}]}",
+                                 uri_json, version, l0, c0, l1, c1, span_json));
+  }
   else
   {
+    String8 text_json = json_escaped_from_str8(scratch.arena, text);
     lsp_client_notify(s->client, str8_lit("textDocument/didChange"),
                       push_str8f(scratch.arena, "{\"textDocument\":{\"uri\":%S,\"version\":%I64u},\"contentChanges\":[{\"text\":%S}]}", uri_json, version, text_json));
   }
@@ -787,12 +850,14 @@ rad_lsp_take_progress(RAD_LspServer *s, JSON_Value *params)
 internal void
 rad_lsp_server_take_messages(RAD_LspServer *s)
 {
+  // NOTE(rad): messages come parsed (the client's reader thread parses them)
   Temp scratch = scratch_begin(0, 0);
-  String8List bodies = lsp_client_take_inbox(s->client, scratch.arena);
-  for(String8Node *n = bodies.first; n != 0; n = n->next)
+  LSP_MessageList messages = lsp_client_take_messages(s->client);
+  for(LSP_MessageNode *n = messages.first, *next = 0; n != 0; n = next)
   {
+    next = n->next;
     Temp temp = temp_begin(scratch.arena);
-    LSP_Message m = lsp_message_from_body(temp.arena, n->string);
+    LSP_Message m = n->v;
     s->messages_received += 1;
     switch(m.kind)
     {
@@ -811,6 +876,10 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
         {
           String8 encoding = json_string_from_value(json_value_from_key(json_value_from_key(m.result, str8_lit("capabilities")), str8_lit("positionEncoding")));
           s->utf8_positions = str8_match(encoding, str8_lit("utf-8"), 0);
+          // rad: textDocumentSync: a kind, or {change: kind}; 2 = incremental
+          JSON_Value *sync = json_value_from_key(json_value_from_key(m.result, str8_lit("capabilities")), str8_lit("textDocumentSync"));
+          JSON_Value *sync_change = (sync->kind == JSON_ValueKind_Object ? json_value_from_key(sync, str8_lit("change")) : sync);
+          s->sync_incremental = (json_s64_from_value(sync_change) == 2);
           rad_lsp_take_semantic_legend(s, json_value_from_key(json_value_from_key(m.result, str8_lit("capabilities")), str8_lit("semanticTokensProvider")));
           lsp_client_notify(s->client, str8_lit("initialized"), str8_lit("{}"));
           s->state = RAD_LspServerState_Ready;
@@ -910,6 +979,7 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
       }break;
     }
     temp_end(temp);
+    lsp_message_node_release(n);
   }
   scratch_end(scratch);
 }
@@ -1064,8 +1134,8 @@ rad_lsp_code_actions_request(CFG_Node *tab, RAD_Document *doc, U64 cursor, U64 m
     RAD_LspDoc *ld = rad_lsp_doc_from_id(s, doc->id);
     RAD_LspSnapshot *snap = rad_lsp_snapshot_from_version(ld, doc->buffer->version);
     S64 l0 = 0, c0 = 0, l1 = 0, c1 = 0;
-    rad_lsp_position_from_offset(snap->text, min, s->utf8_positions, &l0, &c0);
-    rad_lsp_position_from_offset(snap->text, max, s->utf8_positions, &l1, &c1);
+    rad_lsp_position_from_snapshot_offset(snap, min, s->utf8_positions, &l0, &c0);
+    rad_lsp_position_from_snapshot_offset(snap, max, s->utf8_positions, &l1, &c1);
     String8 body = push_str8f(scratch.arena,
                               "{\"textDocument\":{\"uri\":%S},"
                               "\"range\":{\"start\":{\"line\":%I64d,\"character\":%I64d},\"end\":{\"line\":%I64d,\"character\":%I64d}},"
@@ -1424,21 +1494,34 @@ rad_lsp_symbols_from_document(RAD_Document *doc, U64 *count_out)
     U64 version = doc->buffer->version;
     if(!ld->sym_mapped_valid || ld->sym_mapped_version != version)
     {
-      arena_clear(ld->sym_mapped_arena);
-      ld->sym_mapped = push_array_no_zero(ld->sym_mapped_arena, RAD_LspSymbol, ld->sym_count+1);
-      B32 good = 1;
-      for(U64 idx = 0; idx < ld->sym_count && good; idx += 1)
+      // rad: carry the last carried copy over the new changes only (symbols
+      // nest, so every symbol is visited, but once per change, not once per
+      // change since the answer)
+      B32 incremental = (ld->sym_mapped_valid && ld->sym_mapped_version <= version && ld->sym_mapped_count != 0);
+      if(!incremental)
       {
-        RAD_LspSymbol sym = ld->syms[idx];
-        if(ld->sym_version != version)
-        {
-          good = (tb_buffer_map_offset(doc->buffer, ld->sym_version, &sym.range.min) &&
-                  tb_buffer_map_offset_side(doc->buffer, ld->sym_version, &sym.range.max, Side_Min) &&
-                  tb_buffer_map_offset(doc->buffer, ld->sym_version, &sym.select_off));
-        }
-        ld->sym_mapped[idx] = sym;
+        arena_clear(ld->sym_mapped_arena);
+        ld->sym_mapped = push_array_no_zero(ld->sym_mapped_arena, RAD_LspSymbol, ld->sym_count+1);
+        MemoryCopy(ld->sym_mapped, ld->syms, sizeof(RAD_LspSymbol)*ld->sym_count);
+        ld->sym_mapped_count = ld->sym_count;
+        ld->sym_mapped_version = ld->sym_version;
       }
-      ld->sym_mapped_count = (good ? ld->sym_count : 0);
+      B32 good = tb_buffer_can_map_from_version(doc->buffer, ld->sym_mapped_version);
+      if(good)
+      {
+        for(U64 v = ld->sym_mapped_version+1; v <= version; v += 1)
+        {
+          TB_Change *change = &doc->buffer->change_log[v%TB_CHANGE_LOG_SIZE];
+          for(U64 idx = 0; idx < ld->sym_mapped_count; idx += 1)
+          {
+            RAD_LspSymbol *sym = &ld->sym_mapped[idx];
+            sym->range.min  = tb_change_map_offset(change, sym->range.min, Side_Max);
+            sym->range.max  = tb_change_map_offset(change, sym->range.max, Side_Min);
+            sym->select_off = tb_change_map_offset(change, sym->select_off, Side_Max);
+          }
+        }
+      }
+      ld->sym_mapped_count = (good ? ld->sym_mapped_count : 0);
       ld->sym_mapped_version = version;
       ld->sym_mapped_valid = 1;
     }
@@ -1624,25 +1707,34 @@ rad_lsp_token_colors_from_document(RAD_Document *doc, U64 *count_out)
     U64 version = doc->buffer->version;
     if(!ld->sem_mapped_valid || ld->sem_mapped_version != version)
     {
-      arena_clear(ld->sem_mapped_arena);
-      ld->sem_mapped = push_array_no_zero(ld->sem_mapped_arena, RAD_TokenColor, ld->sem_count+1);
-      U64 n = 0;
-      B32 good = 1;
-      for(U64 idx = 0; idx < ld->sem_count && good; idx += 1)
+      // rad: carry the last carried copy over the new changes only (usually
+      // one keystroke), in place; from the answer itself when there is no
+      // carried copy yet. Was: every token over every change since the
+      // answer, on every keystroke (O(tokens x changes), most of a frame).
+      B32 incremental = (ld->sem_mapped_valid && ld->sem_mapped_version <= version && ld->sem_mapped_count != 0);
+      if(!incremental)
       {
-        RAD_TokenColor t = ld->sem_tokens[idx];
-        if(ld->sem_version != version)
+        arena_clear(ld->sem_mapped_arena);
+        ld->sem_mapped = push_array_no_zero(ld->sem_mapped_arena, RAD_TokenColor, ld->sem_count+1);
+        MemoryCopy(ld->sem_mapped, ld->sem_tokens, sizeof(RAD_TokenColor)*ld->sem_count);
+        ld->sem_mapped_count = ld->sem_count;
+        ld->sem_mapped_version = ld->sem_version;
+      }
+      B32 good = tb_buffer_map_sorted_ranges(doc->buffer, ld->sem_mapped_version, &ld->sem_mapped[0].range, ld->sem_mapped_count, sizeof(RAD_TokenColor));
+      U64 n = 0;
+      if(good)
+      {
+        // rad: drop the tokens whose text was deleted
+        for(U64 idx = 0; idx < ld->sem_mapped_count; idx += 1)
         {
-          good = (tb_buffer_map_offset(doc->buffer, ld->sem_version, &t.range.min) &&
-                  tb_buffer_map_offset_side(doc->buffer, ld->sem_version, &t.range.max, Side_Min));
-        }
-        if(good && t.range.min < t.range.max)
-        {
-          ld->sem_mapped[n] = t;
-          n += 1;
+          if(ld->sem_mapped[idx].range.min < ld->sem_mapped[idx].range.max)
+          {
+            if(n != idx) { ld->sem_mapped[n] = ld->sem_mapped[idx]; }
+            n += 1;
+          }
         }
       }
-      ld->sem_mapped_count = (good ? n : 0);
+      ld->sem_mapped_count = n;
       ld->sem_mapped_version = version;
       ld->sem_mapped_valid = 1;
     }
@@ -1713,7 +1805,7 @@ rad_lsp_position_params(Arena *arena, RAD_Document *doc, U64 off, RAD_LspServer 
     {
       S64 line = 0;
       S64 character = 0;
-      rad_lsp_position_from_offset(snap->text, off, s->utf8_positions, &line, &character);
+      rad_lsp_position_from_snapshot_offset(snap, off, s->utf8_positions, &line, &character);
       Temp scratch = scratch_begin(&arena, 1);
       result = push_str8f(arena, "{\"textDocument\":{\"uri\":%S},\"position\":{\"line\":%I64d,\"character\":%I64d}}",
                           json_escaped_from_str8(scratch.arena, ld->uri), line, character);
@@ -2468,11 +2560,11 @@ rad_lsp_tick(void)
       }
       else if(changed)
       {
-        rad_request_frame();
+        rad_request_frame_at(ld->change_seen_us + RAD_LSP_CHANGE_DELAY_US);
       }
       if(!changed && s->sem_supported && ld->opened && ld->sem_request_id == 0 && !ld->sem_asked && now_us < ld->sem_retry_us)
       {
-        rad_request_frame();
+        rad_request_frame_at(ld->sem_retry_us);
       }
       else if(!changed && s->sem_supported && ld->opened && ld->sem_request_id == 0 &&
               (!ld->sem_asked || ld->sem_request_version != ld->sent_version))

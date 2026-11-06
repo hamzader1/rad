@@ -303,7 +303,14 @@ rad_documents_tick(void)
     txt_text_info_from_key_lang(access, text_key, doc->lang, &source_hash);
     tb_buffer_observe_source(doc->buffer, access, source_hash);
     tb_buffer_tick(doc->buffer, access, now_time_us());
-    if(tb_buffer_is_busy(doc->buffer) || (!doc->is_missing && !tb_buffer_is_loaded(doc->buffer)))
+    // rad: a compaction waiting for the typing pause wakes rad at its time
+    // (was: frames drawn back to back until then)
+    U64 compact_due_us = tb_buffer_compact_due_us(doc->buffer);
+    if(compact_due_us != 0)
+    {
+      rad_request_frame_at(compact_due_us);
+    }
+    if(!doc->is_missing && !tb_buffer_is_loaded(doc->buffer))
     {
       rad_request_frame();
     }
@@ -1124,11 +1131,13 @@ rad_completion_popup_ui(RAD_Window *ws, CFG_Node *window)
 
     //- rad: size and place (raddbg: 30 em wide, at most 30 em of rows, below
     // the anchor; not in raddbg: kept inside the window, above the line when
-    // it does not fit below)
+    // it does not fit below; both sizes are settings, 30 em by default)
+    F32 width_em = (F32)Clamp(15, rad_state->settings.completion_width, 120);
+    F32 height_em = (F32)Clamp(6, rad_state->settings.completion_height, 100);
     F32 row_height_px = ui_top_px_height();
-    U64 max_row_count = (U64)floor_f32(ui_top_font_size()*30.f / row_height_px);
+    U64 max_row_count = Max(1, (U64)floor_f32(ui_top_font_size()*height_em / row_height_px));
     U64 needed_row_count = Min(max_row_count, c->rows_count);
-    F32 width_px = floor_f32(30.f*ui_top_font_size());
+    F32 width_px = floor_f32(width_em*ui_top_font_size());
     F32 height_px = needed_row_count*row_height_px;
     Rng2F32 window_rect = wm_client_rect_from_window(ws->os);
     Rng2F32 rect = r2f32p(c->anchor_line_rect.x0, c->anchor_line_rect.y1,
@@ -1343,6 +1352,7 @@ rad_completion_popup_ui(RAD_Window *ws, CFG_Node *window)
     }
     c->built_frame = rad_state->frame_index;
     c->layout_rect = rect;
+    c->layout_font_size = ui_top_font_size();
     scratch_end(scratch);
   }
 }
@@ -1610,15 +1620,68 @@ rad_code_view_folds_update(RAD_CodeViewState *cv, TB_Buffer *buffer, TXT_Patched
   {
     cv->fold_arena = arena_alloc();
   }
-  if(!cv->fold_ranges_valid || cv->fold_ranges_version != buffer->version)
+  if(!cv->fold_ranges_valid || cv->fold_ranges_version != buffer->version ||
+     (cv->fold_ranges_carried && buffer->patches.count == 0))
   {
-    Temp scratch = scratch_begin(0, 0);
-    arena_clear(cv->fold_arena);
-    String8 text = memory_map_data_from_range(scratch.arena, &patched->memory_map, r1u64(0, patched->size));
-    cv->fold_ranges = rad_fold_ranges_from_text(cv->fold_arena, text, &cv->fold_ranges_count);
+    // rad: a full scan of the text only when it settled (no patches: the
+    // editor compacted after a pause) or when the ranges cannot be carried;
+    // while typing, the last ranges follow the edits by their line-start
+    // offsets (was: a whole-file copy and scan on every keystroke, ~3 ms/MB).
+    // Side_Max: text typed at a line's start (Return included) pushes the
+    // anchor along with the line's own text.
+    B32 carried = 0;
+    if(cv->fold_ranges_valid && buffer->patches.count != 0 && tb_buffer_can_map_from_version(buffer, cv->fold_ranges_version))
+    {
+      carried = 1;
+      // rad: one change that kept the line count (typing within a line):
+      // no line number moved, only the offsets do
+      B32 lines_kept = (cv->fold_ranges_version+1 == buffer->version &&
+                        cv->fold_ranges_line_count == patched->line_map.total_line_count);
+      U64 kept = 0;
+      for EachIndex(idx, cv->fold_ranges_count)
+      {
+        Rng1U64 offs = cv->fold_range_offs[idx];
+        for(U64 v = cv->fold_ranges_version+1; v <= buffer->version; v += 1)
+        {
+          TB_Change *change = &buffer->change_log[v%TB_CHANGE_LOG_SIZE];
+          offs.min = tb_change_map_offset(change, offs.min, Side_Max);
+          offs.max = tb_change_map_offset(change, offs.max, Side_Max);
+        }
+        S64 line_min = cv->fold_ranges[idx].line_min;
+        S64 line_max = cv->fold_ranges[idx].line_max;
+        if(!lines_kept)
+        {
+          line_min = (S64)txt_line_num_from_off(&patched->line_map, offs.min);
+          line_max = (S64)txt_line_num_from_off(&patched->line_map, offs.max);
+        }
+        if(line_min > 0 && line_max > line_min)
+        {
+          cv->fold_ranges[kept].line_min = line_min;
+          cv->fold_ranges[kept].line_max = line_max;
+          cv->fold_range_offs[kept] = offs;
+          kept += 1;
+        }
+      }
+      cv->fold_ranges_count = kept;
+    }
+    cv->fold_ranges_carried = carried;
+    if(!carried)
+    {
+      Temp scratch = scratch_begin(0, 0);
+      arena_clear(cv->fold_arena);
+      String8 text = memory_map_data_from_range_no_copy(scratch.arena, &patched->memory_map, r1u64(0, patched->size));
+      cv->fold_ranges = rad_fold_ranges_from_text(cv->fold_arena, text, &cv->fold_ranges_count);
+      cv->fold_range_offs = push_array_no_zero(cv->fold_arena, Rng1U64, cv->fold_ranges_count);
+      for EachIndex(idx, cv->fold_ranges_count)
+      {
+        cv->fold_range_offs[idx].min = txt_range_from_line_num(&patched->line_map, (U64)cv->fold_ranges[idx].line_min).min;
+        cv->fold_range_offs[idx].max = txt_range_from_line_num(&patched->line_map, (U64)cv->fold_ranges[idx].line_max).min;
+      }
+      scratch_end(scratch);
+    }
     cv->fold_ranges_version = buffer->version;
+    cv->fold_ranges_line_count = patched->line_map.total_line_count;
     cv->fold_ranges_valid = 1;
-    scratch_end(scratch);
   }
   if(cv->folds_version != buffer->version)
   {

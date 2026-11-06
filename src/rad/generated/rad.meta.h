@@ -182,6 +182,8 @@ RAD_SettingCode_hint_code_text,
 RAD_SettingCode_show_line_numbers,
 RAD_SettingCode_tab_width,
 RAD_SettingCode_navigation_bar,
+RAD_SettingCode_completion_width,
+RAD_SettingCode_completion_height,
 RAD_SettingCode_scroll_past_end,
 RAD_SettingCode_cursor_scope_lines,
 RAD_SettingCode_cursor_scope_end_annotations,
@@ -292,6 +294,8 @@ B32 hint_code_text;
 B32 show_line_numbers;
 U64 tab_width;
 B32 navigation_bar;
+U64 completion_width;
+U64 completion_height;
 B32 scroll_past_end;
 B32 cursor_scope_lines;
 B32 cursor_scope_end_annotations;

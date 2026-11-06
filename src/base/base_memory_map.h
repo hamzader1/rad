@@ -35,5 +35,6 @@ internal void memory_map_push(Arena *arena, MemoryMap *map, Rng1U64 vaddr_range,
 internal U64 memory_map_read(MemoryMap *map, Rng1U64 range, void *dst);
 #define memory_map_read_struct(map, vaddr, ptr) memory_map_read((map), r1u64((vaddr), (vaddr)+sizeof(*(ptr))), (ptr))
 internal String8 memory_map_data_from_range(Arena *arena, MemoryMap *map, Rng1U64 range);
+internal String8 memory_map_data_from_range_no_copy(Arena *arena, MemoryMap *map, Rng1U64 range);
 
 #endif // BASE_MEMORY_MAP_H

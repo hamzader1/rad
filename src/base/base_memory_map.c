@@ -54,3 +54,32 @@ memory_map_data_from_range(Arena *arena, MemoryMap *map, Rng1U64 range)
   memory_map_read(map, range, result.str);
   return result;
 }
+
+internal String8
+memory_map_data_from_range_no_copy(Arena *arena, MemoryMap *map, Rng1U64 range)
+{
+  // NOTE(rad): as memory_map_data_from_range, but when one mapped range holds
+  // all of `range` (an unpatched text), the result points into it: no
+  // allocation, no copy. Otherwise copies (without zeroing first).
+  String8 result = {0};
+  B32 found = 0;
+  for(MemoryMapRangeNode *n = map->first_range; n != 0 && !found; n = n->next)
+  {
+    if(contains_1u64(n->v.vaddr_range, range.min) || (range.min == range.max && n->v.vaddr_range.min == range.min))
+    {
+      found = 1;
+      if(range.max <= n->v.vaddr_range.max)
+      {
+        result = str8((U8 *)n->v.base + (range.min - n->v.vaddr_range.min), dim_1u64(range));
+      }
+    }
+  }
+  if(result.str == 0 && range.max > range.min)
+  {
+    result.size = dim_1u64(range);
+    result.str = push_array_no_zero(arena, U8, result.size);
+    U64 read = memory_map_read(map, range, result.str);
+    if(read < result.size) { MemoryZero(result.str + read, result.size - read); }
+  }
+  return result;
+}

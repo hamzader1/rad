@@ -261,6 +261,7 @@ struct R_OGL_State
   GLuint shaders[R_OGL_ShaderKind_COUNT];
   GLuint all_purpose_vao;
   GLuint scratch_buffer_64kb;
+  GLuint ui_instance_buffer; // rad: all of a UI pass's instances, uploaded once per pass
   GLuint white_texture;
   Arena *buffer_flush_arena;
   R_OGL_FlushBuffer *first_buffer_to_flush;

@@ -12,6 +12,8 @@ wait_idle
 wait_until 20000 lsp_state == "ready"
 wait_until 180000 lsp_busy == 0
 wait_until 30000 semantic_count > 0
+# (its first answer can come before it resolved builtin types: wait for u32)
+wait_until 30000 semantic_slot 2 12 == "code_type"
 
 # struct Counter / count: u32 / fn increment / let mut counter
 expect semantic_slot 1 8 == "code_type"

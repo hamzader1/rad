@@ -926,12 +926,20 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
           str8_match(name, str8_lit("completion_bottom"), 0) || str8_match(name, str8_lit("completion_below"), 0) ||
           str8_match(name, str8_lit("completion_selected_visible"), 0) || str8_match(name, str8_lit("completion_doc"), 0) ||
           str8_match(name, str8_lit("completion_doc_shown"), 0) || str8_match(name, str8_lit("completion_kind"), 0) ||
-          str8_match(name, str8_lit("completion_resolved"), 0))
+          str8_match(name, str8_lit("completion_resolved"), 0) || str8_match(name, str8_lit("completion_width_em"), 0) ||
+          str8_match(name, str8_lit("completion_height_em"), 0))
   {
     RAD_LspCompletion *c = &rad_lsp->completion;
     B32 shown = (c->active && c->rows_count != 0 && c->built_frame+1 >= rad_state->frame_index);
     U64 rows_count = (c->active ? c->rows_count : 0);
-    if(str8_match(name, str8_lit("completion_open"), 0))
+    if(str8_match(name, str8_lit("completion_width_em"), 0) || str8_match(name, str8_lit("completion_height_em"), 0))
+    {
+      // rad: the popup's size in font heights (rounded); 0 when not shown
+      Vec2F32 dim = dim_2f32(c->layout_rect);
+      F32 v = (str8_match(name, str8_lit("completion_width_em"), 0) ? dim.x : dim.y);
+      value = push_str8f(arena, "%I64u", (U64)(shown && c->layout_font_size > 0 ? round_f32(v / c->layout_font_size) : 0));
+    }
+    else if(str8_match(name, str8_lit("completion_open"), 0))
     {
       value = (shown ? str8_lit("1") : str8_lit("0"));
     }
@@ -2720,7 +2728,7 @@ rad_script_tick(void)
       }
     }break;
     case RAD_ScriptWaitKind_Idle:
-    if(rad_state->num_frames_requested != 0)
+    if(rad_state->num_frames_requested != 0 || rad_state->last_frame_wake_us != 0)
     {
       if(now_us < rad_script->wait_until_us)
       {

@@ -158,8 +158,27 @@ ui_single_line_txt_op_from_event(Arena *arena, UI_Event *event, String8 string, 
     default:{}break;
     case UI_EventDeltaUnit_Char:
     {
-      // TODO(rjf): this should account for multi-byte characters in UTF-8... for now, just assume ASCII and
-      // no-op
+      // NOTE(rad): whole UTF-8 characters: steps skip continuation bytes
+      // (10xxxxxx), so arrows, Backspace and Delete never split a
+      // character (was a raddbg TODO: bytes, as if ASCII). Past the
+      // string's ends, steps stay 1 byte (callers move to other lines).
+      S64 pos = (S64)(cursor - cursor_range.min);
+      S64 p = pos;
+      S64 size = (S64)string.size;
+      for(S32 n = 0, steps = (delta.x < 0 ? -delta.x : delta.x); n < steps; n += 1)
+      {
+        if(delta.x > 0)
+        {
+          p += 1;
+          for(;0 < p && p < size && (string.str[p] & 0xC0) == 0x80;) { p += 1; }
+        }
+        else
+        {
+          p -= 1;
+          for(;0 < p && p < size && (string.str[p] & 0xC0) == 0x80;) { p -= 1; }
+        }
+      }
+      delta.x = (S32)(p - pos);
     }break;
     case UI_EventDeltaUnit_Word:
     {
