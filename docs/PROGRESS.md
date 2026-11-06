@@ -369,6 +369,10 @@ Milestone 6 details (each item with its script):
 - `tests/perf/run_perf.sh [-e exe] [-s "3000 10000"] [-l "off on"]`: typing
   benchmarks on generated Rust crates (MEASURE lines, not pass/fail).
 - Profiling: `sample <pid> 6 -file out.txt` while a script types.
+- Key-to-screen latency of any app (Raid, Zed, ...): build `tests/perf/typelat.m`
+  (build line at its top) -> `build/typelat`; the terminal needs Accessibility
+  and Screen Recording. `RAID_SWAP_INTERVAL=0 build/raid` turns off the GL
+  refresh wait (experiment; animations then run fast).
 - CI: `.github/workflows/macos.yml` builds and runs `rad_tests` (debug and
   release) on every push.
 

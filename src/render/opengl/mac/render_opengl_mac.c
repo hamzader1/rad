@@ -43,7 +43,15 @@ r_ogl_os_init(CmdLine *cmdln)
       sh_message(1, str8_lit("Fatal Error"), str8_lit("Couldn't create an OpenGL context."));
       abort_self(1);
     }
+    // rad: RAID_SWAP_INTERVAL=0: flushBuffer does not wait for the display's
+    // refresh (the compositor still shows whole frames; rad only draws when
+    // asked). For latency comparisons (tests/perf/typelat.m).
     GLint swap_interval = 1;
+    char *swap_interval_env = getenv("RAID_SWAP_INTERVAL");
+    if(swap_interval_env != 0 && swap_interval_env[0] == '0')
+    {
+      swap_interval = 0;
+    }
     [r_ogl_mac_state->context setValues:&swap_interval forParameter:NSOpenGLContextParameterSwapInterval];
     [r_ogl_mac_state->context makeCurrentContext];
   }
