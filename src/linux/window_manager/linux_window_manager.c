@@ -960,6 +960,12 @@ wm_window_bring_to_front(WM_Window handle)
 }
 
 internal void
+wm_window_set_floating(WM_Window handle, B32 floating)
+{
+  // TODO(rad): _NET_WM_STATE_ABOVE
+}
+
+internal void
 wm_window_set_monitor(WM_Window handle, WM_Monitor monitor)
 {
   if(wm_window_match(handle, wm_window_zero())) {return;}

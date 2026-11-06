@@ -1,0 +1,97 @@
+# macOS text keys (TODO_2 A1, A3): Cmd is sent as Ctrl, Option as Alt.
+# Cmd+Left/Right: line start (first non-blank, then column 1) / end;
+# Cmd+Up/Down: file start / end; Option+Left/Right: word; Shift selects;
+# Option+Backspace / Option+Delete: delete a word; Cmd+Backspace /
+# Cmd+Delete: delete to the line's start / end. Cmd+= / Cmd+- zoom the
+# code (never split the panel); Cmd+[ is Navigate Backward.
+
+only_on mac
+open ../fixtures/nav.txt
+wait_idle
+expect panel_count == 1
+
+# Cmd+Right: end of line 1; Cmd+Left: first non-blank, again: column 1
+click code 1 10
+key ctrl+right
+expect cursor_line == 1
+expect cursor_col == 36
+key ctrl+left
+expect cursor_col == 5
+key ctrl+left
+expect cursor_col == 1
+key ctrl+left
+expect cursor_col == 5
+
+# Option+Right / Option+Left: by word
+key alt+right
+expect cursor_col == 8
+key alt+right
+expect cursor_col == 19
+key alt+left
+expect cursor_col == 9
+key alt+left
+expect cursor_col == 5
+
+# Shift selects: Cmd+Shift+Right selects to the end, Option+Shift+Right a word
+key ctrl+shift+right
+expect selection == "let first_word = second(third);"
+key ctrl+left
+key alt+shift+right
+expect selection == "let"
+
+# Cmd+Down / Cmd+Up: file end / start; with Shift: select
+key ctrl+down
+expect cursor_line == 4
+expect cursor_col == 1
+key ctrl+up
+expect cursor_line == 1
+expect cursor_col == 1
+key ctrl+shift+down
+expect mark_line == 1
+expect cursor_line == 4
+key right
+
+# Option+Backspace: the word before the cursor; Option+Delete: the word after
+click code 2 8
+key alt+backspace
+expect line 2 == "fn () {"
+key ctrl+z
+expect line 2 == "fn main() {"
+click code 2 4
+key alt+delete
+expect line 2 == "fn () {"
+key ctrl+z
+
+# Cmd+Backspace / Cmd+Delete: to the line's start / end
+click code 1 15
+key ctrl+backspace
+expect line 1 == "    word = second(third);"
+key ctrl+z
+click code 1 15
+key ctrl+delete
+expect line 1 == "    let first_"
+key ctrl+z
+# inside the indentation, Cmd+Backspace deletes back to column 1, never forward
+click code 1 3
+key ctrl+backspace
+expect line 1 == "  let first_word = second(third);"
+key ctrl+z
+expect line 1 == "    let first_word = second(third);"
+
+# Cmd+= / Cmd+-: the code font only, and no split (was Split Panel Down)
+expect editor_font_size == 11
+key ctrl+equal
+wait_idle
+expect editor_font_size == 12
+key ctrl+minus 2
+wait_idle
+expect editor_font_size == 10
+expect panel_count == 1
+key ctrl+shift+equal
+wait_idle
+expect editor_font_size == 11
+key ctrl+0
+wait_idle
+expect editor_font_size == 11
+expect ui_font_size == 11
+

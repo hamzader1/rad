@@ -43,6 +43,7 @@ typedef enum RAD_FontSlot
   RAD_FontSlot_Main,
   RAD_FontSlot_Code,
   RAD_FontSlot_Icons,
+  RAD_FontSlot_Panel, // rad: the bottom panel's text (Output); the code font unless set
   RAD_FontSlot_COUNT
 }
 RAD_FontSlot;
@@ -150,6 +151,26 @@ struct RAD_CmdParams
   CFG_ID prev_tab;          // rad: Move Tab: goes after this tab (0: first)
   Dir2 dir2;                // rad: split by drag: the new panel's side
   B32 all_tabs;             // rad: Move Tab: every tab of `panel` (a dragged tab bar)
+};
+
+// rad: title variants (rad_title_fstrs_from_tab_flags)
+typedef U32 RAD_TabTitleFlags;
+enum
+{
+  RAD_TabTitleFlag_TabBar = (1<<0), // rad: files without icon and modified dot; no trailing spaces
+};
+
+// rad: the bottom tool window's default height (part of the window)
+#define RAD_BOTTOM_TOOL_DEFAULT_PCT 0.2f
+
+// rad: a key for a command beyond the command table's one (rad.mdesk; its
+// keys are Windows'): a second key, or the Mac's own key for the command
+typedef struct RAD_CmdBinding RAD_CmdBinding;
+struct RAD_CmdBinding
+{
+  RAD_CmdKind kind;
+  WM_Key key;
+  WM_Modifiers modifiers;
 };
 
 ////////////////////////////////
@@ -304,6 +325,14 @@ struct RAD_State
   F32 scrolling_animation_rate;
   F32 tooltip_animation_rate;
 
+  //- rad: code zoom: the code font size drawn (points) eases to the setting,
+  // or, while Ctrl/Cmd+wheel turns, to the wheel's fractional target; the
+  // wheel stopping settles the setting on the nearest whole size
+  F32 code_zoom_pt;
+  F32 code_zoom_target_pt;
+  B32 code_zoom_wheeling;
+  U64 code_zoom_wheel_us;
+
   //- rad: commands (slot 0: being pushed, slot 1: being executed)
   Arena *cmds_arenas[2];
   RAD_CmdList cmds[2];
@@ -434,11 +463,15 @@ internal void rad_drag_kill(void);
 internal Rng2F32 rad_drop_site_rect(Rng2F32 panel_rect, F32 font_size, Dir2 dir);
 internal B32 rad_tab_is_pinned(CFG_Node *tab);
 internal void rad_tab_move_after_pinned(CFG_Node *tab);
+internal F32 rad_tab_pad_px(void);
+internal F32 rad_tab_button_width_px(void);
+internal F32 rad_tab_end_pad_px(void);
 internal F32 rad_tab_width_target_px(Arena *arena, CFG_Node *tab, B32 is_selected);
 internal B32 rad_panel_has_tool_child__(CFG_PanelNode *parent);
 internal CFG_Node *rad_editor_panel_from_window(CFG_Node *window);
 internal String8 rad_setting_value_string(Arena *arena, RAD_Settings *settings, U64 idx);
 internal F64 rad_setting_f64_from_settings(RAD_Settings *settings, U64 idx);
+internal F32 rad_panel_font_size(RAD_Window *ws);
 internal F32 rad_code_font_size(RAD_Window *ws);
 
 ////////////////////////////////
@@ -455,6 +488,8 @@ internal void rad_set_error(String8 string);
 internal void rad_push_cmd(RAD_CmdKind kind, RAD_CmdParams *params);
 #define rad_cmd(kind, ...) rad_push_cmd((kind), &(RAD_CmdParams){.window = 0, __VA_ARGS__})
 internal void rad_exec_cmd(RAD_Cmd *cmd);
+internal CFG_Binding rad_binding_from_cmd_kind(RAD_CmdKind kind);
+internal RAD_CmdKind rad_cmd_kind_from_key(WM_Key key, WM_Modifiers modifiers);
 
 ////////////////////////////////
 //~ rad: Folder Watch Functions
@@ -498,6 +533,7 @@ internal void rad_tab_query_complete(CFG_Node *tab);
 internal String8 rad_file_path_from_tab(CFG_Node *tab);
 internal String8List rad_qualifiers_from_file_path(Arena *arena, String8 file_path);
 internal DR_FStrList rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab);
+internal DR_FStrList rad_title_fstrs_from_tab_flags(Arena *arena, CFG_Node *tab, RAD_TabTitleFlags flags);
 
 ////////////////////////////////
 //~ rad: Windows

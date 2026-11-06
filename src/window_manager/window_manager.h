@@ -239,6 +239,7 @@ internal void           wm_window_set_maximized(WM_Window window, B32 maximized)
 internal B32            wm_window_is_minimized(WM_Window window);
 internal void           wm_window_set_minimized(WM_Window window, B32 minimized);
 internal void           wm_window_bring_to_front(WM_Window window);
+internal void           wm_window_set_floating(WM_Window window, B32 floating); // rad: above other apps' windows (screenshots of script runs)
 internal void           wm_window_set_monitor(WM_Window window, WM_Monitor monitor);
 internal void           wm_window_clear_custom_border_data(WM_Window handle);
 internal void           wm_window_push_custom_title_bar(WM_Window handle, F32 thickness);

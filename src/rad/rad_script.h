@@ -36,6 +36,8 @@
 //   key_up <key>                in between name the held modifier: `key alt+up`)
 //   text "<string>"             type a string (one text event per character)
 //   wheel <notches> <target>    mouse wheel, positive = down, one notch per frame
+//   wheel_units <units> <count> <target>   `count` scroll steps of `units` each
+//                               (a notch is 120; a trackpad sends small steps)
 //   mouse <target>              move the mouse
 //   click <target>              left click
 //   double_click <target>
@@ -61,6 +63,9 @@
 //                               language server: wait_until 90000 diag_count == 2
 //   lsp_kill                    kill the editor file's language server process (a crash)
 //   set_setting <name> <number> set a setting (rad.mdesk RAD_SettingTable; enums: index)
+//   only_on <mac|windows|linux> the rest of the script runs on that OS only
+//   float_window [0|1]          keep the window above other apps' windows
+//                               (screenshots: covered windows are not drawn)
 //   lsp on|off                  language servers (rust-analyzer): off by default in
 //                               scripts (slow to start; a script that does not test
 //                               them stays deterministic)
@@ -100,8 +105,8 @@
 //                               edge_up edge_down: boundary drop sites) or its
 //                               tab bar's free end (tabs)
 //   tab_box <name>              a tab (any panel), by its name
-//   tab_pin <name>              its pin button (pinned and selected tabs)
-//   tab_close <name>            its close button (selected and hovered tabs)
+//   tab_pin <name>              its pin button (shown while the tab is hovered, or pinned)
+//   tab_close <name>            its close button (shown while the tab is hovered)
 //   tab_list                    the "..." all-tabs button (tabs overflow)
 //   tab_list_item <n>           item n (1-based) of its menu
 //   setting_row <name>          middle of a visible Settings row
@@ -148,6 +153,8 @@
 //   font_custom <main|code>     1 if the UI Font / Code Font setting opened a font
 //   setting <name>              a setting's value as stored (enums: the option's name)
 //   editor_font_size            the editor view's font size (code font setting)
+//   output_font_size            the Output view's font size (Panel Font Size)
+//   inline_diag_count           editor lines showing an inline diagnostic (visible ones)
 //   panel_tabs <n>              editor panel n's tab names, space-separated
 //   drag_active                 1 while a tab or file is being dragged
 //   nav_item nav_member         the navigation bar's item / member names ("" = none)

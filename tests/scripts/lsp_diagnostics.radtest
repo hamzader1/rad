@@ -18,6 +18,16 @@ expect line_diag 8 == "error"
 expect line_diag 2 == "warning"
 expect cargo_status == "none"
 
+# inline (TODO_2 C1): each line's worst one after its code; setting off: none
+wait_idle
+expect inline_diag_count == 2
+set_setting inline_diagnostics 0
+wait_idle
+expect inline_diag_count == 0
+set_setting inline_diagnostics 1
+wait_idle
+expect inline_diag_count == 2
+
 # they follow edits at once (anchored in the text of the version they were
 # computed for), and stay right when the server answers for the new text
 key ctrl+home

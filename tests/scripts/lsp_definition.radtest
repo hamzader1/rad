@@ -19,8 +19,8 @@ wait_until 15000 cursor_line == 1
 expect cursor_col == 4
 expect tab == "main.rs"
 
-# Alt+Left: back to the call
-key alt+left
+# Navigate Backward (Alt+Left; Cmd+[ on the Mac): back to the call
+cmd navigate_back
 wait_until 5000 cursor_line == 8
 expect cursor_col == 30
 
@@ -30,7 +30,7 @@ wait_until 15000 tab == "macros.rs"
 wait_idle
 expect cursor_line_text == "macro_rules! println {"
 expect lsp_servers == 1
-key alt+left
+cmd navigate_back
 wait_until 5000 tab == "main.rs"
 expect cursor_line == 6
 

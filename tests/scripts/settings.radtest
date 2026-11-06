@@ -1,7 +1,7 @@
 # Settings (rad.mdesk RAD_SettingTable, stored in the user file under
-# `settings:`): defaults; the code font size alone (Ctrl+Shift+= / Ctrl+Shift+-, Ctrl+0,
-# Ctrl+wheel when Mouse Wheel Zoom is on, Reset); the UI font size alone
-# (Alt+= / Alt+-); enums by option.
+# `settings:`): defaults; the code font size alone (Ctrl+= / Ctrl+-, also with
+# Shift, Ctrl+0, Ctrl+wheel when Mouse Wheel Zoom is on, Reset); the UI font
+# size alone (its commands; no keys since TODO_2 A1); enums by option.
 
 open ../fixtures/edit.txt
 wait_idle
@@ -25,6 +25,13 @@ expect editor_font_size == 9
 key ctrl+0
 wait_idle
 expect editor_font_size == 11
+key ctrl+equal
+wait_idle
+expect editor_font_size == 12
+key ctrl+minus
+wait_idle
+expect editor_font_size == 11
+expect panel_count == 1
 
 # Ctrl+wheel over the editor: the code font (wheel up = larger)
 key_down ctrl
@@ -50,9 +57,12 @@ expect setting code_font_size == 11
 # the UI font alone
 key alt+equal
 wait_idle
+expect ui_font_size == 11
+cmd inc_window_font_size
+wait_idle
 expect ui_font_size == 12
 expect editor_font_size == 11
-key alt+minus
+cmd dec_window_font_size
 wait_idle
 expect ui_font_size == 11
 

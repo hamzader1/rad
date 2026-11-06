@@ -9,7 +9,7 @@
 #   python icons/make_rad_icons.py
 #
 # SVGs: 16x16 viewBox, filled paths (`fill="currentColor"`); the color comes
-# from the theme at draw time. TrueType fills by the nonzero rule, so paths
+# from the theme at draw time. An entry may name one path of its SVG (by id). TrueType fills by the nonzero rule, so paths
 # with fill-rule="evenodd" get their inner contours turned around.
 
 import os
@@ -45,6 +45,11 @@ ICONS = [
     # past ASCII: private-use codepoints (UTF-8 in RAD_IconTable)
     ('screwdriver.svg',        '\ue000', 'rad_screwdriver'),
     ('symbol-interface.svg',   '\ue001', 'rad_symbol_interface'),
+    # the explorer's folder (the user's, 2026-11-06): two glyphs drawn on top
+    # of each other, the fill at half opacity under the outline (one path
+    # each, by id; the SVG's invisible canvas square is left out)
+    ('Folder_16x.svg',         '\ue002', 'rad_folder_fill', 'path2'),
+    ('Folder_16x.svg',         '\ue003', 'rad_folder',      'path3'),
 ]
 
 # 16 SVG units -> 1060 font units (the font has 1000/em), the box centered
@@ -88,11 +93,13 @@ def point_in_polygon(p, poly):
                 inside = not inside
     return inside
 
-def glyph_from_svg(path):
+def glyph_from_svg(path, path_id=None):
     root = ET.parse(path).getroot()
     out = RecordingPen()
     for el in root.iter():
         if not el.tag.endswith('path'):
+            continue
+        if path_id is not None and el.get('id') != path_id:
             continue
         rec = RecordingPen()
         parse_path(el.get('d'), TransformPen(rec, (SCALE, 0, 0, -SCALE, 0, TOP)))
@@ -121,9 +128,9 @@ def main():
     font = TTFont(os.path.join(repo, 'data', 'icons.ttf'))
     cmap = font.getBestCmap()
     order = font.getGlyphOrder()
-    for file_name, char, glyph_name in ICONS:
+    for file_name, char, glyph_name, *path_id in ICONS:
         assert ord(char) not in cmap, 'codepoint already used: ' + char
-        glyph = glyph_from_svg(os.path.join(here, file_name))
+        glyph = glyph_from_svg(os.path.join(here, file_name), *path_id)
         glyph.recalcBounds(font['glyf'])
         order.append(glyph_name)
         font['glyf'].glyphs[glyph_name] = glyph

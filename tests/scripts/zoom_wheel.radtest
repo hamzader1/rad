@@ -1,0 +1,47 @@
+# Smooth Ctrl/Cmd+wheel zoom of the code font (TODO_2 A2): the wheel moves a
+# fractional target (a notch = 1 point; trackpad steps of 40 units = 1/3
+# point) that the drawn size eases to; when the wheel stops the setting
+# takes the nearest whole size. The UI font never changes. Frame times are
+# measured over a first zoom (new glyph sizes rasterized) and a second one.
+
+open ../fixtures/lines_3000.txt
+wait_idle
+expect editor_font_size == 11
+expect ui_font_size == 11
+
+# trackpad: 30 steps of 40 units up = +10 points
+key_down ctrl
+measure_begin zoom_in_first
+wheel_units -40 30 code 5 5
+wait_frames 30
+measure_end zoom_in_first
+key_up ctrl
+wait_idle
+expect setting code_font_size == 21
+expect editor_font_size == 21
+expect ui_font_size == 11
+
+# back down, then the same zoom again (glyphs cached)
+key_down ctrl
+wheel_units 40 30 code 5 5
+key_up ctrl
+wait_idle
+expect setting code_font_size == 11
+key_down ctrl
+measure_begin zoom_in_again
+wheel_units -40 30 code 5 5
+wait_frames 30
+measure_end zoom_in_again
+key_up ctrl
+wait_idle
+expect setting code_font_size == 21
+
+# a fraction settles on the nearest whole size: 4 steps of 40 = 1.33 -> 1
+key_down ctrl
+wheel_units 40 4 code 5 5
+key_up ctrl
+wait_idle
+expect setting code_font_size == 20
+cmd reset_code_font_size
+wait_idle
+expect editor_font_size == 11

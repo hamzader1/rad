@@ -106,6 +106,11 @@ wm_window_bring_to_front(WM_Window window)
 }
 
 internal void
+wm_window_set_floating(WM_Window window, B32 floating)
+{
+}
+
+internal void
 wm_window_set_monitor(WM_Window window, WM_Monitor monitor)
 {
 }

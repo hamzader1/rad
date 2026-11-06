@@ -13,8 +13,11 @@ wait_idle
 wait_until 20000 lsp_state == "ready"
 wait_until 180000 lsp_busy == 0
 
-# the cursor on `1` in `self.count += 1;`: integer literal conversions
+# the cursor on `1` in `self.count += 1;`: integer literal conversions; the
+# button shows a second after the cursor stops (TODO_2 C2), not before
 click code 11 23
+wait 600
+expect code_actions_shown == 0
 wait_until 15000 code_actions_shown == 1
 expect code_action 3 == "Convert 1 to 0x1"
 click code_actions_button
@@ -51,4 +54,16 @@ expect line 1 == "xstruct Counter {"
 key ctrl+z
 wait_idle
 expect line 1 == "struct Counter {"
+
+# Show Quick Fixes off: no button where the cursor rests; Quick Actions
+# still opens the menu (with the button it hangs from)
+set_setting show_quick_fixes 0
+click code 11 23
+wait 1500
+expect code_actions_shown == 0
+key ctrl+period
+wait_until 15000 code_actions_shown == 1
+key esc
+wait_idle
+set_setting show_quick_fixes 1
 quit

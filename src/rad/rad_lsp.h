@@ -40,7 +40,7 @@
 #define RAD_LSP_SNAPSHOT_COUNT      4
 #define RAD_LSP_SHUTDOWN_WAIT_US    1000000
 #define RAD_LSP_HOVER_DELAY_US      500000
-#define RAD_LSP_CODE_ACTION_DELAY_US 300000
+#define RAD_LSP_CODE_ACTION_DELAY_US 1000000
 #define RAD_LSP_CODE_ACTIONS_MAX    64
 #define RAD_LSP_COMPLETION_MAX_ITEMS 4096
 #define RAD_LSP_AUTO_RESTART_MAX    3           // restarts after a crash, per window below
@@ -427,6 +427,7 @@ struct RAD_LspCodeActions
   U64 rest_version;
   U64 rest_begin_us;
   B32 rest_asked;
+  B32 rest_quick;            // Quick Actions was pressed here: the button shows even with Show Quick Fixes off
 
   //- rad: request in flight
   RAD_LspServer *server;

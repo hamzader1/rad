@@ -86,7 +86,7 @@ rad_cmd_binding_labels(RAD_CmdKind kind)
   // NOTE(rad): same box as raddbg's `rd_cmd_binding_buttons` with
   // `RD_CmdBindingButtonFlag_NoEdit` - rebinding is not supported yet.
   Temp scratch = scratch_begin(0, 0);
-  CFG_Binding binding = rad_cmd_kind_info_table[kind].default_binding;
+  CFG_Binding binding = rad_binding_from_cmd_kind(kind);
   if(binding.key != WM_Key_Null) UI_CornerRadius(ui_top_font_size()*0.5f)
   {
     ui_spacer(ui_em(1.f, 1.f));
@@ -851,6 +851,10 @@ rad_cell(RAD_CellParams *params, String8 string)
     UI_Box *text_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText, "###text_box");
     ui_box_equip_display_fstrs(text_box, &fstrs);
     ui_box_equip_fuzzy_match_ranges(text_box, &fuzzy_matches);
+    if(!is_editing && params->value_custom_draw != 0)
+    {
+      ui_box_equip_custom_draw(text_box, params->value_custom_draw, params->value_custom_draw_user_data);
+    }
     if(is_editing)
     {
       String8 edit_string = str8(params->edit_buffer, params->edit_string_size_out[0]);
@@ -1767,6 +1771,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
   F32 *line_extras_off = push_array(scratch.arena, F32, dim_1s64(params->line_num_range)+1);
   if(params->line_annotations != 0)
   {
+    F32 inline_gap_px = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, str8_lit("    ")).x;
     U64 line_idx = 0;
     for(S64 line_num = params->line_num_range.min;
         line_num <= params->line_num_range.max;
@@ -1776,6 +1781,11 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
       // which rad does not have; the line's text padding takes their place
       F32 line_text_dim = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, params->line_text[line_idx]).x + params->line_num_width_px + line_num_padding_px;
       line_extras_off[line_idx] = Max(line_text_dim, params->font_size*30);
+      if(params->line_annotation_colors != 0 && params->line_annotation_colors[line_idx].w != 0)
+      {
+        // rad: inline diagnostics: four columns after the code (Zed)
+        line_extras_off[line_idx] = line_text_dim + inline_gap_px;
+      }
     }
   }
 
@@ -1794,6 +1804,27 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
     {
       if(params->line_annotations[line_idx].node_count == 0)
       {
+        continue;
+      }
+      Vec4F32 inline_color = (params->line_annotation_colors != 0 ? params->line_annotation_colors[line_idx] : v4f32(0, 0, 0, 0));
+      if(inline_color.w != 0)
+      {
+        // rad: not in raddbg: Zed's inline diagnostic: the message in a
+        // rounded box tinted with its color, one pixel inside the line
+        Vec4F32 tint = inline_color;
+        tint.w *= 0.1f;
+        F32 margin_px = 1.f;
+        ui_set_next_fixed_x(line_extras_off[line_idx]);
+        ui_set_next_fixed_y(line_idx*params->line_height_px + margin_px);
+        UI_PrefWidth(ui_text_dim(0, 1))
+          UI_PrefHeight(ui_px(params->line_height_px - margin_px*2.f, 1.f))
+          UI_TextPadding(floor_f32(params->font_size*0.45f))
+          UI_CornerRadius(floor_f32(params->font_size*0.3f))
+          UI_BackgroundColor(tint)
+        {
+          UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|UI_BoxFlag_DrawBackground, "###inline_annotation_%I64x", line_idx);
+          ui_box_equip_display_fstrs(box, &params->line_annotations[line_idx]);
+        }
         continue;
       }
       ui_set_next_fixed_x(line_extras_off[line_idx]);
@@ -2015,16 +2046,26 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
             {
               x1 = x0 + fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_lit("H")).x;
             }
-            F32 thickness = ClampBot(1.f, floor_f32(line_box->font_size/8.f));
-            F32 y = floor_f32(center_2f32(line_box->rect).y + line_box->font_size*0.7f);
-            Rng2F32 underline_rect = r2f32p(ui_box_text_position(line_box).x + x0, y,
-                                            ui_box_text_position(line_box).x + x1, y + thickness);
+            F32 thickness = ClampBot(1.f, floor_f32(line_box->font_size/12.f));
+            F32 y = floor_f32(center_2f32(line_box->rect).y + line_box->font_size*0.6f);
             Vec4F32 color = u->color;
             if(!is_focused)
             {
               color.w *= 0.75f;
             }
-            dr_rect(underline_rect, color, 0, 0, 0.f);
+            // rad: a wavy line (Zed's, VS Code's squiggle): a triangle wave,
+            // one column of `thickness` pixels per step
+            F32 wave_x0 = ui_box_text_position(line_box).x + x0;
+            F32 wave_x1 = ui_box_text_position(line_box).x + x1;
+            F32 period = thickness*6.f;
+            F32 amplitude = thickness*1.5f;
+            for(F32 x = wave_x0; x < wave_x1; x += thickness)
+            {
+              F32 phase = mod_f32(x - wave_x0, period)/period;
+              F32 tri = (phase < 0.5f ? phase*2.f : 2.f - phase*2.f);
+              F32 wy = floor_f32(y + tri*amplitude);
+              dr_rect(r2f32p(x, wy, Min(x + thickness, wave_x1), wy + thickness), color, 0, 0, 0.f);
+            }
           }
         }
 

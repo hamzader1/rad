@@ -46,9 +46,10 @@ internal void
 rad_settings_derive__(RAD_Settings *s)
 {
   // rad: density -> row and tab heights, in multiples of the font size
-  // (Comfortable: raddbg's 3 and 3)
+  // (Comfortable: raddbg's 3 rows; tabs a little lower than raddbg's 3,
+  // closer to Zed's: TODO_2 B2)
   s->row_height = (s->density == 1 ? 2.25f : 3.f);
-  s->tab_height = (s->density == 1 ? 2.5f : 3.f);
+  s->tab_height = (s->density == 1 ? 2.25f : 2.6f);
 }
 
 internal RAD_Settings
@@ -296,11 +297,25 @@ rad_setting_revert(String8 name)
 }
 
 internal F32
+rad_panel_font_size(RAD_Window *ws)
+{
+  // NOTE(rad): the bottom panel's font size (Output, Problems; TODO_2 B4),
+  // scaled like the window's; the editor's zoom does not change it
+  F32 result = Clamp(6.f, floor_f32((F32)rad_state->settings.panel_font_size*ws->font_scale), 72.f);
+  return result;
+}
+
+internal F32
 rad_code_font_size(RAD_Window *ws)
 {
   // NOTE(rad): the code font size (editor, Output), scaled like the window's
-  // (DPI changes)
-  F32 result = Clamp(6.f, floor_f32((F32)rad_state->settings.code_font_size*ws->font_scale), 72.f);
+  // (DPI changes). While a zoom eases: quarter pixels, so the in-between
+  // sizes are few and their glyphs stay cached across zooms
+  F32 setting_pt = (F32)rad_state->settings.code_font_size;
+  F32 pt = (rad_state->code_zoom_pt != 0 ? rad_state->code_zoom_pt : setting_pt);
+  F32 size = pt*ws->font_scale;
+  F32 result = (pt == setting_pt ? floor_f32(size) : round_f32(size*4.f)/4.f);
+  result = Clamp(6.f, result, 72.f);
   return result;
 }
 
@@ -363,6 +378,74 @@ rad_push_cmd(RAD_CmdKind kind, RAD_CmdParams *params)
   SLLQueuePush(rad_state->cmds[0].first, rad_state->cmds[0].last, n);
   rad_state->cmds[0].count += 1;
   rad_request_frame();
+}
+
+// rad: the Mac's own keys: they replace the command table's (and are shown
+// in menus). Cmd is Ctrl here (the window manager sends Cmd as Ctrl).
+#if OS_MAC
+read_only global RAD_CmdBinding rad_cmd_mac_binding_table[] =
+{
+  // rad: Option+Left is "word left" on the Mac (text navigation); back is
+  // Cmd+[ as in Xcode and Safari (Zed's Ctrl+- would need the Control key
+  // told apart from Cmd)
+  {RAD_CmdKind_NavigateBack, WM_Key_LeftBracket, WM_Modifier_Ctrl},
+};
+#endif
+
+// rad: second keys (not shown in menus)
+read_only global RAD_CmdBinding rad_cmd_extra_binding_table[] =
+{
+  {RAD_CmdKind_IncCodeFontSize, WM_Key_Equal, WM_Modifier_Ctrl|WM_Modifier_Shift},
+  {RAD_CmdKind_DecCodeFontSize, WM_Key_Minus, WM_Modifier_Ctrl|WM_Modifier_Shift},
+#if OS_MAC
+  {RAD_CmdKind_NextTab,         WM_Key_RightBracket, WM_Modifier_Ctrl|WM_Modifier_Shift},
+  {RAD_CmdKind_PrevTab,         WM_Key_LeftBracket,  WM_Modifier_Ctrl|WM_Modifier_Shift},
+#endif
+};
+
+internal CFG_Binding
+rad_binding_from_cmd_kind(RAD_CmdKind kind)
+{
+  CFG_Binding result = rad_cmd_kind_info_table[kind].default_binding;
+#if OS_MAC
+  for EachElement(idx, rad_cmd_mac_binding_table)
+  {
+    if(rad_cmd_mac_binding_table[idx].kind == kind)
+    {
+      result.key = rad_cmd_mac_binding_table[idx].key;
+      result.modifiers = rad_cmd_mac_binding_table[idx].modifiers;
+      break;
+    }
+  }
+#endif
+  return result;
+}
+
+internal RAD_CmdKind
+rad_cmd_kind_from_key(WM_Key key, WM_Modifiers modifiers)
+{
+  RAD_CmdKind result = RAD_CmdKind_Null;
+  if(key != WM_Key_Null)
+  {
+    for EachNonZeroEnumVal(RAD_CmdKind, k)
+    {
+      CFG_Binding binding = rad_binding_from_cmd_kind(k);
+      if(binding.key == key && binding.modifiers == modifiers)
+      {
+        result = k;
+        break;
+      }
+    }
+    if(result == RAD_CmdKind_Null) for EachElement(idx, rad_cmd_extra_binding_table)
+    {
+      if(rad_cmd_extra_binding_table[idx].key == key && rad_cmd_extra_binding_table[idx].modifiers == modifiers)
+      {
+        result = rad_cmd_extra_binding_table[idx].kind;
+        break;
+      }
+    }
+  }
+  return result;
 }
 
 ////////////////////////////////
@@ -748,7 +831,7 @@ rad_tool_set_visible(CFG_Node *window, RAD_ToolKind kind, B32 visible)
       F32 restore = (F32)f64_from_str8(size->first->string);
       if(restore < 0.05f || restore > 0.8f)
       {
-        restore = (kind == RAD_ToolKind_Explorer ? 0.2f : 0.25f);
+        restore = (kind == RAD_ToolKind_Explorer ? 0.2f : RAD_BOTTOM_TOOL_DEFAULT_PCT);
       }
       CFG_PanelNode *largest = &cfg_nil_panel_node;
       for(CFG_PanelNode *child = panel->parent->first; child != &cfg_nil_panel_node; child = child->next)
@@ -1095,7 +1178,7 @@ rad_window_tool_layout_ensure(CFG_Node *window)
     //- rad: new root: top (explorer + editor area), bottom
     CFG_Node *new_root = cfg_node_new(rad_state->cfg, window, str8_lit("panels"));
     CFG_Node *top = cfg_node_newf(rad_state->cfg, new_root, "%f", output_was_visible ? 0.75f : 1.f);
-    CFG_Node *bottom = cfg_node_newf(rad_state->cfg, new_root, "%f", output_was_visible ? 0.25f : 0.f);
+    CFG_Node *bottom = cfg_node_newf(rad_state->cfg, new_root, "%f", output_was_visible ? RAD_BOTTOM_TOOL_DEFAULT_PCT : 0.f);
     CFG_Node *explorer = cfg_node_alloc(rad_state->cfg);
     cfg_node_equip_stringf(rad_state->cfg, explorer, "%f", 0.2f);
     if(!explorer_right)
@@ -1159,7 +1242,7 @@ rad_window_tool_layout_ensure(CFG_Node *window)
       CFG_Node *size = cfg_node_child_from_string_or_alloc(rad_state->cfg, sizes, str8_lit("bottom"));
       if(size->first == &cfg_nil_node)
       {
-        cfg_node_new_replacef(rad_state->cfg, size, "%f", 0.25f);
+        cfg_node_new_replacef(rad_state->cfg, size, "%f", RAD_BOTTOM_TOOL_DEFAULT_PCT);
       }
     }
 
@@ -1322,17 +1405,33 @@ rad_tab_move_after_pinned(CFG_Node *tab)
 }
 
 internal F32
+rad_tab_pad_px(void)
+{
+  return floor_f32(ui_top_font_size()*0.75f);
+}
+
+internal F32
+rad_tab_button_width_px(void)
+{
+  return floor_f32(ui_top_font_size()*1.5f);
+}
+
+internal F32
+rad_tab_end_pad_px(void)
+{
+  return floor_f32(ui_top_font_size()*0.3f);
+}
+
+internal F32
 rad_tab_width_target_px(Arena *arena, CFG_Node *tab, B32 is_selected)
 {
-  // NOTE(rad): compact tabs (VS2022): icon + title + room for the close
-  // button; on pinned and selected tabs also the pin button's
-  DR_FStrList fstrs = rad_title_fstrs_from_tab(arena, tab);
+  // NOTE(rad): compact tabs (TODO_2 B2, Zed's): padding + name + the pin
+  // and close buttons' room (kept while they are hidden: hovering a tab
+  // does not move the others)
+  DR_FStrList fstrs = rad_title_fstrs_from_tab_flags(arena, tab, RAD_TabTitleFlag_TabBar);
   B32 closable = !rad_tab_is_tool(tab);
-  F32 close_width_px = ui_top_font_size()*2.5f;
-  F32 pin_width_px = ui_top_font_size()*2.f;
-  F32 result = (dr_dim_from_fstrs(ui_top_tab_size(), &fstrs).x + ui_top_font_size()*1.f +
-                closable*close_width_px +
-                (closable && (is_selected || rad_tab_is_pinned(tab)))*pin_width_px);
+  F32 result = (dr_dim_from_fstrs(ui_top_tab_size(), &fstrs).x + rad_tab_pad_px() +
+                (closable ? (floor_f32(ui_top_font_size()*0.25f) + rad_tab_button_width_px()*2.f + rad_tab_end_pad_px()) : rad_tab_pad_px()));
   result = Min(ui_top_font_size()*20.f, result);
   return result;
 }
@@ -1411,7 +1510,7 @@ rad_output_tab_reveal(CFG_Node *window)
       CFG_Node *editor_panel = rad_editor_panel_from_window(window);
       if(editor_panel != &cfg_nil_node)
       {
-        CFG_Node *bottom_panel = rad_panel_split(editor_panel, Dir2_Down, 0.3f);
+        CFG_Node *bottom_panel = rad_panel_split(editor_panel, Dir2_Down, RAD_BOTTOM_TOOL_DEFAULT_PCT);
         output_tab = cfg_node_new(rad_state->cfg, bottom_panel, str8_lit("output"));
         cfg_node_new(rad_state->cfg, bottom_panel, str8_lit("problems"));
       }
@@ -1627,8 +1726,16 @@ rad_qualifiers_from_file_path(Arena *arena, String8 file_path)
 internal DR_FStrList
 rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab)
 {
+  return rad_title_fstrs_from_tab_flags(arena, tab, 0);
+}
+
+internal DR_FStrList
+rad_title_fstrs_from_tab_flags(Arena *arena, CFG_Node *tab, RAD_TabTitleFlags flags)
+{
   // NOTE(rad): same layout as raddbg's `rd_title_fstrs_from_cfg` for tabs:
-  // [icon, secondary color] "  " [name, primary color]
+  // [icon, secondary color] "  " [name, primary color]. The tab bar's
+  // (TODO_2 B2): files without the icon, without the modified dot (the tab
+  // draws it in its close button's place) and the trailing spaces
   DR_FStrList result = {0};
   Vec4F32 rgba = ui_color_from_name(str8_lit("text"));
   Vec4F32 rgba_secondary = rgba;
@@ -1679,7 +1786,7 @@ rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab)
     name = tab->string;
   }
   DR_FStrParams params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), rgba, ui_top_font_size()};
-  if(icon_kind != RAD_IconKind_Null)
+  if(icon_kind != RAD_IconKind_Null && !(file_path.size != 0 && flags & RAD_TabTitleFlag_TabBar))
   {
     dr_fstrs_push_new(arena, &result, &params, rad_icon_kind_text_table[icon_kind], .font = rad_font_from_slot(RAD_FontSlot_Icons), .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons), .color = rgba_secondary);
     dr_fstrs_push_new(arena, &result, &params, str8_lit("  "));
@@ -1706,12 +1813,15 @@ rad_title_fstrs_from_tab(Arena *arena, CFG_Node *tab)
   {
     dr_fstrs_push_new(arena, &result, &params, push_str8f(arena, " %I64u", rad_problems->count), .color = rgba_secondary);
   }
-  if(rad_tab_is_dirty(tab))
+  if(rad_tab_is_dirty(tab) && !(flags & RAD_TabTitleFlag_TabBar))
   {
     dr_fstrs_push_new(arena, &result, &params, str8_lit(" "));
     dr_fstrs_push_new(arena, &result, &params, rad_icon_kind_text_table[RAD_IconKind_CircleFilled], .font = rad_font_from_slot(RAD_FontSlot_Icons), .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons), .color = rgba_secondary, .size = ui_top_font_size()*0.6f);
   }
-  dr_fstrs_push_new(arena, &result, &params, str8_lit("  "));
+  if(!(flags & RAD_TabTitleFlag_TabBar))
+  {
+    dr_fstrs_push_new(arena, &result, &params, str8_lit("  "));
+  }
   return result;
 }
 
@@ -2129,11 +2239,11 @@ rad_view_ui(CFG_Node *tab, Rng2F32 rect)
     //////////////////////////////
     //- rad: cargo output, problems
     //
-    else if(str8_match(tab->string, str8_lit("output"), 0)) UI_FontSize(rad_code_font_size(rad_state->current_window))
+    else if(str8_match(tab->string, str8_lit("output"), 0)) UI_FontSize(rad_panel_font_size(rad_state->current_window))
     {
       rad_output_view_ui(tab, rect);
     }
-    else if(str8_match(tab->string, str8_lit("problems"), 0))
+    else if(str8_match(tab->string, str8_lit("problems"), 0)) UI_FontSize(rad_panel_font_size(rad_state->current_window))
     {
       rad_problems_view_ui(tab, rect);
     }
@@ -2249,6 +2359,7 @@ rad_window_frame(RAD_Window *ws)
     ws->font_slot_raster_flags[RAD_FontSlot_Icons] = FNT_RasterFlag_Smooth;
     ws->font_slot_raster_flags[RAD_FontSlot_Main] = (settings->smooth_ui_text*FNT_RasterFlag_Smooth)|(settings->hint_ui_text*FNT_RasterFlag_Hinted);
     ws->font_slot_raster_flags[RAD_FontSlot_Code] = (settings->smooth_code_text*FNT_RasterFlag_Smooth)|(settings->hint_code_text*FNT_RasterFlag_Hinted);
+    ws->font_slot_raster_flags[RAD_FontSlot_Panel] = ws->font_slot_raster_flags[RAD_FontSlot_Code];
   }
 
   //////////////////////////////
@@ -2352,7 +2463,10 @@ rad_window_frame(RAD_Window *ws)
     Vec2F32 window_rect_dim = dim_2f32(window_rect);
     F32 top_bar_dim_px = floor_f32(ui_top_font_size()*3.f);
     Rng2F32 top_bar_rect = r2f32p(window_rect.x0, window_rect.y0, window_rect.x0+window_rect_dim.x, window_rect.y0+top_bar_dim_px);
-    Rng2F32 bottom_bar_rect = r2f32p(window_rect.x0, window_rect_dim.y - top_bar_dim_px, window_rect.x0+window_rect_dim.x, window_rect.y0+window_rect_dim.y);
+    // rad: the status bar is lower than raddbg's (the top bar's height), with
+    // smaller text, like Zed's (TODO_2 B3)
+    F32 bottom_bar_dim_px = floor_f32(ui_top_font_size()*2.f);
+    Rng2F32 bottom_bar_rect = r2f32p(window_rect.x0, window_rect_dim.y - bottom_bar_dim_px, window_rect.x0+window_rect_dim.x, window_rect.y0+window_rect_dim.y);
     Rng2F32 content_rect = r2f32p(window_rect.x0, top_bar_rect.y1 + window_edge_px*1.5f, window_rect.x0+window_rect_dim.x, bottom_bar_rect.y0);
     content_rect = pad_2f32(content_rect, -window_edge_px);
 
@@ -2964,7 +3078,7 @@ rad_window_frame(RAD_Window *ws)
     // or cargo could not start) -> "bad_pop" until the next command;
     // otherwise (nothing ran, success, stopped) -> "good_pop".
     //
-    ProfScope("build bottom bar")
+    ProfScope("build bottom bar") UI_FontSize(floor_f32(ui_top_font_size()*0.85f))
     {
       String8 tag = str8_lit("good_pop");
       B32 show_error = (rad_state->error_t >= 0.01f && rad_state->error_string_size != 0);
@@ -3080,7 +3194,7 @@ rad_window_frame(RAD_Window *ws)
         // rad: build status
         UI_PrefWidth(ui_text_dim(10, 1))
         {
-          ui_spacer(ui_em(1.f, 1.f));
+          ui_spacer(ui_em(0.5f, 1.f));
           UI_Box *box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
           ui_box_equip_display_fstrs(box, &status_fstrs);
         }
@@ -3088,30 +3202,39 @@ rad_window_frame(RAD_Window *ws)
         ui_spacer(ui_pct(1, 0));
 
         // rad: not in raddbg: the language server's work (indexing, cargo
-        // check), next to the version, in the version's style
+        // check)
+        UI_PrefWidth(ui_text_dim(10, 1)) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
         {
           B32 lsp_busy = 0;
           String8 lsp_status = rad_lsp_status_string(scratch.arena, &lsp_busy);
           if(lsp_status.size != 0)
-            UI_FontSize(ui_top_font_size()*0.85f)
-            UI_PrefWidth(ui_text_dim(10, 1))
-            UI_TextAlignment(UI_TextAlign_Center)
           {
             if(lsp_busy)
             {
               RAD_Font(RAD_FontSlot_Icons) ui_label(rad_icon_kind_text_table[RAD_IconKind_Refresh]);
             }
             ui_label(lsp_status);
-            ui_spacer(ui_em(1.5f, 1.f));
+            ui_spacer(ui_em(1.f, 1.f));
           }
         }
 
-        // rad: version
-        UI_FontSize(ui_top_font_size()*0.85f)
-          UI_PrefWidth(ui_text_dim(10, 1))
-          UI_TextAlignment(UI_TextAlign_Center)
+        // rad: not in raddbg (Zed's status bar): the focused editor's cursor
+        // (line:column) and language. The version is in the Help menu
         {
-          ui_label(str8_lit(BUILD_TITLE_STRING_LITERAL));
+          CFG_PanelNode *focused_panel = panel_tree.focused;
+          CFG_Node *focused_tab = (focused_panel != &cfg_nil_panel_node ? focused_panel->selected_tab : &cfg_nil_node);
+          RAD_Document *focused_doc = (str8_match(focused_tab->string, str8_lit("text"), 0) ? rad_document_from_tab(focused_tab) : 0);
+          if(focused_doc != 0) UI_PrefWidth(ui_text_dim(10, 1)) UI_TextAlignment(UI_TextAlign_Center)
+          {
+            RAD_CodeViewState *focused_cv = &rad_view_state_from_cfg(focused_tab)->cv;
+            if(focused_cv->layout_cursor_line != 0)
+            {
+              ui_labelf("%I64d:%I64d", focused_cv->layout_cursor_line, focused_cv->layout_cursor_col);
+              ui_spacer(ui_em(0.5f, 1.f));
+            }
+            ui_label(rad_lang_display_name(focused_doc->lang));
+            ui_spacer(ui_em(0.5f, 1.f));
+          }
         }
       }
     }
@@ -3613,7 +3736,7 @@ rad_window_frame(RAD_Window *ws)
           {
             B32 wrap = (settings->tab_overflow == 1 && tool_kind == RAD_ToolKind_Null && panel->tab_side == Side_Min);
             F32 spacing_px = floor_f32(ui_top_font_size()*0.4f);
-            F32 avail_px = dim_2f32(tab_bar_rect).x - ui_top_font_size()*1.f - tab_bar_vheight*(tool_kind == RAD_ToolKind_Null ? 2 : 0);
+            F32 avail_px = dim_2f32(tab_bar_rect).x - ui_top_font_size()*0.5f - tab_bar_vheight*(tool_kind == RAD_ToolKind_Null ? 2 : 0);
             tab_rows = push_array(scratch.arena, U64, panel->tabs.count);
             F32 x = 0;
             U64 row = 0;
@@ -4075,8 +4198,6 @@ rad_window_frame(RAD_Window *ws)
           TabTask *first_tab_task = 0;
           TabTask *last_tab_task = 0;
           U64 tab_task_count = 0;
-          F32 tab_close_width_px = ui_top_font_size()*2.5f;
-          F32 tab_pin_width_px = ui_top_font_size()*2.f;
           UI_TagF("tab")
           {
             B32 reset = (ws->window_layout_reset || ws->frames_alive < 5 || is_changing_panel_boundaries);
@@ -4096,7 +4217,7 @@ rad_window_frame(RAD_Window *ws)
               }
               UI_TagF(tab != panel->selected_tab ? "inactive" : "")
               {
-                DR_FStrList tab_title_fstrs = rad_title_fstrs_from_tab(scratch.arena, tab);
+                DR_FStrList tab_title_fstrs = rad_title_fstrs_from_tab_flags(scratch.arena, tab, RAD_TabTitleFlag_TabBar);
                 B32 tab_is_selected = (tab == panel->selected_tab);
                 F32 tab_width_target = rad_tab_width_target_px(scratch.arena, tab, tab_is_selected);
                 F32 tab_width = floor_f32(ui_anim(ui_key_from_stringf(ui_key_zero(), "tab_width_%p", tab), tab_width_target, .initial = reset ? tab_width_target : 0, .rate = rad_state->menu_animation_rate));
@@ -4149,7 +4270,7 @@ rad_window_frame(RAD_Window *ws)
           //////////////////////////
           //- rad: build tab bar contents
           //
-          if(build_panel && tool_kind != RAD_ToolKind_Explorer) UI_Focus(UI_FocusKind_Off) UI_Parent(tab_bar_box) UI_Padding(ui_em(0.5f, 1.f)) UI_PrefHeight(ui_pct(1, 0)) UI_TagF("tab")
+          if(build_panel && tool_kind != RAD_ToolKind_Explorer) UI_Focus(UI_FocusKind_Off) UI_Parent(tab_bar_box) UI_PrefHeight(ui_pct(1, 0)) UI_TagF("tab")
           {
             F32 corner_radius = ui_top_font_size()*0.6f;
             UI_CornerRadius00(panel->tab_side == Side_Min ? corner_radius : 0)
@@ -4207,37 +4328,44 @@ rad_window_frame(RAD_Window *ws)
                   {
                     UI_WidthFill UI_Row
                     {
-                      ui_spacer(ui_em(0.5f, 1.f));
-                      UI_PrefWidth(ui_text_dim(10, 0))
+                      ui_spacer(ui_px(rad_tab_pad_px(), 1.f));
+                      UI_PrefWidth(ui_text_dim(0, 0)) UI_TextPadding(0)
                       {
                         UI_Box *name_box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
                         ui_box_equip_display_fstrs(name_box, &tab_fstrs);
                       }
                     }
-                    // rad: not in raddbg: pin button (pinned and selected tabs);
-                    // the close button only on the selected and hovered tabs
-                    // (its room is kept: VS2022)
+                    // rad: not in raddbg: pin and close buttons (TODO_2 B2, compact
+                    // like Zed's tabs): shown while the tab is hovered; a pinned
+                    // tab keeps its pin; a modified file shows a dot in the close
+                    // button's place; Tab Close Button = Always keeps every close
+                    // button. Their room is kept, and they stay clickable (the
+                    // mouse over one hovers the tab, which shows them)
                     RAD_ViewState *tab_vs = rad_view_state_from_cfg(tab);
                     B32 tab_is_pinned = rad_tab_is_pinned(tab);
-                    B32 tab_is_hovered = contains_2f32(tab_box->rect, ui_mouse());
+                    B32 tab_is_hovered = (contains_2f32(tab_box->rect, ui_mouse()) && !rad_drag_is_active());
+                    B32 tab_is_dirty = rad_tab_is_dirty(tab);
                     tab_vs->layout_tab_frame = rad_state->frame_index;
                     tab_vs->layout_tab_rect = tab_box->rect;
                     MemoryZeroStruct(&tab_vs->layout_tab_pin_rect);
                     MemoryZeroStruct(&tab_vs->layout_tab_close_rect);
-                    if(!rad_tab_is_tool(tab) && (tab_is_pinned || tab_is_selected))
-                      UI_PrefWidth(ui_px(tab_pin_width_px, 1.f))
+                    F32 button_width_px = rad_tab_button_width_px();
+                    F32 button_margin_y = floor_f32((tab_bar_vheight - button_width_px)/2.f);
+                    if(!rad_tab_is_tool(tab))
+                      UI_PrefWidth(ui_px(button_width_px, 1.f))
                       UI_TextAlignment(UI_TextAlign_Center)
                       RAD_Font(RAD_FontSlot_Icons)
-                      UI_FontSize(ui_top_font_size()*0.75f)
+                      UI_FontSize(ui_top_font_size()*0.7f)
                       UI_TagF(".") UI_TagF("tab") UI_TagF(tab_is_pinned ? "" : "weak") UI_TagF("implicit")
-                      UI_VisualMarginX(ceil_f32(ui_top_font_size()*0.25f))
-                      UI_VisualMarginY(floor_f32(tab_bar_vheight - tab_close_width_px + ui_top_font_size()*0.25f))
-                      UI_CornerRadius(ui_top_font_size()*1.f)
+                      UI_VisualMarginX(ceil_f32(ui_top_font_size()*0.1f))
+                      UI_VisualMarginY(button_margin_y)
+                      UI_CornerRadius(ui_top_font_size()*0.35f)
                     {
+                      B32 show_pin = (tab_is_pinned || tab_is_hovered);
                       UI_Box *pin_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
-                                                                  UI_BoxFlag_DrawText|
-                                                                  UI_BoxFlag_DrawHotEffects|
-                                                                  UI_BoxFlag_DrawActiveEffects,
+                                                                  show_pin*(UI_BoxFlag_DrawText|
+                                                                            UI_BoxFlag_DrawHotEffects|
+                                                                            UI_BoxFlag_DrawActiveEffects),
                                                                   "%S###pin_view_%p", rad_icon_kind_text_table[RAD_IconKind_Pin], tab);
                       tab_vs->layout_tab_pin_rect = pin_box->rect;
                       UI_Signal sig = ui_signal_from_box(pin_box);
@@ -4251,33 +4379,33 @@ rad_window_frame(RAD_Window *ws)
                         ui_label(tab_is_pinned ? str8_lit("Unpin Tab") : str8_lit("Pin Tab"));
                       }
                     }
-                    if(!rad_tab_is_tool(tab) && !tab_is_selected && !tab_is_hovered && rad_state->settings.tab_close_button == 0)
+                    if(!rad_tab_is_tool(tab))
                     {
-                      ui_spacer(ui_px(tab_close_width_px, 1.f));
-                    }
-                    else if(!rad_tab_is_tool(tab))
-                      UI_PrefWidth(ui_px(tab_close_width_px, 1.f))
-                      UI_TextAlignment(UI_TextAlign_Center)
-                      RAD_Font(RAD_FontSlot_Icons)
-                      UI_FontSize(ui_top_font_size()*0.75f)
-                      UI_TagF(".") UI_TagF("tab") UI_TagF("weak") UI_TagF("implicit")
-                      UI_VisualMarginX(ceil_f32(ui_top_font_size()*0.5f))
-                      UI_VisualMarginY(floor_f32(tab_bar_vheight - tab_close_width_px + ui_top_font_size()*0.25f))
-                      UI_CornerRadius(ui_top_font_size()*1.f)
-                    {
-                      UI_Box *close_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
-                                                                    UI_BoxFlag_DrawBorder|
-                                                                    UI_BoxFlag_DrawBackground|
-                                                                    UI_BoxFlag_DrawText|
-                                                                    UI_BoxFlag_DrawHotEffects|
-                                                                    UI_BoxFlag_DrawActiveEffects,
-                                                                    "%S###close_view_%p", rad_icon_kind_text_table[RAD_IconKind_X], tab);
-                      tab_vs->layout_tab_close_rect = close_box->rect;
-                      UI_Signal sig = ui_signal_from_box(close_box);
-                      if(ui_clicked(sig) || ui_middle_clicked(sig))
+                      B32 show_close = (tab_is_hovered || rad_state->settings.tab_close_button == 1);
+                      B32 show_dot = (!show_close && tab_is_dirty);
+                      UI_PrefWidth(ui_px(button_width_px, 1.f))
+                        UI_TextAlignment(UI_TextAlign_Center)
+                        RAD_Font(RAD_FontSlot_Icons)
+                        UI_FontSize(ui_top_font_size()*(show_dot ? 0.5f : 0.7f))
+                        UI_TagF(".") UI_TagF("tab") UI_TagF("weak") UI_TagF("implicit")
+                        UI_VisualMarginX(ceil_f32(ui_top_font_size()*0.1f))
+                        UI_VisualMarginY(button_margin_y)
+                        UI_CornerRadius(ui_top_font_size()*0.35f)
                       {
-                        rad_cmd(RAD_CmdKind_CloseTab, .panel = panel->cfg->id, .tab = tab->id);
+                        UI_Box *close_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                                                      (show_close || show_dot)*UI_BoxFlag_DrawText|
+                                                                      show_close*(UI_BoxFlag_DrawHotEffects|
+                                                                                  UI_BoxFlag_DrawActiveEffects),
+                                                                      "%S###close_view_%p",
+                                                                      rad_icon_kind_text_table[show_dot ? RAD_IconKind_CircleFilled : RAD_IconKind_X], tab);
+                        tab_vs->layout_tab_close_rect = close_box->rect;
+                        UI_Signal sig = ui_signal_from_box(close_box);
+                        if(ui_clicked(sig) || ui_middle_clicked(sig))
+                        {
+                          rad_cmd(RAD_CmdKind_CloseTab, .panel = panel->cfg->id, .tab = tab->id);
+                        }
                       }
+                      ui_spacer(ui_px(rad_tab_end_pad_px(), 1.f));
                     }
                   }
 
@@ -4411,7 +4539,7 @@ rad_window_frame(RAD_Window *ws)
             {
               CFG_Node *drop_prev = &cfg_nil_node;
               F32 best_distance_px = 1000000.f;
-              F32 off = tab_bar_rect.x0 + ui_top_font_size()*0.5f;
+              F32 off = tab_bar_rect.x0; // rad: the first tab is flush with the panel (TODO_2 B1)
               {
                 F32 distance = abs_f32(ui_mouse().x - off);
                 best_distance_px = distance;
@@ -4554,21 +4682,28 @@ rad_window_frame(RAD_Window *ws)
     }
 
     ////////////////////////////
-    //- rad: Ctrl+wheel: the code font size (setting "Mouse Wheel Zoom"; raddbg
-    // zooms the whole window here, rad keeps that on Alt+= / Alt+-)
+    //- rad: Ctrl/Cmd+wheel: the code font size (setting "Mouse Wheel Zoom";
+    // raddbg zooms the whole window here). Smooth: the wheel moves a
+    // fractional target (a notch, 120 units, = 1 point; a trackpad's small
+    // steps a fraction of one) that the drawn size eases to every frame
     //
     for(UI_Event *evt = 0; ui_next_event(&evt);)
     {
       if(evt->kind == UI_EventKind_Scroll && evt->modifiers == WM_Modifier_Ctrl)
       {
         ui_eat_event(evt);
-        if(settings->mouse_wheel_zoom && evt->delta_2f32.y < 0)
+        if(settings->mouse_wheel_zoom && evt->delta_2f32.y != 0)
         {
-          rad_cmd(RAD_CmdKind_IncCodeFontSize);
-        }
-        else if(settings->mouse_wheel_zoom && evt->delta_2f32.y > 0)
-        {
-          rad_cmd(RAD_CmdKind_DecCodeFontSize);
+          if(!rad_state->code_zoom_wheeling)
+          {
+            rad_state->code_zoom_wheeling = 1;
+            rad_state->code_zoom_target_pt = (F32)settings->code_font_size;
+          }
+          F32 min_pt = (F32)rad_setting_info_table[RAD_SettingCode_code_font_size].min;
+          F32 max_pt = (F32)rad_setting_info_table[RAD_SettingCode_code_font_size].max;
+          rad_state->code_zoom_target_pt = Clamp(min_pt, rad_state->code_zoom_target_pt - evt->delta_2f32.y/120.f, max_pt);
+          rad_state->code_zoom_wheel_us = now_time_us();
+          rad_request_frame();
         }
       }
     }
@@ -6483,6 +6618,30 @@ read_only global RAD_TextNavBinding rad_text_nav_binding_table[] =
   {WM_Key_Up,       WM_Modifier_Shift,                  UI_EventKind_Navigate, RAD_NavFlags_SelV,                         UI_EventDeltaUnit_Char,  {+0, -1}},
   {WM_Key_Down,     WM_Modifier_Shift,                  UI_EventKind_Navigate, RAD_NavFlags_SelV,                         UI_EventDeltaUnit_Char,  {+0, +1}},
 
+#if OS_MAC
+  // rad: the Mac's keys (macOS text fields, Zed): Option moves by word or
+  // paragraph, Cmd (sent as Ctrl) to the line's or the file's ends
+  {WM_Key_Left,     WM_Modifier_Alt,                    UI_EventKind_Navigate, UI_EventFlag_ExplicitDirectional,          UI_EventDeltaUnit_Word,  {-1, +0}},
+  {WM_Key_Right,    WM_Modifier_Alt,                    UI_EventKind_Navigate, UI_EventFlag_ExplicitDirectional,          UI_EventDeltaUnit_Word,  {+1, +0}},
+  {WM_Key_Up,       WM_Modifier_Alt,                    UI_EventKind_Navigate, RAD_NavFlags_Vert,                         UI_EventDeltaUnit_Word,  {+0, -1}},
+  {WM_Key_Down,     WM_Modifier_Alt,                    UI_EventKind_Navigate, RAD_NavFlags_Vert,                         UI_EventDeltaUnit_Word,  {+0, +1}},
+  {WM_Key_Left,     WM_Modifier_Alt|WM_Modifier_Shift,  UI_EventKind_Navigate, RAD_NavFlags_SelH,                         UI_EventDeltaUnit_Word,  {-1, +0}},
+  {WM_Key_Right,    WM_Modifier_Alt|WM_Modifier_Shift,  UI_EventKind_Navigate, RAD_NavFlags_SelH,                         UI_EventDeltaUnit_Word,  {+1, +0}},
+  {WM_Key_Up,       WM_Modifier_Alt|WM_Modifier_Shift,  UI_EventKind_Navigate, RAD_NavFlags_SelH,                         UI_EventDeltaUnit_Word,  {+0, -1}},
+  {WM_Key_Down,     WM_Modifier_Alt|WM_Modifier_Shift,  UI_EventKind_Navigate, RAD_NavFlags_SelH,                         UI_EventDeltaUnit_Word,  {+0, +1}},
+  {WM_Key_Left,     WM_Modifier_Ctrl,                   UI_EventKind_Navigate, 0,                                         UI_EventDeltaUnit_Line,  {-1, +0}},
+  {WM_Key_Right,    WM_Modifier_Ctrl,                   UI_EventKind_Navigate, 0,                                         UI_EventDeltaUnit_Line,  {+1, +0}},
+  {WM_Key_Left,     WM_Modifier_Ctrl|WM_Modifier_Shift, UI_EventKind_Navigate, UI_EventFlag_KeepMark,                     UI_EventDeltaUnit_Line,  {-1, +0}},
+  {WM_Key_Right,    WM_Modifier_Ctrl|WM_Modifier_Shift, UI_EventKind_Navigate, UI_EventFlag_KeepMark,                     UI_EventDeltaUnit_Line,  {+1, +0}},
+  {WM_Key_Up,       WM_Modifier_Ctrl,                   UI_EventKind_Navigate, UI_EventFlag_Secondary,                    UI_EventDeltaUnit_Whole, {+0, -1}},
+  {WM_Key_Down,     WM_Modifier_Ctrl,                   UI_EventKind_Navigate, UI_EventFlag_Secondary,                    UI_EventDeltaUnit_Whole, {+0, +1}},
+  {WM_Key_Up,       WM_Modifier_Ctrl|WM_Modifier_Shift, UI_EventKind_Navigate, UI_EventFlag_KeepMark,                     UI_EventDeltaUnit_Whole, {+0, -1}},
+  {WM_Key_Down,     WM_Modifier_Ctrl|WM_Modifier_Shift, UI_EventKind_Navigate, UI_EventFlag_KeepMark,                     UI_EventDeltaUnit_Whole, {+0, +1}},
+  {WM_Key_Backspace,WM_Modifier_Alt,                    UI_EventKind_Edit,     UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect, UI_EventDeltaUnit_Word, {-1, +0}},
+  {WM_Key_Delete,   WM_Modifier_Alt,                    UI_EventKind_Edit,     UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect, UI_EventDeltaUnit_Word, {+1, +0}},
+  {WM_Key_Backspace,WM_Modifier_Ctrl,                   UI_EventKind_Edit,     UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect, UI_EventDeltaUnit_Line, {-1, +0}},
+  {WM_Key_Delete,   WM_Modifier_Ctrl,                   UI_EventKind_Edit,     UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect, UI_EventDeltaUnit_Line, {+1, +0}},
+#else
   // rad: chunk
   {WM_Key_Left,     WM_Modifier_Ctrl,                   UI_EventKind_Navigate, UI_EventFlag_ExplicitDirectional,          UI_EventDeltaUnit_Word,  {-1, +0}},
   {WM_Key_Right,    WM_Modifier_Ctrl,                   UI_EventKind_Navigate, UI_EventFlag_ExplicitDirectional,          UI_EventDeltaUnit_Word,  {+1, +0}},
@@ -6492,6 +6651,8 @@ read_only global RAD_TextNavBinding rad_text_nav_binding_table[] =
   {WM_Key_Right,    WM_Modifier_Ctrl|WM_Modifier_Shift, UI_EventKind_Navigate, RAD_NavFlags_SelH,                         UI_EventDeltaUnit_Word,  {+1, +0}},
   {WM_Key_Up,       WM_Modifier_Ctrl|WM_Modifier_Shift, UI_EventKind_Navigate, RAD_NavFlags_SelH,                         UI_EventDeltaUnit_Word,  {+0, -1}},
   {WM_Key_Down,     WM_Modifier_Ctrl|WM_Modifier_Shift, UI_EventKind_Navigate, RAD_NavFlags_SelH,                         UI_EventDeltaUnit_Word,  {+0, +1}},
+
+#endif
 
   // rad: page / whole
   {WM_Key_PageUp,   0,                                  UI_EventKind_Navigate, UI_EventFlag_Secondary,                    UI_EventDeltaUnit_Page,  {+0, -1}},
@@ -6518,9 +6679,11 @@ read_only global RAD_TextNavBinding rad_text_nav_binding_table[] =
 
   // rad: delete / backspace
   {WM_Key_Delete,   0,                                  UI_EventKind_Edit,     UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect, UI_EventDeltaUnit_Char, {+1, +0}},
-  {WM_Key_Delete,   WM_Modifier_Ctrl,                   UI_EventKind_Edit,     UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect, UI_EventDeltaUnit_Word, {+1, +0}},
   {WM_Key_Backspace,0,                                  UI_EventKind_Edit,     UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect, UI_EventDeltaUnit_Char, {-1, +0}},
+#if !OS_MAC
+  {WM_Key_Delete,   WM_Modifier_Ctrl,                   UI_EventKind_Edit,     UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect, UI_EventDeltaUnit_Word, {+1, +0}},
   {WM_Key_Backspace,WM_Modifier_Ctrl,                   UI_EventKind_Edit,     UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect, UI_EventDeltaUnit_Word, {-1, +0}},
+#endif
 };
 
 internal B32
@@ -6615,9 +6778,9 @@ rad_frame(void)
   // -> the built-in font)
   //
   {
-    String8 names[] = {rad_state->settings.main_font, rad_state->settings.code_font};
-    RAD_FontSlot slots[] = {RAD_FontSlot_Main, RAD_FontSlot_Code};
-    String8 *defaults[] = {&rad_default_main_font_bytes, &rad_default_code_font_bytes};
+    String8 names[] = {rad_state->settings.main_font, rad_state->settings.code_font, rad_state->settings.panel_font};
+    RAD_FontSlot slots[] = {RAD_FontSlot_Main, RAD_FontSlot_Code, RAD_FontSlot_Panel};
+    String8 *defaults[] = {&rad_default_main_font_bytes, &rad_default_code_font_bytes, 0};
     for EachElement(idx, slots)
     {
       FNT_Tag tag = fnt_tag_zero();
@@ -6628,7 +6791,8 @@ rad_frame(void)
       rad_state->font_slot_is_custom[slots[idx]] = !fnt_tag_match(tag, fnt_tag_zero());
       if(fnt_tag_match(tag, fnt_tag_zero()))
       {
-        tag = fnt_tag_from_static_data_string(defaults[idx]);
+        // rad: the panel font falls back to the code font (set just before)
+        tag = (defaults[idx] != 0 ? fnt_tag_from_static_data_string(defaults[idx]) : rad_state->font_slot_table[RAD_FontSlot_Code]);
       }
       rad_state->font_slot_table[slots[idx]] = tag;
     }
@@ -6816,18 +6980,14 @@ rad_frame(void)
       //- rad: try hotkey presses
       if(!take && event->kind == WM_EventKind_Press)
       {
-        for EachNonZeroEnumVal(RAD_CmdKind, k)
+        RAD_CmdKind k = rad_cmd_kind_from_key(event->key, event->modifiers);
+        if(k != RAD_CmdKind_Null)
         {
-          CFG_Binding binding = rad_cmd_kind_info_table[k].default_binding;
-          if(binding.key != WM_Key_Null && binding.key == event->key && binding.modifiers == event->modifiers)
+          take = 1;
+          rad_cmd(k);
+          if(ws != 0 && event->modifiers & WM_Modifier_Alt)
           {
-            take = 1;
-            rad_cmd(k);
-            if(ws != 0 && event->modifiers & WM_Modifier_Alt)
-            {
-              ws->menu_bar_focus_press_started = 0;
-            }
-            break;
+            ws->menu_bar_focus_press_started = 0;
           }
         }
         if(!take && ws != 0 && WM_Key_F1 <= event->key && event->key <= WM_Key_F19)
@@ -6938,6 +7098,43 @@ rad_frame(void)
   //- rad: animate view states (scroll offsets ease to their targets)
   //
   rad_view_state_animate();
+
+  //////////////////////////////
+  //- rad: animate the code zoom (the drawn code font size eases to the
+  // setting, or to the wheel's target while it turns; 150 ms after the
+  // last wheel step the setting takes the nearest whole size)
+  //
+  {
+    F32 setting_pt = (F32)rad_state->settings.code_font_size;
+    if(rad_state->code_zoom_wheeling)
+    {
+      if(now_time_us() >= rad_state->code_zoom_wheel_us + 150000)
+      {
+        rad_state->code_zoom_wheeling = 0;
+        F32 settled_pt = round_f32(rad_state->code_zoom_target_pt);
+        if(settled_pt != setting_pt)
+        {
+          rad_setting_set_f64(str8_lit("code_font_size"), (F64)settled_pt);
+          setting_pt = (F32)rad_state->settings.code_font_size;
+        }
+      }
+      rad_request_frame();
+    }
+    F32 target_pt = (rad_state->code_zoom_wheeling ? rad_state->code_zoom_target_pt : setting_pt);
+    if(rad_state->code_zoom_pt == 0)
+    {
+      rad_state->code_zoom_pt = target_pt;
+    }
+    rad_state->code_zoom_pt += (target_pt - rad_state->code_zoom_pt)*rad_state->scrolling_animation_rate;
+    if(abs_f32(target_pt - rad_state->code_zoom_pt) < 0.01f)
+    {
+      rad_state->code_zoom_pt = target_pt;
+    }
+    else
+    {
+      rad_request_frame();
+    }
+  }
 
   //////////////////////////////
   //- rad: tick documents (load/reload from disk, compaction), visible or not

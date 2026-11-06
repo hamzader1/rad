@@ -50,7 +50,7 @@ key_up ctrl
 wait_idle
 
 # Navigate Backward: back to where the jump started (the clicked identifier)
-key alt+left
+cmd navigate_back
 wait_until 5000 cursor_line == 8
 expect cursor_col == 30
 

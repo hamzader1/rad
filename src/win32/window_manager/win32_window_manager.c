@@ -1334,6 +1334,17 @@ wm_window_bring_to_front(WM_Window handle)
 }
 
 internal void
+wm_window_set_floating(WM_Window handle, B32 floating)
+{
+  // rad: Windows: untested (written on the Mac)
+  W32_WM_Window *window = w32_wm_window_from_handle(handle);
+  if(window != 0)
+  {
+    SetWindowPos(window->hwnd, floating ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+  }
+}
+
+internal void
 wm_window_set_monitor(WM_Window window_handle, WM_Monitor monitor)
 {
   W32_WM_Window *window = w32_wm_window_from_handle(window_handle);

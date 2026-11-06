@@ -210,8 +210,9 @@ Milestone 6 details (each item with its script):
 
 ## Next steps
 
-0. `docs/TASKS.md` (A-H) is done. Hint images are in `.dev_hints/`
-   (private, git-ignored, never push it).
+0. **Now: `docs/TODO_2.md`** (the user's list of 2026-11-06 plus
+   suggestions). `docs/TASKS.md` (A-H) is done. Hint images are in
+   `.dev_hints/` (private, git-ignored, never push it).
 1. Speed, continued (see the 2026-11-06 journal entries; app side:
    `tests/perf/run_perf.sh`; key to screen: `tests/perf/typelat.m`). The
    Mac renderer is Metal now; typing latency on a 60 Hz monitor is at
@@ -435,6 +436,35 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-06 (TODO_2: keys, zoom, tabs, status bar, panel font)
+- `docs/TODO_2.md`: the user's new list (keys, look, diagnostics like Zed,
+  inlay hints, explorer file operations) plus suggestions.
+- Cmd+- split the panel: Ctrl+- was raddbg's Split Panel Down and the Mac
+  sends Cmd as Ctrl. Now Cmd+= / Cmd+- (and with Shift) zoom the code;
+  no key zooms the whole UI. Commands can have second keys and Mac-only
+  keys (`rad_cmd_extra_binding_table`, `rad_cmd_mac_binding_table`).
+- Mac text keys: Cmd+arrows to line/file ends, Option+arrows by word,
+  Option/Cmd+Backspace/Delete; Navigate Backward is Cmd+[ on the Mac
+  (Option+Left was Alt+Left = back).
+- Cmd+wheel zoom is smooth: a fractional target eased every frame,
+  quarter-pixel sizes, settles on a whole size 150 ms after the wheel
+  stops; 1.0-1.4 ms per frame while zooming.
+- Tabs: flush with the panel, no file icon, pin/close only on hover (room
+  kept), modified dot in the close slot, a little lower. Status bar 2x the
+  font (was 3x) with line:column and the language. Panel Font / Panel Font
+  Size for Output and Problems.
+- Inline diagnostics like Zed's (setting Inline Diagnostics): the line's
+  worst error/warning in a tinted box after the code; wavy underlines; no
+  red line background. Themes get a "warn text" color.
+- Explorer folders: the user's two-tone folder icon (`icons/Folder_16x.svg`),
+  the same open or closed.
+- Quick fixes (the screwdriver): 1 s after the cursor stops (was 0.3 s),
+  setting Show Quick Fixes (Ctrl+. works either way).
+- Script language: `only_on`, `float_window` (a covered window is not
+  drawn by Metal: screenshots of script runs need it), `wheel_units`,
+  query `output_font_size`. Scripts no longer press Alt+Left for back
+  (`cmd navigate_back`: the key differs per OS).
 
 ### 2026-11-06 (Metal renderer for the Mac)
 - Why: on a 60 Hz monitor typing felt slow next to Zed. Measured key to

@@ -1,0 +1,29 @@
+# The bottom panel's own font (TODO_2 B4): Panel Font Size sets the Output's
+# text size (and the Problems list's); the editor's zoom does not change it.
+# Panel Font empty: the code font.
+
+open ../fixtures/edit.txt
+wait_idle
+expect setting panel_font_size == 10
+expect setting panel_font == ""
+cmd show_output
+wait_idle
+expect output_font_size == 10
+expect editor_font_size == 11
+
+# zooming the editor leaves the panel alone
+key ctrl+equal 2
+wait_idle
+expect editor_font_size == 13
+expect output_font_size == 10
+key ctrl+0
+wait_idle
+
+# its own setting
+set_setting panel_font_size 14
+wait_idle
+expect output_font_size == 14
+expect editor_font_size == 11
+set_setting panel_font_size 10
+wait_idle
+expect output_font_size == 10

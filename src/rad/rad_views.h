@@ -144,6 +144,9 @@ struct RAD_CodeViewState
   F32 layout_tab_size;
   B32 layout_link_hovered;   // rad: Ctrl held over an identifier (Go To Definition link)
   Rng1U64 layout_link_range;
+  S64 layout_cursor_line;    // rad: the cursor's line and column (1-based; the column
+  S64 layout_cursor_col;     // counts characters): the status bar's Ln:Col
+  U64 layout_inline_diag_count; // rad: visible lines with an inline diagnostic (scripts)
 };
 
 ////////////////////////////////
@@ -357,6 +360,7 @@ internal void rad_documents_gc(void);
 internal void rad_code_view_init(RAD_CodeViewState *cv);
 internal B32 rad_code_view_undo(RAD_CodeViewState *cv, TB_Buffer *buffer);
 internal B32 rad_code_view_redo(RAD_CodeViewState *cv, TB_Buffer *buffer);
+internal String8 rad_lang_display_name(TXT_LangKind lang);
 internal void rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data);
 
 ////////////////////////////////

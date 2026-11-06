@@ -198,7 +198,13 @@ ui_single_line_txt_op_from_event(Arena *arena, UI_Event *event, String8 string, 
         }
       }
       U64 home_dest_off = (cursor - cursor_range.min == first_nonwhitespace_off) ? 0 : first_nonwhitespace_off;
-      delta.x = (delta.x > 0) ? ((S64)string.size - (S64)(cursor - cursor_range.min)) : ((S64)home_dest_off - (S64)(cursor - cursor_range.min));
+      // NOTE(rad): a delete toward the line's start (Cmd+Backspace on the
+      // Mac) never deletes forward: inside the indentation it goes to column 1
+      if(event->flags & UI_EventFlag_Delete && delta.x < 0 && home_dest_off > cursor - cursor_range.min)
+      {
+        home_dest_off = 0;
+      }
+      delta.x =(delta.x > 0) ? ((S64)string.size - (S64)(cursor - cursor_range.min)) : ((S64)home_dest_off - (S64)(cursor - cursor_range.min));
     }break;
   }
   

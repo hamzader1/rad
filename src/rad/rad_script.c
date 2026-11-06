@@ -1175,6 +1175,21 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   }
 
   //- rad: the Output tab's cursor line (follows the end while it is there)
+  else if(str8_match(name, str8_lit("inline_diag_count"), 0))
+  {
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    result = rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out);
+    value = push_str8f(arena, "%I64u", cv != 0 ? cv->layout_inline_diag_count : 0);
+  }
+  else if(str8_match(name, str8_lit("output_font_size"), 0))
+  {
+    // rad: the Output view's font size (Panel Font Size; 0 until it is shown)
+    CFG_Node *tab = rad_script_window_tab(str8_lit("output"));
+    RAD_CodeViewState *cv = (tab != &cfg_nil_node ? &rad_view_state_from_cfg(tab)->cv : 0);
+    value = push_str8f(arena, "%.0f", cv != 0 ? cv->layout_font_size : 0.f);
+  }
   else if(str8_match(name, str8_lit("output_cursor_line"), 0) || str8_match(name, str8_lit("output_line_count"), 0) ||
           str8_match(name, str8_lit("output_cursor_at_end"), 0))
   {
@@ -2239,6 +2254,28 @@ rad_script_run_line(RAD_ScriptLine *line)
       }
     }
   }
+  else if(str8_match(cmd, str8_lit("wheel_units"), 0))
+  {
+    // rad: a trackpad's scrolling: `count` small steps of `units` (a notch
+    // is 120), one per frame
+    S64 units = 0;
+    U64 count = 0;
+    U64 used = 0;
+    Vec2F32 pos = {0};
+    if(args_count < 3 || !try_s64_from_str8_c_rules(args[0], &units) || !try_u64_from_str8_c_rules(args[1], &count))
+    {
+      error = str8_lit("wheel_units: needs <units> <count> <target>");
+    }
+    else if(rad_script_target(scratch.arena, args+2, args_count-2, &used, &pos, &error))
+    {
+      rad_script_push_input(RAD_ScriptInputKind_MouseMove, pos);
+      for EachIndex(idx, count)
+      {
+        RAD_ScriptInput *input = rad_script_push_input(RAD_ScriptInputKind_Wheel, pos);
+        input->wheel_delta = (F32)units;
+      }
+    }
+  }
   else if(str8_match(cmd, str8_lit("mouse"), 0) || str8_match(cmd, str8_lit("click"), 0) || str8_match(cmd, str8_lit("double_click"), 0) ||
           str8_match(cmd, str8_lit("ctrl_click"), 0))
   {
@@ -2337,6 +2374,31 @@ rad_script_run_line(RAD_ScriptLine *line)
     {
       rad_script->wait_kind = RAD_ScriptWaitKind_Time;
       rad_script->wait_until_us = now_time_us() + ms*1000;
+    }
+  }
+  else if(str8_match(cmd, str8_lit("float_window"), 0))
+  {
+    // rad: keeps the window above other apps' windows (a covered window is
+    // not drawn on the Mac, so screenshots of a script run need it)
+    U64 on = 1;
+    if(args_count >= 1) { try_u64_from_str8_c_rules(args[0], &on); }
+    if(rad_state->first_window != 0)
+    {
+      wm_window_set_floating(rad_state->first_window->os, on != 0);
+    }
+  }
+  else if(str8_match(cmd, str8_lit("only_on"), 0))
+  {
+    // rad: the rest of the script runs on this OS only (OS-specific keys)
+    String8 os_name = (OS_MAC ? str8_lit("mac") : OS_WINDOWS ? str8_lit("windows") : str8_lit("linux"));
+    if(args_count < 1)
+    {
+      error = str8_lit("only_on: needs mac, windows or linux");
+    }
+    else if(!str8_match(args[0], os_name, 0))
+    {
+      rad_script_resultf("SKIP %I64u: the rest runs on %S only", line->line_num, args[0]);
+      rad_script->next_line_idx = rad_script->lines_count;
     }
   }
   else if(str8_match(cmd, str8_lit("wait_frames"), 0))

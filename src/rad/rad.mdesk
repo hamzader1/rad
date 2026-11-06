@@ -117,6 +117,8 @@ RAD_IconTable:
   //- rad: past ASCII: private-use codepoints, as UTF-8
   (Screwdriver              '\\xee\\x80\\x80')
   (SymbolInterface          '\\xee\\x80\\x81')
+  (FolderFill               '\\xee\\x80\\x82')
+  (Folder                   '\\xee\\x80\\x83')
 }
 
 @enum RAD_IconKind:
@@ -153,6 +155,8 @@ RAD_ThemePresetTable:
       theme_color:{tags: "good text", value: 0x608b4eff}
       theme_color:{tags: "neutral text", value: 0x9cdcfeff}
       theme_color:{tags: "bad text", value: 0xd16969ff}
+      theme_color:{tags: "warn text", value: 0xd7ba7dff}
+      theme_color:{tags: "folder text", value: 0xffdf96ff}
       theme_color:{tags: hover, value: 0xffffffff}
       theme_color:{tags: "focus overlay", value: 0x2292eb14}
       theme_color:{tags: "focus border", value: 0x2392ebff}
@@ -234,6 +238,7 @@ RAD_ThemePresetTable:
       theme_color:{tags: "good text", value: 0x32a852ff}
       theme_color:{tags: "neutral text", value: 0x3a90bbff}
       theme_color:{tags: "bad text", value: 0xcf5242ff}
+      theme_color:{tags: "warn text", value: 0xebb624ff}
       theme_color:{tags: hover, value: 0xffffffff}
       theme_color:{tags: "focus overlay", value: 0x2292eb14}
       theme_color:{tags: "focus border", value: 0x2392ebff}
@@ -311,6 +316,7 @@ RAD_ThemePresetTable:
       theme_color:{tags: "good text" , value: 0x32a852ff}
       theme_color:{tags: "neutral text" , value: 0x3a90bbff}
       theme_color:{tags: "bad text" , value: 0xcf5242ff}
+      theme_color:{tags: "warn text" , value: 0xde8e2aff}
       theme_color:{tags: hover , value: 0xff}
       theme_color:{tags: "focus overlay" , value: 0x2192eb49}
       theme_color:{tags: "focus border" , value: 0x2392ebff}
@@ -390,6 +396,7 @@ RAD_ThemePresetTable:
       theme_color:{  tags: "good text"  , value: 0x32a852ff }
       theme_color:{  tags: "neutral text"  , value: 0x3a90bbff }
       theme_color:{  tags: "bad text"  , value: 0xcf5242ff }
+      theme_color:{  tags: "warn text"  , value: 0xffdc48ff }
       theme_color:{  tags: hover  , value: 0xffffffff }
       theme_color:{  tags: "focus overlay"  , value: 0x7160e81e }
       theme_color:{  tags: "focus border"  , value: 0x7160e8ff }
@@ -475,6 +482,7 @@ RAD_ThemePresetTable:
       theme_color:{tags: "good text", value: 0x32a852ff}
       theme_color:{tags: "neutral text", value: 0x3a90bbff}
       theme_color:{tags: "bad text", value: 0xcf5242ff}
+      theme_color:{tags: "warn text", value: 0xffb141ff}
       theme_color:{tags: hover, value: 0xa7ffff}
       theme_color:{tags: "focus overlay", value: 0x8eff3f}
       theme_color:{tags: "focus border", value: 0x8effff}
@@ -555,6 +563,7 @@ RAD_ThemePresetTable:
       theme_color:{tags: "good text", value: 0x32a852ff}
       theme_color:{tags: "neutral text", value: 0x3a90bbff}
       theme_color:{tags: "bad text", value: 0xcf5242ff}
+      theme_color:{tags: "warn text", value: 0xffcb7fff}
       theme_color:{tags: hover, value: 0xca4b16ff}
       theme_color:{tags: "focus overlay", value: 0xca4b151f}
       theme_color:{tags: "focus border", value: 0xca4b16ff}
@@ -624,6 +633,7 @@ RAD_ThemePresetTable:
       theme_color:{tags: "good text", value: 0x32a852ff}
       theme_color:{tags: "neutral text", value: 0x3a90bbff}
       theme_color:{tags: "bad text", value: 0xcf5242ff}
+      theme_color:{tags: "warn text", value: 0xffa100ff}
       theme_color:{tags: hover, value: 0xca4b16ff}
       theme_color:{tags: "focus overlay", value: 0xca4b1454}
       theme_color:{tags: "focus border", value: 0xca4b16ff}
@@ -694,6 +704,7 @@ RAD_ThemePresetTable:
       theme_color:{tags: "good text", value: 0x32a852ff}
       theme_color:{tags: "neutral text", value: 0x3a90bbff}
       theme_color:{tags: "bad text", value: 0xcf5242ff}
+      theme_color:{tags: "warn text", value: 0xffcb7fff}
       theme_color:{tags: hover, value: 0xffffffff}
       theme_color:{tags: "focus overlay", value: 0x7485971e}
       theme_color:{tags: "focus border", value: 0x5e6b79ff}
@@ -774,6 +785,7 @@ RAD_ThemePresetTable:
       theme_color:{tags: "good text", value: 0x32a852ff}
       theme_color:{tags: "neutral text", value: 0x3a90bbff}
       theme_color:{tags: "bad text", value: 0xcf5242ff}
+      theme_color:{tags: "warn text", value: 0xffcb7fff}
       theme_color:{tags: "menu_bar good text", value: 0x2a8242ff}
       theme_color:{tags: "menu_bar neutral text", value: 0x5681ff}
       theme_color:{tags: "menu_bar bad text", value: 0xa21200ff}
@@ -857,6 +869,7 @@ RAD_ThemePresetTable:
       theme_color:{tags: "good text", value: 0x32a852ff}
       theme_color:{tags: "neutral text", value: 0x3a90bbff}
       theme_color:{tags: "bad text", value: 0xcf5242ff}
+      theme_color:{tags: "warn text", value: 0xd08f1fff}
       theme_color:{tags: hover, value: 0xee00ff}
       theme_color:{tags: "focus overlay", value: 0xee0012}
       theme_color:{tags: "focus border", value: 0x00ee00ff}
@@ -924,6 +937,7 @@ RAD_ThemePresetTable:
       theme_color:{  tags: "good text"  , value: 0x32a852ff }
       theme_color:{  tags: "neutral text"  , value: 0x3a90bbff }
       theme_color:{  tags: "bad text"  , value: 0xcf5242ff }
+      theme_color:{  tags: "warn text"  , value: 0xffc258ff }
       theme_color:{  tags: hover  , value: 0xffffffff }
       theme_color:{  tags: "focus overlay"  , value: 0xfda20012 }
       theme_color:{  tags: "focus border"  , value: 0xfda200ff }
@@ -1010,6 +1024,7 @@ RAD_ThemePresetTable:
       theme_color:{tags: "good text", value: 0x00ff00ff}
       theme_color:{tags: "neutral text", value: 0x00ffffff}
       theme_color:{tags: "bad text", value: 0xff0000ff}
+      theme_color:{tags: "warn text", value: 0xffff00ff}
       theme_color:{tags: hover, value: 0xffffffff}
       theme_color:{tags: "focus overlay", value: 0xffff0012}
       theme_color:{tags: "focus border", value: 0xffff00ff}
@@ -1150,16 +1165,16 @@ RAD_CmdTable:
   
   //- rad: windows
   {ToggleFullscreen       toggle_fullscreen    "Toggle Fullscreen"    Window            Return     ctrl   0      0      Null     0         0           0         0 }
-  {IncCodeFontSize        inc_code_font_size   "Zoom In (Code)"       Add               Equal      ctrl   shift  0      Null     0         0           0         0 }
-  {DecCodeFontSize        dec_code_font_size   "Zoom Out (Code)"      Minus             Minus      ctrl   shift  0      Null     0         0           0         0 }
+  {IncCodeFontSize        inc_code_font_size   "Zoom In (Code)"       Add               Equal      ctrl   0      0      Null     0         0           0         0 }
+  {DecCodeFontSize        dec_code_font_size   "Zoom Out (Code)"      Minus             Minus      ctrl   0      0      Null     0         0           0         0 }
   {ResetCodeFontSize      reset_code_font_size "Reset Zoom (Code)"    Null              0          ctrl   0      0      Null     0         0           0         0 }
   {Settings               settings             "Settings"             Gear              Null       0      0      0      Null     0         0           0         0 }
-  {IncWindowFontSize      inc_window_font_size "Increase Font Size"   Add               Equal      0      0      alt    Null     0         0           0         0 }
-  {DecWindowFontSize      dec_window_font_size "Decrease Font Size"   Minus             Minus      0      0      alt    Null     0         0           0         0 }
+  {IncWindowFontSize      inc_window_font_size "Increase Font Size"   Add               Null       0      0      0      Null     0         0           0         0 }
+  {DecWindowFontSize      dec_window_font_size "Decrease Font Size"   Minus             Null       0      0      0      Null     0         0           0         0 }
   
   //- rad: panels
   {NewPanelRight          new_panel_right      "Split Panel Right"    XSplit            P          ctrl   0      0      Null     0         0           0         0 }
-  {NewPanelDown           new_panel_down       "Split Panel Down"     YSplit            Minus      ctrl   0      0      Null     0         0           0         0 }
+  {NewPanelDown           new_panel_down       "Split Panel Down"     YSplit            Null       0      0      0      Null     0         0           0         0 }
   {ClosePanel             close_panel          "Close Panel"          ClosePanel        P          ctrl   shift  alt    Null     0         0           0         0 }
   {NextPanel              next_panel           "Next Panel"           RightArrow        Comma      ctrl   0      0      Null     0         0           0         0 }
   {PrevPanel              prev_panel           "Previous Panel"       LeftArrow         Comma      ctrl   shift  0      Null     0         0           0         0 }
@@ -1246,16 +1261,20 @@ RAD_SettingTable:
   {cursor_trail                 Bool  B32 1   0  1  Animations "Cursor Trail"                  "Controls whether or not a movement trail animation of the cursor is drawn." ""}
   {main_font                    String String8 0 0 0 Fonts     "UI Font"                       "A font family name (Segoe UI), a font file name (segoeui.ttf, looked up in the fonts folders) or a path, for non-code UI elements; empty: the built-in font." ""}
   {code_font                    String String8 0 0 0 Fonts     "Code Font"                     "A font family name (Cascadia Code), a font file name (consola.ttf, looked up in the fonts folders) or a path, for code; empty: the built-in font." ""}
-  {font_size                    U64   U64 11  6  72 Fonts      "UI Font Size"                  "The font size of menus, tabs, panels and lists (Alt+= / Alt+-)." ""}
-  {code_font_size               U64   U64 11  6  72 Fonts      "Code Font Size"                "The font size of the editor and the Output text only (Ctrl+Shift+= / Ctrl+Shift+-, Ctrl+0 resets)." ""}
+  {font_size                    U64   U64 11  6  72 Fonts      "UI Font Size"                  "The font size of menus, tabs, panels and lists." ""}
+  {code_font_size               U64   U64 11  6  72 Fonts      "Code Font Size"                "The font size of the editor and the Output text only (Ctrl+= / Ctrl+-, Cmd on macOS, also with Shift; Ctrl+0 resets)." ""}
   {mouse_wheel_zoom             Bool  B32 1   0  1  Fonts      "Mouse Wheel Zoom"              "Whether to zoom the editor font size with the mouse wheel while holding the primary modifier key (Ctrl on Windows, Cmd on macOS)." ""}
+  {panel_font                   String String8 0 0 0 Fonts     "Panel Font"                    "The font of the bottom panel's text (Output): a family name or a font file name, like Code Font. Empty: the code font." ""}
+  {panel_font_size              U64   U64 10  6  72 Fonts      "Panel Font Size"               "The font size of the bottom panel (Output, Problems). The editor's zoom does not change it." ""}
   {smooth_ui_text               Bool  B32 1   0  1  Fonts      "Smooth UI Text"                "Controls whether or not UI text is fully anti-aliased, for a smoother appearance." ""}
   {hint_ui_text                 Bool  B32 1   0  1  Fonts      "Hint UI Text"                  "Controls whether or not UI text is hinted, for better text readability at small sizes." ""}
   {smooth_code_text             Bool  B32 0   0  1  Fonts      "Smooth Code Text"              "Controls whether or not code text is fully anti-aliased, for a smoother appearance." ""}
   {hint_code_text               Bool  B32 1   0  1  Fonts      "Hint Code Text"                "Controls whether or not code text is hinted, for better text readability at small sizes." ""}
   {show_line_numbers            Bool  B32 1   0  1  Editor     "Line Numbers"                  "Shows line numbers in text views." ""}
   {tab_width                    U64   U64 2   1  16 Editor     "Tab Width"                     "The width of a tab character, in spaces." ""}
+  {inline_diagnostics           Bool  B32 1   0  1  Editor     "Inline Diagnostics"            "Shows the worst error or warning of a line after its code, in a box tinted with its color (Zed's inline diagnostics)." ""}
   {navigation_bar               Bool  B32 1   0  1  Editor     "Navigation Bar"                "Shows the item and member around the cursor above the code, each a list to jump from (VS2022's navigation bar; Rust files)." ""}
+  {show_quick_fixes             Bool  B32 1   0  1  Editor     "Show Quick Fixes"              "Shows the quick fixes button (the language server's code actions) on the cursor's line, one second after the cursor stops. Quick Actions (Ctrl+.) works either way." ""}
   {completion_width             U64   U64 30  15 120 Editor    "Completion List Width"         "The width of the code completion list, in text heights (30: raddbg's size; 20: small, 45: large)." ""}
   {completion_height            U64   U64 30  6  100 Editor    "Completion List Height"        "The most height of the code completion list, in text heights; it shrinks to fit fewer items (30: raddbg's size; 15: small, 50: large)." ""}
   {scroll_past_end              Bool  B32 1   0  1  Editor     "Scroll Past End"               "Lets text views scroll until their last line is at the top (raddbg's); off: the last line stops at the bottom." ""}

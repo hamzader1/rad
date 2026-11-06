@@ -826,6 +826,18 @@ wm_window_bring_to_front(WM_Window handle)
   [w->window orderFront:nil];
 }
 
+internal void
+wm_window_set_floating(WM_Window handle, B32 floating)
+{
+  MAC_WM_Window *w = mac_wm_window_from_handle(handle);
+  if(w == 0) { return; }
+  w->window.level = (floating ? NSFloatingWindowLevel : NSNormalWindowLevel);
+  if(floating)
+  {
+    [w->window orderFrontRegardless];
+  }
+}
+
 internal NSScreen *
 mac_wm_screen_from_monitor(WM_Monitor monitor)
 {

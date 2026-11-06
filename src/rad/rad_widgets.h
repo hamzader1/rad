@@ -55,6 +55,8 @@ struct RAD_CellParams
   String8 pre_edit_value;
   String8 search_needle;
   DR_FStrList value_fstrs;
+  UI_BoxCustomDrawFunctionType *value_custom_draw; // rad: optional, on the value's text box (not while editing)
+  void *value_custom_draw_user_data;
 
   //- rad: left-hand-side name + description (raddbg's meta_fstrs, description)
   DR_FStrList meta_fstrs;
@@ -135,6 +137,9 @@ struct RAD_CodeSliceParams
   // underline (diagnostic spans)
   Vec4F32 *line_bg_colors;
   DR_FStrList *line_annotations;
+  Vec4F32 *line_annotation_colors; // rad: per visible line (optional): alpha != 0 -> the annotation is
+                                   // drawn right after the code in a box tinted with this color (Zed's
+                                   // inline diagnostics); alpha 0 -> raddbg's plain annotation
   RAD_CodeSliceUnderline *first_underline;
   DR_FStrList *line_margin_fstrs; // rad: drawn in the catchall margin
   RAD_TokenColor *token_colors; // rad: sorted by range.min; a lexer token starting at one takes its color

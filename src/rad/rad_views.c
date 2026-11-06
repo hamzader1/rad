@@ -718,9 +718,11 @@ rad_code_view_completion_update(CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer 
         ca->rest_version = buffer->version;
         ca->rest_begin_us = now_us;
         ca->rest_asked = 0;
+        ca->rest_quick = 0;
       }
       if(quick_actions)
       {
+        ca->rest_quick = 1;
         if(rad_lsp_code_actions_shown(tab->id, cv->cursor, cv->mark, buffer->version))
         {
           ca->menu_open_requested = 1;
@@ -735,8 +737,9 @@ rad_code_view_completion_update(CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer 
           ca->menu_on_answer = 1;
         }
       }
-      else if(!ca->rest_asked && ca->request_id == 0)
+      else if(!ca->rest_asked && ca->request_id == 0 && rad_state->settings.show_quick_fixes)
       {
+        // rad: one second of rest (TODO_2 C2: not at every cursor move)
         if(now_us >= ca->rest_begin_us + RAD_LSP_CODE_ACTION_DELAY_US)
         {
           rad_lsp_code_actions_request(tab, doc, cv->cursor, cv->mark);
@@ -1810,6 +1813,24 @@ rad_code_view_fold_expand_line(RAD_CodeViewState *cv, TXT_Patched *patched, S64 
   }
 }
 
+internal String8
+rad_lang_display_name(TXT_LangKind lang)
+{
+  // rad: the status bar's language name
+  String8 result = str8_lit("Plain Text");
+  switch(lang)
+  {
+    default:{}break;
+    case TXT_LangKind_C:         {result = str8_lit("C");}break;
+    case TXT_LangKind_CPlusPlus: {result = str8_lit("C++");}break;
+    case TXT_LangKind_Odin:      {result = str8_lit("Odin");}break;
+    case TXT_LangKind_Jai:       {result = str8_lit("Jai");}break;
+    case TXT_LangKind_Zig:       {result = str8_lit("Zig");}break;
+    case TXT_LangKind_Rust:      {result = str8_lit("Rust");}break;
+  }
+  return result;
+}
+
 internal void
 rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data)
 {
@@ -1829,7 +1850,8 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
   //- rad: extract invariants
   //
   F32 main_font_size = ui_bottom_font_size();
-  FNT_Tag code_font = rad_font_from_slot(RAD_FontSlot_Code);
+  // rad: the Output's text in the bottom panel's font (TODO_2 B4)
+  FNT_Tag code_font = rad_font_from_slot(str8_match(tab->string, str8_lit("output"), 0) ? RAD_FontSlot_Panel : RAD_FontSlot_Code);
   F32 code_font_size = ui_top_font_size();
   F32 code_tab_size = fnt_column_size_from_tag_size(code_font, code_font_size)*settings->tab_width;
   FNT_Metrics code_font_metrics = fnt_metrics_from_tag_size(code_font, code_font_size);
@@ -2427,7 +2449,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       // rad: not in raddbg: rust-analyzer's semantic tokens
       code_slice_params.token_colors = rad_lsp_token_colors_from_document(rad_document_from_tab(tab), &code_slice_params.token_colors_count);
     }
-    if(cv->editable && rad_lsp_code_actions_shown(tab->id, cv->cursor, cv->mark, buffer->version))
+    if(cv->editable && (rad_state->settings.show_quick_fixes || rad_lsp->code_actions.rest_quick) && rad_lsp_code_actions_shown(tab->id, cv->cursor, cv->mark, buffer->version))
     {
       // rad: not in raddbg: the code actions button on the cursor's row
       S64 cursor_line = (S64)txt_line_num_from_off(&text_patched.line_map, cv->cursor);
@@ -2523,14 +2545,12 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     RAD_Document *doc = rad_document_from_tab(tab);
     if(doc != 0 && rad_problems->count != 0 && text_is_ready)
     {
-      Vec4F32 error_line_color = {0};
       Vec4F32 error_text_color = {0};
       Vec4F32 error_mark_color = {0};
       Vec4F32 weak_text_color = {0};
       Vec4F32 warning_mark_color = ui_color_from_name(str8_lit("thread_0"));
       UI_TagF("bad_pop")
       {
-        error_line_color = ui_color_from_name(str8_lit("background"));
         error_text_color = ui_color_from_name(str8_lit("text"));
       }
       UI_TagF("bad")
@@ -2541,10 +2561,24 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       {
         weak_text_color = ui_color_from_name(str8_lit("text"));
       }
+      // rad: the theme's "warn text" (themes without one: thread_0, the
+      // yellow raddbg uses for its warnings)
+      Vec4F32 plain_text_color = ui_color_from_name(str8_lit("text"));
+      UI_TagF("warn")
+      {
+        Vec4F32 warn_text_color = ui_color_from_name(str8_lit("text"));
+        if(!MemoryMatchStruct(&warn_text_color, &plain_text_color))
+        {
+          warning_mark_color = warn_text_color;
+        }
+      }
       code_slice_params.line_bg_colors   = push_array(scratch.arena, Vec4F32, visible_line_count);
       code_slice_params.line_annotations = push_array(scratch.arena, DR_FStrList, visible_line_count);
+      code_slice_params.line_annotation_colors = push_array(scratch.arena, Vec4F32, visible_line_count);
       code_slice_params.line_margin_fstrs = push_array(scratch.arena, DR_FStrList, visible_line_count);
       U8 *line_margin_severity = push_array(scratch.arena, U8, visible_line_count);
+      U8 *line_inline_severity = push_array(scratch.arena, U8, visible_line_count);
+      DR_FStrParams inline_fstr_params = {code_font, ui_top_text_raster_flags(), weak_text_color, code_font_size};
       RAD_CodeSliceUnderline *last_underline = 0;
       DR_FStrParams fstr_params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), weak_text_color, code_font_size};
       for EachIndex(diag_idx, rad_problems->count)
@@ -2564,11 +2598,6 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
           RAD_CodeSliceUnderline *underline = push_array(scratch.arena, RAD_CodeSliceUnderline, 1);
           underline->range = range;
           underline->color = (is_error ? error_mark_color : warning_mark_color);
-          if(is_error && txt_line_num_from_off(&text_patched.line_map, range.min) == txt_line_num_from_off(&text_patched.line_map, range.max))
-          {
-            // rad: on its error-colored line, a red mark would vanish
-            underline->color = error_text_color;
-          }
           SLLQueuePush(code_slice_params.first_underline, last_underline, underline);
         }
 
@@ -2582,11 +2611,6 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
           DR_FStrList *fstrs = &code_slice_params.line_annotations[line_idx];
           RAD_IconKind icon_kind = (is_error ? RAD_IconKind_WarningBig : is_warning ? RAD_IconKind_WarningSmall : RAD_IconKind_Info);
           Vec4F32 icon_color = (is_error ? error_text_color : is_warning ? warning_mark_color : weak_text_color);
-          Vec4F32 text_color = (is_error ? error_text_color : weak_text_color);
-          if(is_error)
-          {
-            code_slice_params.line_bg_colors[line_idx] = error_line_color;
-          }
           // rad: margin icon: the line's worst diagnostic
           U8 severity = (is_error ? 3 : is_warning ? 2 : 1);
           if(severity > line_margin_severity[line_idx])
@@ -2598,17 +2622,27 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
                               .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons),
                               .color = icon_color);
           }
-          if(fstrs->node_count != 0)
+          // rad: inline diagnostic (TODO_2 C1, Zed's): the line's worst error
+          // or warning, the first line of its message, no icon, in a box
+          // tinted with its color; the first one of equal severity wins
+          U8 inline_severity = (is_error ? 2 : is_warning ? 1 : 0);
+          if(rad_state->settings.inline_diagnostics && inline_severity > line_inline_severity[line_idx])
           {
-            dr_fstrs_push_new(scratch.arena, fstrs, &fstr_params, str8_lit("    "));
+            line_inline_severity[line_idx] = inline_severity;
+            Vec4F32 color = (is_error ? error_mark_color : warning_mark_color);
+            String8 message = diag->message;
+            U64 newline_pos = str8_find_needle(message, 0, str8_lit("\n"), 0);
+            message = str8_skip_chop_whitespace(str8_prefix(message, newline_pos));
+            MemoryZeroStruct(fstrs);
+            dr_fstrs_push_new(scratch.arena, fstrs, &inline_fstr_params, message, .color = color);
+            code_slice_params.line_annotation_colors[line_idx] = color;
           }
-          dr_fstrs_push_new(scratch.arena, fstrs, &fstr_params, rad_icon_kind_text_table[icon_kind],
-                            .font = rad_font_from_slot(RAD_FontSlot_Icons),
-                            .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons),
-                            .color = icon_color);
-          dr_fstrs_push_new(scratch.arena, fstrs, &fstr_params, str8_lit("  "));
-          dr_fstrs_push_new(scratch.arena, fstrs, &fstr_params, diag->message, .color = text_color);
         }
+      }
+      cv->layout_inline_diag_count = 0;
+      for EachIndex(line_idx, visible_line_count)
+      {
+        cv->layout_inline_diag_count += (code_slice_params.line_annotation_colors[line_idx].w != 0);
       }
     }
   }
@@ -3021,6 +3055,20 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     cv->layout_font          = code_font;
     cv->layout_font_size     = code_font_size;
     cv->layout_tab_size      = code_tab_size;
+    {
+      U64 cursor_off = Min(cv->cursor, text_patched.size);
+      U64 cursor_line = txt_line_num_from_off(&text_patched.line_map, cursor_off);
+      Rng1U64 cursor_line_range = txt_range_from_line_num(&text_patched.line_map, cursor_line);
+      U64 line_start = Min(cursor_line_range.min, cursor_off);
+      String8 before = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, r1u64(line_start, cursor_off));
+      S64 col = 1;
+      for EachIndex(idx, before.size)
+      {
+        col += ((before.str[idx] & 0xC0) != 0x80);
+      }
+      cv->layout_cursor_line = (S64)cursor_line;
+      cv->layout_cursor_col  = col;
+    }
 
     //- rad: dragging & outside region? -> contain cursor
     if(ui_dragging(sig.base) && sig.base.event_flags == 0)
@@ -3767,6 +3815,22 @@ rad_explorer_target_panel_from_tab(CFG_Node *tab)
   return result;
 }
 
+// rad: the folder icon's fill (TODO_2 D1): a second glyph drawn at the
+// row's icon (its first text), at half the icon color's opacity; fill and
+// outline share one color, so the order they draw in does not show
+typedef struct RAD_ExplorerFolderFillDrawData RAD_ExplorerFolderFillDrawData;
+struct RAD_ExplorerFolderFillDrawData
+{
+  Vec4F32 color;
+};
+
+internal UI_BOX_CUSTOM_DRAW(rad_explorer_folder_fill_draw)
+{
+  RAD_ExplorerFolderFillDrawData *data = (RAD_ExplorerFolderFillDrawData *)user_data;
+  dr_text(rad_font_from_slot(RAD_FontSlot_Icons), box->font_size, 0, 0, rad_raster_flags_from_slot(RAD_FontSlot_Icons),
+          ui_box_text_position(box), data->color, rad_icon_kind_text_table[RAD_IconKind_FolderFill]);
+}
+
 internal void
 rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
 {
@@ -4052,18 +4116,37 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
 
         //- rad: row title (same layout as raddbg's rd_title_fstrs_from_file_path)
         DR_FStrList fstrs = {0};
+        Vec4F32 folder_color = {0};
         {
-          RAD_IconKind icon_kind = (!row->is_folder ? RAD_IconKind_FileOutline :
-                                    row->is_expanded ? RAD_IconKind_FolderOpenFilled :
-                                    RAD_IconKind_FolderClosedFilled);
+          // rad: folders, open or closed: the user's folder icon (TODO_2 D1)
+          // in the theme's "folder text" color (themes without one: the
+          // weak text color, like file icons)
+          RAD_IconKind icon_kind = (row->is_folder ? RAD_IconKind_Folder : RAD_IconKind_FileOutline);
           DR_FStrParams params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+          Vec4F32 icon_color = {0};
           UI_TagF("weak")
+          {
+            icon_color = ui_color_from_name(str8_lit("text"));
+          }
+          if(row->is_folder)
+          {
+            Vec4F32 plain_text_color = ui_color_from_name(str8_lit("text"));
+            UI_TagF("folder")
+            {
+              Vec4F32 c = ui_color_from_name(str8_lit("text"));
+              if(!MemoryMatchStruct(&c, &plain_text_color))
+              {
+                icon_color = c;
+              }
+            }
+            folder_color = icon_color;
+          }
           {
             dr_fstrs_push_new(scratch.arena, &fstrs, &params,
                               rad_icon_kind_text_table[icon_kind],
                               .font = rad_font_from_slot(RAD_FontSlot_Icons),
                               .raster_flags = rad_raster_flags_from_slot(RAD_FontSlot_Icons),
-                              .color = ui_color_from_name(str8_lit("text")));
+                              .color = icon_color);
           }
           dr_fstrs_push_new(scratch.arena, &fstrs, &params, str8_lit("  "));
           dr_fstrs_push_new(scratch.arena, &fstrs, &params, row->name);
@@ -4104,6 +4187,14 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
                                       (row->is_folder && !filtering ? RAD_CellFlag_Expander : RAD_CellFlag_ExpanderSpace));
           cell_params.depth        = row->depth;
           cell_params.value_fstrs  = fstrs;
+          if(folder_color.w != 0)
+          {
+            RAD_ExplorerFolderFillDrawData *fill = push_array(ui_build_arena(), RAD_ExplorerFolderFillDrawData, 1);
+            fill->color = folder_color;
+            fill->color.w *= 0.5f;
+            cell_params.value_custom_draw = rad_explorer_folder_fill_draw;
+            cell_params.value_custom_draw_user_data = fill;
+          }
           cell_params.expanded_out = &next_expanded;
           cell_params.search_needle = (filtering ? str8(ex->rows_filter_buffer, ex->rows_filter_size) : str8_zero());
           UI_Parent(cell_box)
@@ -4242,6 +4333,7 @@ rad_output_view_ui(CFG_Node *tab, Rng2F32 rect)
   //
   if(!has_text)
   {
+    cv->layout_font_size = ui_top_font_size();
     UI_WidthFill UI_HeightFill UI_Column UI_Padding(ui_pct(1, 0))
     {
       UI_PrefWidth(ui_children_sum(1)) UI_PrefHeight(ui_em(3, 1))
