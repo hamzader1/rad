@@ -10,10 +10,11 @@
 //          -framework Foundation -framework AppKit -framework CoreMedia \
 //          -framework CoreVideo -framework ScreenCaptureKit
 // Use:   build/typelat [-n samples] [-d start_delay_s] [-w region_w] [-h region_h]
-//          [-at x,y]   (region center in global points; default: the mouse)
-//   1. Run it, then within the start delay (5 s) click into the editor on an
-//      empty line and leave the mouse pointer there (it watches a 1400 x 40
-//      point strip along that line).
+//          [-at x,y]   (watch a w x h box there, global points; default: the
+//                       focused app's whole window)
+//   1. Run it, then within the start delay (5 s) click into the editor's
+//      text (an empty line of an open file) and take your hands off. It
+//      watches the focused app's whole window (-at x,y: a box instead).
 //   2. Do not touch anything until it prints the results.
 // Needs (System Settings > Privacy & Security, for the terminal app):
 // Accessibility (to post keys) and Screen Recording (to read pixels).
@@ -240,7 +241,7 @@ int main(int argc, char **argv)
   {
     mach_timebase_info_data_t tb; mach_timebase_info(&tb);
     g_ticks_to_ms = (double)tb.numer / (double)tb.denom / 1e6;
-    double delay_s = 5, region_w = 1400, region_h = 40;
+    double delay_s = 5, region_w = 400, region_h = 100;
     int have_at = 0; double at_x = 0, at_y = 0;
     for(int i = 1; i < argc; i++)
     {
@@ -270,29 +271,49 @@ int main(int argc, char **argv)
     }
     if(!have_at)
     {
-      printf("click into the editor on an empty line and leave the mouse there: starting in %.0f s\n", delay_s);
+      printf("click into the editor's text (an empty line in a file with text), then hands off: starting in %.0f s\n", delay_s);
       fflush(stdout);
       [NSThread sleepForTimeInterval:delay_s];
     }
-    // region: global points, top-left origin (CG); the display under it
-    CGPoint center = have_at ? CGPointMake(at_x, at_y) : ({ CGEventRef e = CGEventCreate(NULL); CGPoint p = CGEventGetLocation(e); CFRelease(e); p; });
+    // region: global points, top-left origin (CG). Default: the focused app's
+    // largest window (any visible reaction to the key counts: the character,
+    // the cursor, a status bar); -at x,y: a w x h box there instead
+    CGRect global = CGRectZero;
+    NSRunningApplication *front_app = NSWorkspace.sharedWorkspace.frontmostApplication;
+    if(have_at)
+    {
+      global = CGRectMake(at_x - region_w/2, at_y - region_h/2, region_w, region_h);
+    }
+    else
+    {
+      CFArrayRef windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly|kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+      double best_area = 0;
+      for(CFIndex i = 0; windows && i < CFArrayGetCount(windows); i++)
+      {
+        NSDictionary *w = (__bridge NSDictionary *)CFArrayGetValueAtIndex(windows, i);
+        if([w[(id)kCGWindowOwnerPID] intValue] != front_app.processIdentifier || [w[(id)kCGWindowLayer] intValue] != 0) { continue; }
+        CGRect b; CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(id)kCGWindowBounds], &b);
+        if(b.size.width*b.size.height > best_area) { best_area = b.size.width*b.size.height; global = b; }
+      }
+      if(windows) { CFRelease(windows); }
+      if(best_area == 0) { printf("no window of %s found\n", front_app.localizedName.UTF8String); return 1; }
+    }
+    CGPoint center = CGPointMake(CGRectGetMidX(global), CGRectGetMidY(global));
     CGDirectDisplayID display_id = 0; uint32_t count = 0;
     CGGetDisplaysWithPoint(center, 1, &display_id, &count);
     if(count == 0) { printf("no display under (%.0f, %.0f)\n", center.x, center.y); return 1; }
     CGRect bounds = CGDisplayBounds(display_id);
-    // rad: a strip along the clicked line (the text cursor can be anywhere on
-    // it: an empty line puts it at the start), clamped to the display
-    CGRect region = CGRectMake(center.x - region_w/2 - bounds.origin.x, center.y - region_h/2 - bounds.origin.y, region_w, region_h);
-    region = CGRectIntersection(region, CGRectMake(0, 0, bounds.size.width, bounds.size.height));
+    CGRect region = CGRectIntersection(global, bounds);
+    region.origin.x -= bounds.origin.x;
+    region.origin.y -= bounds.origin.y;
     region_w = region.size.width;
     region_h = region.size.height;
     double scale = (double)CGDisplayPixelsWide(display_id) / bounds.size.width;
     CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display_id);
     double hz = mode ? CGDisplayModeGetRefreshRate(mode) : 0;
     if(mode) { CGDisplayModeRelease(mode); }
-    printf("region %.0fx%.0f pt around (%.0f, %.0f) on display %u (refresh %.0f Hz as reported)\n", region_w, region_h, center.x, center.y, display_id, hz);
-    NSRunningApplication *front = NSWorkspace.sharedWorkspace.frontmostApplication;
-    printf("typing into: %s\n", front.localizedName.UTF8String);
+    printf("watching %.0fx%.0f pt (%s window) on display %u (refresh %.0f Hz as reported)\n", region_w, region_h, have_at ? "box in the" : "the whole", display_id, hz);
+    printf("typing into: %s\n", front_app.localizedName.UTF8String);
     fflush(stdout);
 
     g_queue = dispatch_queue_create("typelat", DISPATCH_QUEUE_SERIAL);
