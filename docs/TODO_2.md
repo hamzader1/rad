@@ -201,8 +201,17 @@ then inlay hints (the biggest change to the code view).
   not after a word; the closer steps over only auto-closed ones (a stack:
   nesting works); Backspace in an empty one deletes both; ( [ { wrap a
   selection. Not done: matching bracket highlight (raddbg has none).
-- [ ] **E3. [suggestion] Quick Open (Cmd+P)**: fuzzy file finder over the
+- [x] **E3. [suggestion] Quick Open (Cmd+P)**: fuzzy file finder over the
   folder (Zed's, VS Code's). Cmd+P is Split Panel Right today (raddbg).
+  Done 2026-11-06 (script `quick_open`): Go to File (Cmd/Ctrl+P, File
+  menu); Split Panel Right moves to Cmd/Ctrl+\ (VS Code's split key).
+  Built like raddbg's palette (floating view, 35% of the width), rows like
+  its autocompletion list. Lists the explorer folder's files when it opens
+  (no .git or target folders, up to 50,000). Matching is raddbg's
+  (space-separated parts, case-insensitive: "util mod" finds
+  src/util/mod.rs), names before paths; not VS Code's letter-skipping
+  match ("mrs" does not find main.rs). Up/Down wrap, Enter opens, Esc or
+  a click elsewhere closes.
 - [x] **E4. [suggestion] Close tab Cmd+W, reopen closed tab Cmd+Shift+T.**
   Done 2026-11-06 (script `reopen_tab`): Cmd+W was already Close Tab;
   Reopen Closed Tab (Cmd/Ctrl+Shift+T) reopens closed file tabs newest

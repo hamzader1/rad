@@ -1148,6 +1148,7 @@ RAD_CmdTable:
   //- rad: files
   {OpenFile               open_file            "Open File"            FileOutline       O          ctrl   0      0      Null     0         0           0         0 }
   {OpenFolder             open_folder          "Open Folder"          FolderOpenOutline O          ctrl   shift  0      Null     0         0           0         0 }
+  {QuickOpen              quick_open           "Go to File"           Find              P          ctrl   0      0      Null     0         0           0         0 }
   {Save                   save                 "Save"                 Save              S          ctrl   0      0      Null     0         0           0         0 }
   {SaveAll                save_all             "Save All"             Save              S          ctrl   shift  0      Null     0         0           0         0 }
   {Exit                   exit                 "Exit"                 X                 F4         0      0      alt    Null     0         0           0         0 }
@@ -1181,7 +1182,7 @@ RAD_CmdTable:
   {DecWindowFontSize      dec_window_font_size "Decrease Font Size"   Minus             Null       0      0      0      Null     0         0           0         0 }
   
   //- rad: panels
-  {NewPanelRight          new_panel_right      "Split Panel Right"    XSplit            P          ctrl   0      0      Null     0         0           0         0 }
+  {NewPanelRight          new_panel_right      "Split Panel Right"    XSplit            BackSlash  ctrl   0      0      Null     0         0           0         0 }
   {NewPanelDown           new_panel_down       "Split Panel Down"     YSplit            Null       0      0      0      Null     0         0           0         0 }
   {ClosePanel             close_panel          "Close Panel"          ClosePanel        P          ctrl   shift  alt    Null     0         0           0         0 }
   {NextPanel              next_panel           "Next Panel"           RightArrow        Comma      ctrl   0      0      Null     0         0           0         0 }

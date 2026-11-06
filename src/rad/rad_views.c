@@ -1419,6 +1419,478 @@ rad_completion_popup_ui(RAD_Window *ws, CFG_Node *window)
 }
 
 ////////////////////////////////
+//~ rad: Quick Open (Go to File, not in raddbg; TODO_2 E3)
+//
+// NOTE(rad): the files of the explorer's folder (listed when it opens; as
+// the explorer's filter, without .git and target folders), matched with
+// raddbg's fuzzy_match_find (space-separated parts, case-insensitive),
+// names before paths. Built like raddbg's palette (its floating query view:
+// 35% of the content width, its top at 10% of the content height), the rows
+// like its autocompletion lister.
+
+#define RAD_QUICK_OPEN_MAX_FILES 50000
+#define RAD_QUICK_OPEN_MAX_ROWS 16
+
+typedef struct RAD_QuickOpenSortItem RAD_QuickOpenSortItem;
+struct RAD_QuickOpenSortItem
+{
+  U32 idx;
+  U32 rank;
+};
+
+internal int
+rad_quick_open_sort_item_compare(RAD_QuickOpenSortItem *a, RAD_QuickOpenSortItem *b)
+{
+  int result = (a->rank < b->rank ? -1 : a->rank > b->rank ? +1 : a->idx < b->idx ? -1 : a->idx > b->idx ? +1 : 0);
+  return result;
+}
+
+internal int
+rad_quick_open_path_compare(String8 *a, String8 *b)
+{
+  int result = (str8_is_before(*a, *b) ? -1 : str8_is_before(*b, *a) ? +1 : 0);
+  return result;
+}
+
+internal void
+rad_quick_open_files_push(Arena *arena, String8List *out, String8 folder, String8 rel, U64 depth, U64 *budget)
+{
+  Temp scratch = scratch_begin(&arena, 1);
+  FileIter *it = file_iter_begin(scratch.arena, folder, 0);
+  for(FileInfo info = {0}; budget[0] != 0 && file_iter_next(scratch.arena, it, &info);)
+  {
+    budget[0] -= 1;
+    B32 is_folder = !!(info.props.flags & FilePropertyFlag_IsFolder);
+    if(str8_match(info.name, str8_lit(".git"), 0) || (is_folder && str8_match(info.name, str8_lit("target"), 0)))
+    {
+      continue;
+    }
+    String8 child_rel = (rel.size != 0 ? push_str8f(scratch.arena, "%S/%S", rel, info.name) : info.name);
+    if(!is_folder)
+    {
+      str8_list_push(arena, out, push_str8_copy(arena, child_rel));
+    }
+    else if(depth < 32)
+    {
+      rad_quick_open_files_push(arena, out, push_str8f(scratch.arena, "%S/%S", folder, info.name), child_rel, depth+1, budget);
+    }
+  }
+  file_iter_end(it);
+  scratch_end(scratch);
+}
+
+internal void
+rad_quick_open_begin(CFG_Node *window)
+{
+  Temp scratch = scratch_begin(0, 0);
+
+  //- rad: the explorer's folder
+  String8 root = {0};
+  CFG_PanelTree tree = cfg_panel_tree_from_cfg(scratch.arena, window);
+  for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node && root.size == 0; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+  {
+    for(CFG_NodePtrNode *n = p->tabs.first; n != 0; n = n->next)
+    {
+      if(str8_match(n->v->string, str8_lit("explorer"), 0))
+      {
+        root = rad_explorer_folder_from_tab(n->v);
+        break;
+      }
+    }
+  }
+
+  //- rad: its files, sorted by path
+  Arena *arena = rad_state->quick_open_arena;
+  arena_clear(arena);
+  arena_clear(rad_state->quick_open_match_arena);
+  rad_state->quick_open_root = push_str8_copy(arena, root);
+  String8List files = {0};
+  if(root.size != 0)
+  {
+    U64 budget = RAD_QUICK_OPEN_MAX_FILES;
+    rad_quick_open_files_push(arena, &files, rad_state->quick_open_root, str8_zero(), 0, &budget);
+  }
+  rad_state->quick_open_files = push_array(arena, String8, files.node_count);
+  rad_state->quick_open_file_count = files.node_count;
+  {
+    U64 idx = 0;
+    for(String8Node *n = files.first; n != 0; n = n->next, idx += 1)
+    {
+      rad_state->quick_open_files[idx] = n->string;
+    }
+  }
+  quick_sort(rad_state->quick_open_files, rad_state->quick_open_file_count, sizeof(String8), rad_quick_open_path_compare);
+
+  //- rad: an empty query, the first row
+  rad_state->quick_open_matches = 0;
+  rad_state->quick_open_match_count = 0;
+  rad_state->quick_open_matched = 0;
+  rad_state->quick_open_query_size = rad_state->quick_open_cursor = rad_state->quick_open_mark = 0;
+  rad_state->quick_open_selected = 0;
+  MemoryZeroStruct(&rad_state->quick_open_scroll_pt);
+  MemoryZeroStruct(&rad_state->quick_open_layout_rect);
+  rad_state->quick_open_window = window->id;
+  rad_state->quick_open_gen += 1;
+  rad_state->quick_open_active = 1;
+  scratch_end(scratch);
+}
+
+internal void
+rad_quick_open_match(void)
+{
+  // NOTE(rad): the matches of the query: all parts in the file name rank
+  // before all parts in its path; then a name that starts with the first
+  // part; then shorter paths; then by path
+  String8 query = str8(rad_state->quick_open_query, rad_state->quick_open_query_size);
+  if(rad_state->quick_open_matched && str8_match(query, str8(rad_state->quick_open_matched_query, rad_state->quick_open_matched_query_size), 0))
+  {
+    return;
+  }
+  Temp scratch = scratch_begin(0, 0);
+  arena_clear(rad_state->quick_open_match_arena);
+  U64 file_count = rad_state->quick_open_file_count;
+  U32 *matches = push_array_no_zero(rad_state->quick_open_match_arena, U32, file_count);
+  U64 match_count = 0;
+  String8List parts = str8_split(scratch.arena, query, (U8 *)" ", 1, 0);
+  if(parts.node_count == 0)
+  {
+    for EachIndex(idx, file_count)
+    {
+      matches[idx] = (U32)idx;
+    }
+    match_count = file_count;
+  }
+  else
+  {
+    String8 first_part = parts.first->string;
+    RAD_QuickOpenSortItem *items = push_array_no_zero(scratch.arena, RAD_QuickOpenSortItem, file_count);
+    U64 items_count = 0;
+    for EachIndex(idx, file_count)
+    {
+      Temp temp = temp_begin(scratch.arena);
+      String8 path = rad_state->quick_open_files[idx];
+      String8 name = str8_skip_last_slash(path);
+      U32 klass = 0;
+      FuzzyMatchRangeList m = fuzzy_match_find(scratch.arena, query, name);
+      if(m.count != m.needle_part_count)
+      {
+        klass = 1;
+        m = fuzzy_match_find(scratch.arena, query, path);
+      }
+      B32 is_match = (m.count == m.needle_part_count);
+      temp_end(temp);
+      if(is_match)
+      {
+        B32 is_prefix = str8_match(str8_prefix(name, first_part.size), first_part, StringMatchFlag_CaseInsensitive);
+        items[items_count].idx = (U32)idx;
+        items[items_count].rank = (klass<<24) | ((U32)!is_prefix<<23) | (U32)Min(path.size, (1<<23)-1);
+        items_count += 1;
+      }
+    }
+    quick_sort(items, items_count, sizeof(items[0]), rad_quick_open_sort_item_compare);
+    for EachIndex(idx, items_count)
+    {
+      matches[idx] = items[idx].idx;
+    }
+    match_count = items_count;
+  }
+  rad_state->quick_open_matches = matches;
+  rad_state->quick_open_match_count = match_count;
+  rad_state->quick_open_matched_query_size = Min(query.size, sizeof(rad_state->quick_open_matched_query));
+  MemoryCopy(rad_state->quick_open_matched_query, query.str, rad_state->quick_open_matched_query_size);
+  rad_state->quick_open_matched = 1;
+  rad_state->quick_open_selected = 0;
+  MemoryZeroStruct(&rad_state->quick_open_scroll_pt);
+  scratch_end(scratch);
+}
+
+internal void
+rad_quick_open_ui(RAD_Window *ws, CFG_Node *window, Rng2F32 content_rect)
+{
+  if(!rad_state->quick_open_active || rad_state->quick_open_window != window->id)
+  {
+    return;
+  }
+  Temp scratch = scratch_begin(0, 0);
+  rad_quick_open_match();
+  RAD_Font(RAD_FontSlot_Main) UI_TagF("floating")
+  {
+    //- rad: size and place (raddbg's palette: 35% of the content width, at
+    // most 80% of its height, centered there; not in raddbg: at least 40 em
+    // wide inside the window, at most 16 rows)
+    Vec2F32 content_dim = dim_2f32(content_rect);
+    Vec2F32 content_center = center_2f32(content_rect);
+    F32 row_height_px = ui_top_px_height();
+    F32 search_height_px = ui_top_px_height();
+    F32 width_px = floor_f32(content_dim.x*0.35f);
+    width_px = Max(width_px, Min(floor_f32(ui_top_font_size()*40.f), content_dim.x - 2*ui_top_font_size()));
+    F32 max_height_px = content_dim.y*0.8f;
+    S64 rows_count = (S64)rad_state->quick_open_match_count;
+    S64 max_rows = Max(1, Min(RAD_QUICK_OPEN_MAX_ROWS, (S64)floor_f32((max_height_px - search_height_px) / row_height_px)));
+    S64 shown_rows = Clamp(1, rows_count, max_rows);
+    F32 list_height_px = shown_rows*row_height_px;
+    F32 height_px = search_height_px + list_height_px;
+    Rng2F32 rect = r2f32p(floor_f32(content_center.x - width_px/2), floor_f32(content_center.y - max_height_px/2),
+                          floor_f32(content_center.x - width_px/2) + width_px, floor_f32(content_center.y - max_height_px/2) + height_px);
+    F32 open_t = ui_anim(ui_key_from_stringf(ui_key_zero(), "quick_open_%I64x", rad_state->quick_open_gen), 1.f,
+                         .rate = rad_state->menu_animation_rate,
+                         .initial = 0.f);
+
+    UI_Focus(UI_FocusKind_On)
+    {
+      //- rad: keyboard first (before the query cell takes the text): Up /
+      // Down / Page Up / Page Down select, Enter opens, Esc closes
+      B32 accept = 0;
+      B32 cancel = 0;
+      if(ui_is_focus_active())
+      {
+        for(UI_Event *evt = 0; ui_next_event(&evt);)
+        {
+          if(evt->kind == UI_EventKind_Press && evt->modifiers == 0 && evt->key == WM_Key_Esc)
+          {
+            cancel = 1;
+            ui_eat_event(evt);
+          }
+          else if(evt->kind == UI_EventKind_Press && evt->modifiers == 0 && evt->key == WM_Key_Return)
+          {
+            accept = 1;
+            ui_eat_event(evt);
+          }
+          else if(evt->kind == UI_EventKind_Text && str8_find_needle(evt->string, 0, str8_lit("\n"), 0) < evt->string.size)
+          {
+            ui_eat_event(evt);
+          }
+          else if(evt->kind == UI_EventKind_Navigate && evt->delta_2s32.y != 0 &&
+                  (evt->delta_unit == UI_EventDeltaUnit_Char || evt->delta_unit == UI_EventDeltaUnit_Page))
+          {
+            if(rows_count != 0)
+            {
+              S64 step = (evt->delta_unit == UI_EventDeltaUnit_Page ? evt->delta_2s32.y*max_rows : evt->delta_2s32.y);
+              S64 selected = rad_state->quick_open_selected;
+              if(evt->delta_unit == UI_EventDeltaUnit_Char)
+              {
+                // rad: Up / Down wrap around (VS Code's)
+                selected = (selected + step + rows_count) % rows_count;
+              }
+              else
+              {
+                selected = Clamp(0, selected + step, rows_count-1);
+              }
+              rad_state->quick_open_selected = selected;
+              UI_ScrollPt *scroll_pt = &rad_state->quick_open_scroll_pt;
+              if(selected < scroll_pt->idx)
+              {
+                ui_scroll_pt_target_idx(scroll_pt, selected);
+              }
+              else if(selected >= scroll_pt->idx + shown_rows)
+              {
+                ui_scroll_pt_target_idx(scroll_pt, selected - shown_rows + 1);
+              }
+            }
+            ui_eat_event(evt);
+          }
+        }
+      }
+
+      //- rad: top-level container box (raddbg's)
+      UI_Box *container = &ui_nil_box;
+      UI_Rect(rect) UI_ChildLayoutAxis(Axis2_Y)
+        UI_Squish(0.1f-0.1f*open_t)
+        UI_Transparency(1.f-open_t)
+        UI_CornerRadius(ui_top_font_size()*0.15f)
+      {
+        container = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
+                                              UI_BoxFlag_DrawBorder|
+                                              UI_BoxFlag_DrawBackground|
+                                              UI_BoxFlag_DrawBackgroundBlur|
+                                              UI_BoxFlag_RoundChildrenByParent|
+                                              UI_BoxFlag_DisableFocusOverlay|
+                                              UI_BoxFlag_DrawDropShadow|
+                                              UI_BoxFlag_SquishAnchored,
+                                              "floating_view_container_quick_open");
+      }
+      UI_Parent(container)
+      {
+        //- rad: the query (as the explorer's filter row)
+        UI_Box *search_row = &ui_nil_box;
+        UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(search_height_px, 1.f))
+        {
+          ui_set_next_child_layout_axis(Axis2_X);
+          search_row = ui_build_box_from_stringf(UI_BoxFlag_DrawSideBottom, "###quick_open_search_row");
+        }
+        UI_Parent(search_row) UI_WidthFill UI_HeightFill
+          UI_Flags(UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder)
+        {
+          UI_TagF("weak")
+          {
+            ui_spacer(ui_em(0.5f, 1.f));
+            UI_TextAlignment(UI_TextAlign_Center) RAD_Font(RAD_FontSlot_Icons) UI_PrefWidth(ui_em(2.f, 1.f))
+              ui_label(rad_icon_kind_text_table[RAD_IconKind_Find]);
+          }
+          RAD_CellParams params = {0};
+          {
+            params.flags |= RAD_CellFlag_NoBackground;
+            params.cursor               = &rad_state->quick_open_cursor;
+            params.mark                 = &rad_state->quick_open_mark;
+            params.edit_buffer          = rad_state->quick_open_query;
+            params.edit_string_size_out = &rad_state->quick_open_query_size;
+            params.edit_buffer_size     = sizeof(rad_state->quick_open_query);
+            params.pre_edit_value       = str8(rad_state->quick_open_query, rad_state->quick_open_query_size);
+          }
+          UI_FocusHot(UI_FocusKind_On) UI_FocusActive(UI_FocusKind_On)
+          {
+            rad_cellf(&params, "Search Files by Name###quick_open_query");
+          }
+        }
+
+        //- rad: the rows (raddbg's autocompletion lister rows)
+        UI_Focus(UI_FocusKind_Null)
+        {
+          ui_set_next_pref_width(ui_pct(1, 0));
+          ui_set_next_pref_height(ui_px(list_height_px, 1));
+          ui_set_next_child_layout_axis(Axis2_Y);
+          UI_Box *list_container = ui_build_box_from_stringf(UI_BoxFlag_Clip, "###quick_open_list");
+          UI_Parent(list_container) UI_WidthFill
+          {
+            if(rows_count == 0)
+            {
+              UI_PrefHeight(ui_px(row_height_px, 1.f)) UI_Row UI_TagF("weak")
+              {
+                ui_spacer(ui_em(1.f, 1.f));
+                ui_label(rad_state->quick_open_root.size == 0 ? str8_lit("No folder open.") : str8_lit("No matching files."));
+              }
+            }
+            else
+            {
+              F32 contents_width_px = (width_px - floor_f32(ui_bottom_font_size()*1.5f));
+              UI_ScrollListParams scroll_list_params = {0};
+              {
+                scroll_list_params.flags         = UI_ScrollListFlag_Snap;
+                scroll_list_params.row_height_px = row_height_px;
+                scroll_list_params.dim_px        = v2f32(width_px, list_height_px);
+                scroll_list_params.cursor_range  = r2s64(v2s64(0, 1), v2s64(0, rows_count));
+                scroll_list_params.item_range    = r1s64(0, rows_count);
+                scroll_list_params.cursor_min_is_empty_selection[Axis2_Y] = 0;
+              }
+              Rng1S64 visible_row_rng = {0};
+              Vec2S64 cursor = v2s64(0, rad_state->quick_open_selected+1);
+              Vec2S64 mark = cursor;
+              UI_ScrollListSignal scroll_list_sig = {0};
+              String8 query = str8(rad_state->quick_open_query, rad_state->quick_open_query_size);
+              UI_ScrollList(&scroll_list_params, &rad_state->quick_open_scroll_pt, &cursor, &mark, &visible_row_rng, &scroll_list_sig)
+              {
+                ui_set_next_pref_height(ui_children_sum(1));
+                ui_set_next_child_layout_axis(Axis2_Y);
+                UI_Box *table = ui_build_box_from_string(0, str8_lit("table"));
+                UI_Parent(table)
+                  for(S64 row_idx = Max(0, visible_row_rng.min); row_idx <= visible_row_rng.max && row_idx < rows_count; row_idx += 1)
+                {
+                  String8 path = rad_state->quick_open_files[rad_state->quick_open_matches[row_idx]];
+                  String8 name = str8_skip_last_slash(path);
+                  String8 folder = (name.size < path.size ? str8_prefix(path, path.size - name.size - 1) : str8_zero());
+                  B32 row_selected = (row_idx == rad_state->quick_open_selected);
+
+                  //- rad: icon, name, then its folder (weak)
+                  DR_FStrList fstrs = {0};
+                  {
+                    Vec4F32 weak_color = {0};
+                    UI_TagF("weak") weak_color = ui_color_from_name(str8_lit("text"));
+                    DR_FStrParams icon_params = {rad_font_from_slot(RAD_FontSlot_Icons), rad_raster_flags_from_slot(RAD_FontSlot_Icons), weak_color, ui_top_font_size()};
+                    dr_fstrs_push_new(scratch.arena, &fstrs, &icon_params, rad_icon_kind_text_table[RAD_IconKind_FileOutline]);
+                    DR_FStrParams name_params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+                    dr_fstrs_push_new(scratch.arena, &fstrs, &name_params, push_str8f(scratch.arena, "  %S", name));
+                    if(folder.size != 0)
+                    {
+                      DR_FStrParams folder_params = {rad_font_from_slot(RAD_FontSlot_Main), rad_raster_flags_from_slot(RAD_FontSlot_Main), weak_color, ui_top_font_size()};
+                      dr_fstrs_push_new(scratch.arena, &fstrs, &folder_params, push_str8f(scratch.arena, "  %S", folder));
+                    }
+                  }
+
+                  //- rad: build row box
+                  UI_BoxFlags row_flags = UI_BoxFlag_DisableFocusOverlay;
+                  if(row_idx & 1)
+                  {
+                    ui_set_next_tag(str8_lit("alt"));
+                    row_flags |= UI_BoxFlag_DrawBackground;
+                  }
+                  ui_set_next_pref_width(ui_px(contents_width_px, 1.f));
+                  ui_set_next_pref_height(ui_px(row_height_px, 1.f));
+                  ui_set_next_focus_hot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off);
+                  UI_Box *row_box = ui_build_box_from_stringf(row_flags|UI_BoxFlag_Clickable, "quick_open_row_%I64x", row_idx);
+
+                  //- rad: build cell
+                  UI_Signal sig = {0};
+                  UI_Parent(row_box)
+                  {
+                    UI_Box *cell_box = &ui_nil_box;
+                    UI_PrefWidth(ui_px(contents_width_px, 1.f))
+                    {
+                      ui_set_next_fixed_height(floor_f32(row_height_px));
+                      cell_box = ui_build_box_from_stringf(UI_BoxFlag_DrawSideLeft, "cell_%I64x", row_idx);
+                    }
+                    RAD_CellParams cell_params = {0};
+                    cell_params.flags         = (RAD_CellFlag_KeyboardClickable|RAD_CellFlag_NoBackground);
+                    cell_params.value_fstrs   = fstrs;
+                    cell_params.search_needle = query;
+                    UI_Parent(cell_box)
+                      UI_FocusHot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off)
+                      UI_FocusActive(UI_FocusKind_Off)
+                    {
+                      sig = rad_cellf(&cell_params, "###cell_%I64x", row_idx);
+                    }
+                  }
+                  UI_Signal row_sig = ui_signal_from_box(row_box);
+
+                  //- rad: a click opens it
+                  if(ui_pressed(sig) || ui_pressed(row_sig))
+                  {
+                    rad_state->quick_open_selected = row_idx;
+                    accept = 1;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      //- rad: interact with container (takes the clicks between rows)
+      ui_signal_from_box(container);
+
+      //- rad: a click elsewhere closes it (and does what it does there)
+      Rng2F32 last_rect = rad_state->quick_open_layout_rect;
+      if(last_rect.x1 > last_rect.x0)
+      {
+        for(UI_Event *evt = 0; ui_next_event(&evt);)
+        {
+          if(evt->kind == UI_EventKind_Press &&
+             (evt->key == WM_Key_LeftMouseButton || evt->key == WM_Key_RightMouseButton || evt->key == WM_Key_MiddleMouseButton) &&
+             !contains_2f32(last_rect, evt->pos))
+          {
+            cancel = 1;
+          }
+        }
+      }
+      rad_state->quick_open_layout_rect = rect;
+
+      //- rad: open the selected file / close
+      if(accept && 0 <= rad_state->quick_open_selected && rad_state->quick_open_selected < rows_count)
+      {
+        String8 path = rad_state->quick_open_files[rad_state->quick_open_matches[rad_state->quick_open_selected]];
+        rad_cmd(RAD_CmdKind_OpenFile, .file_path = push_str8f(scratch.arena, "%S/%S", rad_state->quick_open_root, path));
+        cancel = 1;
+      }
+      if(cancel)
+      {
+        rad_state->quick_open_active = 0;
+        rad_request_frame();
+      }
+    }
+  }
+  scratch_end(scratch);
+}
+
+////////////////////////////////
 //~ rad: Code Folding (not in raddbg)
 
 internal S64

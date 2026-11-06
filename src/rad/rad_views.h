@@ -431,6 +431,8 @@ internal B32 rad_char_is_word(U8 c);
 internal void rad_code_view_completion_commit(Arena *arena, RAD_Document *doc, TB_Buffer *buffer, TXT_TextInfo *text_info, String8 text_data, TXT_Patched *text_patched, U64 *cursor, RAD_CodeViewState *cv);
 internal void rad_code_view_completion_update(CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer *buffer, TXT_Patched *text, B32 focused, B32 typed, U8 typed_char, B32 moved);
 internal void rad_completion_popup_ui(RAD_Window *ws, CFG_Node *window);
+internal void rad_quick_open_begin(CFG_Node *window);
+internal void rad_quick_open_ui(RAD_Window *ws, CFG_Node *window, Rng2F32 content_rect);
 internal void rad_signature_popup_ui(RAD_Window *ws, CFG_Node *window);
 
 ////////////////////////////////

@@ -215,11 +215,12 @@ RAD_SettingInfo rad_setting_info_table[40] =
 {str8_lit_comp("focus_menu_bar_with_alt"), RAD_SettingKind_Bool, OffsetOf(RAD_Settings, focus_menu_bar_with_alt), 1, 0, 1, str8_lit_comp("Window"), str8_lit_comp("Focus Menu Bar With Alt"), str8_lit_comp("Pressing and releasing Alt alone gives the keyboard to the menu bar."), str8_lit_comp("")},
 };
 
-RAD_CmdKindInfo rad_cmd_kind_info_table[79] =
+RAD_CmdKindInfo rad_cmd_kind_info_table[80] =
 {
 {str8_lit_comp(""), str8_lit_comp(""), RAD_IconKind_Null, {WM_Key_Null, 0   }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("open_file"), str8_lit_comp("Open File"), RAD_IconKind_FileOutline, {WM_Key_O, 0 |WM_Modifier_Ctrl  }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("open_folder"), str8_lit_comp("Open Folder"), RAD_IconKind_FolderOpenOutline, {WM_Key_O, 0 |WM_Modifier_Ctrl |WM_Modifier_Shift }, {RAD_QuerySlot_Null, 0    }},
+{str8_lit_comp("quick_open"), str8_lit_comp("Go to File"), RAD_IconKind_Find, {WM_Key_P, 0 |WM_Modifier_Ctrl  }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("save"), str8_lit_comp("Save"), RAD_IconKind_Save, {WM_Key_S, 0 |WM_Modifier_Ctrl  }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("save_all"), str8_lit_comp("Save All"), RAD_IconKind_Save, {WM_Key_S, 0 |WM_Modifier_Ctrl |WM_Modifier_Shift }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("exit"), str8_lit_comp("Exit"), RAD_IconKind_X, {WM_Key_F4, 0   |WM_Modifier_Alt}, {RAD_QuerySlot_Null, 0    }},
@@ -245,7 +246,7 @@ RAD_CmdKindInfo rad_cmd_kind_info_table[79] =
 {str8_lit_comp("settings"), str8_lit_comp("Settings"), RAD_IconKind_Gear, {WM_Key_Null, 0   }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("inc_window_font_size"), str8_lit_comp("Increase Font Size"), RAD_IconKind_Add, {WM_Key_Null, 0   }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("dec_window_font_size"), str8_lit_comp("Decrease Font Size"), RAD_IconKind_Minus, {WM_Key_Null, 0   }, {RAD_QuerySlot_Null, 0    }},
-{str8_lit_comp("new_panel_right"), str8_lit_comp("Split Panel Right"), RAD_IconKind_XSplit, {WM_Key_P, 0 |WM_Modifier_Ctrl  }, {RAD_QuerySlot_Null, 0    }},
+{str8_lit_comp("new_panel_right"), str8_lit_comp("Split Panel Right"), RAD_IconKind_XSplit, {WM_Key_BackSlash, 0 |WM_Modifier_Ctrl  }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("new_panel_down"), str8_lit_comp("Split Panel Down"), RAD_IconKind_YSplit, {WM_Key_Null, 0   }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("close_panel"), str8_lit_comp("Close Panel"), RAD_IconKind_ClosePanel, {WM_Key_P, 0 |WM_Modifier_Ctrl |WM_Modifier_Shift |WM_Modifier_Alt}, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("next_panel"), str8_lit_comp("Next Panel"), RAD_IconKind_RightArrow, {WM_Key_Comma, 0 |WM_Modifier_Ctrl  }, {RAD_QuerySlot_Null, 0    }},

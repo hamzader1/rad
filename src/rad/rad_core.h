@@ -371,6 +371,30 @@ struct RAD_State
   CFG_ID discard_confirm_cfg_id;
   U64 discard_confirm_deadline_us;
 
+  // rad: Quick Open (Go to File, TODO_2 E3): the explorer folder's files
+  // (relative paths, listed when it opens), the typed query, the matches
+  // (indices into the files, best first) and the selected match
+  B32 quick_open_active;
+  CFG_ID quick_open_window;
+  U64 quick_open_gen;
+  Arena *quick_open_arena;
+  String8 quick_open_root;
+  String8 *quick_open_files;
+  U64 quick_open_file_count;
+  Arena *quick_open_match_arena;
+  U32 *quick_open_matches;
+  U64 quick_open_match_count;
+  U8 quick_open_matched_query[512];
+  U64 quick_open_matched_query_size;
+  B32 quick_open_matched;
+  U8 quick_open_query[512];
+  U64 quick_open_query_size;
+  U64 quick_open_cursor;
+  U64 quick_open_mark;
+  S64 quick_open_selected;
+  UI_ScrollPt quick_open_scroll_pt;
+  Rng2F32 quick_open_layout_rect;
+
   // rad: closed file tabs, newest first (Reopen Closed Tab, TODO_2 E4)
   Arena *closed_tabs_arena;
   RAD_ClosedTab *first_closed_tab;

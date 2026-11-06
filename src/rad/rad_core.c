@@ -2586,6 +2586,7 @@ rad_window_frame(RAD_Window *ws)
     ProfScope("build floating views")
       UI_Focus(ui_any_ctx_menu_is_open() || ws->menu_bar_focused ? UI_FocusKind_Off : UI_FocusKind_Null)
     {
+      rad_quick_open_ui(ws, window, content_rect);
       rad_completion_popup_ui(ws, window);
       rad_signature_popup_ui(ws, window);
     }
@@ -2641,6 +2642,7 @@ rad_window_frame(RAD_Window *ws)
                   {
                     RAD_CmdKind_OpenFile,
                     RAD_CmdKind_OpenFolder,
+                    RAD_CmdKind_QuickOpen,
                     RAD_CmdKind_Save,
                     RAD_CmdKind_SaveAll,
                     RAD_CmdKind_Null,//-
@@ -2652,6 +2654,7 @@ rad_window_frame(RAD_Window *ws)
                   {
                     'o',
                     'f',
+                    'g',
                     's',
                     'a',
                     0,//-
@@ -3746,6 +3749,7 @@ rad_window_frame(RAD_Window *ws)
         B32 panel_is_focused = (window_is_focused &&
                                 !ws->menu_bar_focused &&
                                 !ui_any_ctx_menu_is_open() &&
+                                !rad_state->quick_open_active &&
                                 panel_tree.focused == panel);
         CFG_Node *selected_tab = panel->selected_tab;
         UI_Focus(panel_is_focused ? UI_FocusKind_Null : UI_FocusKind_Off)
@@ -5971,6 +5975,19 @@ rad_exec_cmd(RAD_Cmd *cmd)
       rad_view_state_from_cfg(tab_cfg)->cv.pending_line_op = (U32)cmd->kind;
       rad_request_frame();
     }break;
+    case RAD_CmdKind_QuickOpen:
+    {
+      // rad: not in raddbg (TODO_2 E3): toggles
+      if(rad_state->quick_open_active)
+      {
+        rad_state->quick_open_active = 0;
+      }
+      else
+      {
+        rad_quick_open_begin(window);
+      }
+      rad_request_frame();
+    }break;
     case RAD_CmdKind_ReopenClosedTab:
     {
       // rad: not in raddbg (TODO_2 E4): the last closed file tab, in its
@@ -6495,6 +6512,8 @@ rad_init(CmdLine *cmdln)
   rad_state->arena = arena;
   rad_state->popup_arena = arena_alloc();
   rad_state->closed_tabs_arena = arena_alloc();
+  rad_state->quick_open_arena = arena_alloc();
+  rad_state->quick_open_match_arena = arena_alloc();
   for(U64 idx = 0; idx < ArrayCount(rad_state->frame_arenas); idx += 1)
   {
     rad_state->frame_arenas[idx] = arena_alloc();

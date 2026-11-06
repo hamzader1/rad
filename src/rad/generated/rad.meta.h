@@ -205,6 +205,7 @@ typedef enum RAD_CmdKind
 RAD_CmdKind_Null,
 RAD_CmdKind_OpenFile,
 RAD_CmdKind_OpenFolder,
+RAD_CmdKind_QuickOpen,
 RAD_CmdKind_Save,
 RAD_CmdKind_SaveAll,
 RAD_CmdKind_Exit,

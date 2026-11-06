@@ -865,6 +865,44 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     }
   }
 
+  //- rad: Quick Open (TODO_2 E3)
+  else if(str8_match(name, str8_lit("quick_open_active"), 0) || str8_match(name, str8_lit("quick_open_rows"), 0) ||
+          str8_match(name, str8_lit("quick_open_row"), 0) || str8_match(name, str8_lit("quick_open_selected"), 0) ||
+          str8_match(name, str8_lit("quick_open_files"), 0))
+  {
+    U64 rows_count = (rad_state->quick_open_active ? rad_state->quick_open_match_count : 0);
+    if(str8_match(name, str8_lit("quick_open_active"), 0))
+    {
+      value = push_str8f(arena, "%i", (int)!!rad_state->quick_open_active);
+    }
+    else if(str8_match(name, str8_lit("quick_open_rows"), 0))
+    {
+      value = push_str8f(arena, "%I64u", rows_count);
+    }
+    else if(str8_match(name, str8_lit("quick_open_files"), 0))
+    {
+      value = push_str8f(arena, "%I64u", rad_state->quick_open_active ? rad_state->quick_open_file_count : 0);
+    }
+    else if(str8_match(name, str8_lit("quick_open_selected"), 0))
+    {
+      S64 sel = rad_state->quick_open_selected;
+      value = ((0 <= sel && (U64)sel < rows_count) ? push_str8_copy(arena, rad_state->quick_open_files[rad_state->quick_open_matches[sel]]) : str8_zero());
+    }
+    else
+    {
+      S64 n = 0;
+      if(args_count < 2 || !try_s64_from_str8_c_rules(args[1], &n) || n < 1 || (U64)n > rows_count)
+      {
+        *error_out = push_str8f(arena, "quick_open_row: needs a row number in 1..%I64u", rows_count);
+        result = 0;
+      }
+      else
+      {
+        value = push_str8_copy(arena, rad_state->quick_open_files[rad_state->quick_open_matches[n-1]]);
+      }
+    }
+  }
+
   //- rad: the editor tab's query bar
   else if(str8_match(name, str8_lit("query_open"), 0) || str8_match(name, str8_lit("query_input"), 0))
   {
