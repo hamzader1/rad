@@ -21,8 +21,8 @@ expect output_has "> cargo build --message-format=json    (" == 1
 expect output_has "\n> cargo run -q    (hidden terminal: script mode)\nhello from cargo_run\na line on stderr\n2 + 3 = 5\n\n[process exited with code 3]\nPress any key to close this window . . .\n[exit code 3," == 1
 expect panel == "text"
 
-# test: one passes, one fails
-key ctrl+shift+t
+# test (F6): one passes, one fails
+key f6
 wait_cargo
 wait_idle
 expect cargo_cmd == "cargo test"

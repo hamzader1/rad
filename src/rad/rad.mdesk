@@ -1190,12 +1190,13 @@ RAD_CmdTable:
   {NextTab                next_tab             "Next Tab"             RightArrow        PageDown   ctrl   0      0      Null     0         0           0         0 }
   {PrevTab                prev_tab             "Previous Tab"         LeftArrow         PageUp     ctrl   0      0      Null     0         0           0         0 }
   {CloseTab               close_tab            "Close Tab"            X                 W          ctrl   0      0      Null     0         0           0         0 }
+  {ReopenClosedTab        reopen_closed_tab    "Reopen Closed Tab"    Undo              T          ctrl   shift  0      Null     0         0           0         0 }
 
   //- rad: cargo (Run and Stop take raddbg's Run / Kill All keys)
   {CargoBuild             cargo_build          "Build"                CargoBuild        B          ctrl   shift  0      Null     0         0           0         0 }
   {CargoCheck             cargo_check          "Check"                CargoCheck        F7         0      0      0      Null     0         0           0         0 }
   {CargoRun               cargo_run            "Run"                  CargoRun          F5         0      0      0      Null     0         0           0         0 }
-  {CargoTest              cargo_test           "Test"                 CargoTest         T          ctrl   shift  0      Null     0         0           0         0 }
+  {CargoTest              cargo_test           "Test"                 CargoTest         F6         0      0      0      Null     0         0           0         0 }
   {CargoStop              cargo_stop           "Stop"                 CargoStop         F5         0      shift  0      Null     0         0           0         0 }
   {CargoDebug             cargo_debug          "Debug Configuration"  Null              Null       0      0      0      Null     0         0           0         0 }
   {CargoRelease           cargo_release        "Release Configuration" Null             Null       0      0      0      Null     0         0           0         0 }

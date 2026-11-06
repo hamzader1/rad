@@ -193,7 +193,12 @@ then inlay hints (the biggest change to the code view).
   an on/off setting.
 - [ ] **E3. [suggestion] Quick Open (Cmd+P)**: fuzzy file finder over the
   folder (Zed's, VS Code's). Cmd+P is Split Panel Right today (raddbg).
-- [ ] **E4. [suggestion] Close tab Cmd+W, reopen closed tab Cmd+Shift+T.**
+- [x] **E4. [suggestion] Close tab Cmd+W, reopen closed tab Cmd+Shift+T.**
+  Done 2026-11-06 (script `reopen_tab`): Cmd+W was already Close Tab;
+  Reopen Closed Tab (Cmd/Ctrl+Shift+T) reopens closed file tabs newest
+  first, in their panel if it is still there (up to 64 remembered, files
+  that are gone skipped). Cargo Test moves from Ctrl+Shift+T to F6 (next
+  to Run F5 and Check F7).
 - [ ] **E5. [suggestion] Integrated terminal** in the bottom panel: a
   shell on a pseudo-terminal (`base` API: pty spawn) and a VT100/xterm
   parser drawing into a grid. Large; after the rest.

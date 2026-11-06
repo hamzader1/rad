@@ -213,7 +213,7 @@ RAD_SettingInfo rad_setting_info_table[38] =
 {str8_lit_comp("focus_menu_bar_with_alt"), RAD_SettingKind_Bool, OffsetOf(RAD_Settings, focus_menu_bar_with_alt), 1, 0, 1, str8_lit_comp("Window"), str8_lit_comp("Focus Menu Bar With Alt"), str8_lit_comp("Pressing and releasing Alt alone gives the keyboard to the menu bar."), str8_lit_comp("")},
 };
 
-RAD_CmdKindInfo rad_cmd_kind_info_table[70] =
+RAD_CmdKindInfo rad_cmd_kind_info_table[71] =
 {
 {str8_lit_comp(""), str8_lit_comp(""), RAD_IconKind_Null, {WM_Key_Null, 0   }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("open_file"), str8_lit_comp("Open File"), RAD_IconKind_FileOutline, {WM_Key_O, 0 |WM_Modifier_Ctrl  }, {RAD_QuerySlot_Null, 0    }},
@@ -248,10 +248,11 @@ RAD_CmdKindInfo rad_cmd_kind_info_table[70] =
 {str8_lit_comp("next_tab"), str8_lit_comp("Next Tab"), RAD_IconKind_RightArrow, {WM_Key_PageDown, 0 |WM_Modifier_Ctrl  }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("prev_tab"), str8_lit_comp("Previous Tab"), RAD_IconKind_LeftArrow, {WM_Key_PageUp, 0 |WM_Modifier_Ctrl  }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("close_tab"), str8_lit_comp("Close Tab"), RAD_IconKind_X, {WM_Key_W, 0 |WM_Modifier_Ctrl  }, {RAD_QuerySlot_Null, 0    }},
+{str8_lit_comp("reopen_closed_tab"), str8_lit_comp("Reopen Closed Tab"), RAD_IconKind_Undo, {WM_Key_T, 0 |WM_Modifier_Ctrl |WM_Modifier_Shift }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("cargo_build"), str8_lit_comp("Build"), RAD_IconKind_CargoBuild, {WM_Key_B, 0 |WM_Modifier_Ctrl |WM_Modifier_Shift }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("cargo_check"), str8_lit_comp("Check"), RAD_IconKind_CargoCheck, {WM_Key_F7, 0   }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("cargo_run"), str8_lit_comp("Run"), RAD_IconKind_CargoRun, {WM_Key_F5, 0   }, {RAD_QuerySlot_Null, 0    }},
-{str8_lit_comp("cargo_test"), str8_lit_comp("Test"), RAD_IconKind_CargoTest, {WM_Key_T, 0 |WM_Modifier_Ctrl |WM_Modifier_Shift }, {RAD_QuerySlot_Null, 0    }},
+{str8_lit_comp("cargo_test"), str8_lit_comp("Test"), RAD_IconKind_CargoTest, {WM_Key_F6, 0   }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("cargo_stop"), str8_lit_comp("Stop"), RAD_IconKind_CargoStop, {WM_Key_F5, 0  |WM_Modifier_Shift }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("cargo_debug"), str8_lit_comp("Debug Configuration"), RAD_IconKind_Null, {WM_Key_Null, 0   }, {RAD_QuerySlot_Null, 0    }},
 {str8_lit_comp("cargo_release"), str8_lit_comp("Release Configuration"), RAD_IconKind_Null, {WM_Key_Null, 0   }, {RAD_QuerySlot_Null, 0    }},

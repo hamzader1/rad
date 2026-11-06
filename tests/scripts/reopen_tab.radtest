@@ -1,0 +1,28 @@
+# Cmd/Ctrl+W closes the tab; Cmd/Ctrl+Shift+T reopens the last closed file
+# tabs, newest first, in their panel (TODO_2 E4).
+
+open ../fixtures/edit.txt
+wait_idle
+open ../fixtures/nav.txt
+wait_idle
+expect panel_tabs 1 == "getting_started edit.txt nav.txt"
+key ctrl+w
+wait_idle
+expect panel_tabs 1 == "getting_started edit.txt"
+key ctrl+w
+wait_idle
+expect panel_tabs 1 == "getting_started"
+key ctrl+shift+t
+wait_idle
+expect panel_tabs 1 == "getting_started edit.txt"
+expect tab == "edit.txt"
+key ctrl+shift+t
+wait_idle
+expect panel_tabs 1 == "getting_started edit.txt nav.txt"
+expect tab == "nav.txt"
+expect key_label reopen_closed_tab != ""
+# nothing left to reopen: nothing happens
+key ctrl+shift+t
+wait_idle
+expect panel_tabs 1 == "getting_started edit.txt nav.txt"
+quit

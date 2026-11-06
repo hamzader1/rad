@@ -5912,10 +5912,72 @@ rad_exec_cmd(RAD_Cmd *cmd)
           }
         }
       }
+      String8 closed_path = (str8_match(tab_cfg->string, str8_lit("text"), 0) ? rad_file_path_from_tab(tab_cfg) : str8_zero());
+      if(closed_path.size != 0)
+      {
+        // rad: remembered for Reopen Closed Tab (TODO_2 E4)
+        if(rad_state->closed_tab_count >= 64)
+        {
+          // rad: keep the newest 32 (the list is rebuilt in a cleared arena)
+          RAD_ClosedTab *keep[32] = {0};
+          U64 keep_count = 0;
+          for(RAD_ClosedTab *t = rad_state->first_closed_tab; t != 0 && keep_count < ArrayCount(keep); t = t->next)
+          {
+            keep[keep_count] = t;
+            keep_count += 1;
+          }
+          String8 paths[32];
+          CFG_ID panels[32];
+          for EachIndex(idx, keep_count)
+          {
+            paths[idx] = push_str8_copy(scratch.arena, keep[idx]->path);
+            panels[idx] = keep[idx]->panel_id;
+          }
+          arena_clear(rad_state->closed_tabs_arena);
+          rad_state->first_closed_tab = 0;
+          rad_state->closed_tab_count = 0;
+          for(U64 idx = keep_count; idx > 0; idx -= 1)
+          {
+            RAD_ClosedTab *t = push_array(rad_state->closed_tabs_arena, RAD_ClosedTab, 1);
+            t->path = push_str8_copy(rad_state->closed_tabs_arena, paths[idx-1]);
+            t->panel_id = panels[idx-1];
+            SLLStackPush(rad_state->first_closed_tab, t);
+            rad_state->closed_tab_count += 1;
+          }
+        }
+        RAD_ClosedTab *t = push_array(rad_state->closed_tabs_arena, RAD_ClosedTab, 1);
+        t->path = push_str8_copy(rad_state->closed_tabs_arena, closed_path);
+        t->panel_id = tab_cfg->parent->id;
+        SLLStackPush(rad_state->first_closed_tab, t);
+        rad_state->closed_tab_count += 1;
+      }
       cfg_node_release(rad_state->cfg, tab_cfg);
       if(next_selected_tab != &cfg_nil_node)
       {
         rad_focus_tab(next_selected_tab);
+      }
+    }break;
+    case RAD_CmdKind_ReopenClosedTab:
+    {
+      // rad: not in raddbg (TODO_2 E4): the last closed file tab, in its
+      // panel if it is still there (files that are gone are skipped)
+      for(;rad_state->first_closed_tab != 0;)
+      {
+        RAD_ClosedTab *t = rad_state->first_closed_tab;
+        SLLStackPop(rad_state->first_closed_tab);
+        rad_state->closed_tab_count -= 1;
+        String8 path = push_str8_copy(scratch.arena, t->path);
+        CFG_ID panel_id = t->panel_id;
+        if(rad_state->first_closed_tab == 0)
+        {
+          arena_clear(rad_state->closed_tabs_arena);
+        }
+        FileProperties props = properties_from_file_path(path);
+        if(props.modified != 0 && !(props.flags & FilePropertyFlag_IsFolder))
+        {
+          rad_cmd(RAD_CmdKind_OpenFile, .file_path = path, .panel = panel_id);
+          break;
+        }
       }
     }break;
 
@@ -6418,6 +6480,7 @@ rad_init(CmdLine *cmdln)
   rad_state = push_array(arena, RAD_State, 1);
   rad_state->arena = arena;
   rad_state->popup_arena = arena_alloc();
+  rad_state->closed_tabs_arena = arena_alloc();
   for(U64 idx = 0; idx < ArrayCount(rad_state->frame_arenas); idx += 1)
   {
     rad_state->frame_arenas[idx] = arena_alloc();

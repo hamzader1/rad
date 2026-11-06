@@ -296,6 +296,14 @@ struct RAD_Window
 ////////////////////////////////
 //~ rad: Main State
 
+typedef struct RAD_ClosedTab RAD_ClosedTab;
+struct RAD_ClosedTab
+{
+  RAD_ClosedTab *next;
+  String8 path;
+  CFG_ID panel_id;
+};
+
 typedef struct RAD_State RAD_State;
 struct RAD_State
 {
@@ -362,6 +370,11 @@ struct RAD_State
   // time discards the changes)
   CFG_ID discard_confirm_cfg_id;
   U64 discard_confirm_deadline_us;
+
+  // rad: closed file tabs, newest first (Reopen Closed Tab, TODO_2 E4)
+  Arena *closed_tabs_arena;
+  RAD_ClosedTab *first_closed_tab;
+  U64 closed_tab_count;
 
   //- rad: popup (port of raddbg's confirmation popup): a question over the
   // window; OK sends `popup_cmd_kind` again with .file_path = popup_cmd_path
