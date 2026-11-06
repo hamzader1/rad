@@ -11,8 +11,9 @@
 //          -framework CoreVideo -framework ScreenCaptureKit
 // Use:   build/typelat [-n samples] [-d start_delay_s] [-w region_w] [-h region_h]
 //          [-at x,y]   (region center in global points; default: the mouse)
-//   1. Run it, then within the start delay (5 s) click into the editor at the
-//      end of an empty line and leave the mouse pointer there.
+//   1. Run it, then within the start delay (5 s) click into the editor on an
+//      empty line and leave the mouse pointer there (it watches a 1400 x 40
+//      point strip along that line).
 //   2. Do not touch anything until it prints the results.
 // Needs (System Settings > Privacy & Security, for the terminal app):
 // Accessibility (to post keys) and Screen Recording (to read pixels).
@@ -43,11 +44,17 @@ static int g_warmup = 6;
 static double *g_results;
 static int g_results_count;
 static int g_timeouts;
-static int g_false_changes;        // changes seen right before a key (blink?)
+static int g_false_changes;
+static int g_frames_since_key;      // frames received while measuring
+static size_t g_max_changed;       // most pixels changed vs the baseline while measuring
+static int g_saved_debug;        // changes seen right before a key (blink?)
 static dispatch_queue_t g_queue;
 static uint64_t g_last_frame_time;
 static double g_frame_interval_sum;
 static int g_frame_interval_count;
+
+static void save_png(const uint8_t *bgra, const char *path);
+static size_t changed_pixels(const uint8_t *a, const uint8_t *b);
 
 static void post_key(void)
 {
@@ -93,6 +100,8 @@ static void schedule_next_key(void)
     if(!g_have_frame) { schedule_next_key(); return; }
     memcpy(g_baseline, g_latest, g_frame_bytes);
     g_measuring = 1;
+    g_frames_since_key = 0;
+    g_max_changed = 0;
     int index = g_key_index;
     post_key();
     // timeout
@@ -101,13 +110,43 @@ static void schedule_next_key(void)
       {
         g_measuring = 0;
         g_timeouts += 1;
-        printf("  key %d: no change within 600 ms\n", index);
+        printf("  key %d: no change within 600 ms (%d frames came, at most %zu pixels changed; region %zux%zu px)\n",
+               index, g_frames_since_key, g_max_changed, g_w, g_h);
+        if(g_saved_debug < 2)
+        {
+          char path[256];
+          snprintf(path, sizeof(path), "/tmp/typelat_key%d_before.png", index); save_png(g_baseline, path);
+          snprintf(path, sizeof(path), "/tmp/typelat_key%d_after.png", index); save_png(g_latest, path);
+          printf("    saved /tmp/typelat_key%d_before.png and _after.png (what the region looked like)\n", index);
+          g_saved_debug += 1;
+        }
         g_key_index += 1;
         if(g_timeouts > 10) { printf("too many timeouts: is the editor focused, the mouse on the text cursor, and are permissions granted?\n"); finish(); }
         schedule_next_key();
       }
     });
   });
+}
+
+static size_t changed_pixels(const uint8_t *a, const uint8_t *b)
+{
+  size_t changed = 0;
+  for(size_t i = 0; i < g_frame_bytes; i += 4)
+  {
+    int d = abs((int)a[i] - (int)b[i]) + abs((int)a[i+1] - (int)b[i+1]) + abs((int)a[i+2] - (int)b[i+2]);
+    if(d > 24) { changed += 1; }
+  }
+  return changed;
+}
+
+static void save_png(const uint8_t *bgra, const char *path)
+{
+  CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+  CGContextRef ctx = CGBitmapContextCreate((void *)bgra, g_w, g_h, 8, g_w*4, cs, kCGImageAlphaPremultipliedFirst|kCGBitmapByteOrder32Little);
+  CGImageRef img = CGBitmapContextCreateImage(ctx);
+  NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithCGImage:img];
+  [[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithUTF8String:path] atomically:YES];
+  CGImageRelease(img); CGContextRelease(ctx); CGColorSpaceRelease(cs);
 }
 
 static int frames_differ(const uint8_t *a, const uint8_t *b)
@@ -172,6 +211,8 @@ static int frames_differ(const uint8_t *a, const uint8_t *b)
     if(ms_from_ticks(t - g_key_time) > 400 && frames_differ(g_latest, g_prev)) { g_false_changes += 1; }
     return;
   }
+  g_frames_since_key += 1;
+  { size_t c = changed_pixels(g_latest, g_baseline); if(c > g_max_changed) { g_max_changed = c; } }
   if(t >= g_key_time && frames_differ(g_latest, g_baseline))
   {
     g_measuring = 0;
@@ -199,7 +240,7 @@ int main(int argc, char **argv)
   {
     mach_timebase_info_data_t tb; mach_timebase_info(&tb);
     g_ticks_to_ms = (double)tb.numer / (double)tb.denom / 1e6;
-    double delay_s = 5, region_w = 160, region_h = 60;
+    double delay_s = 5, region_w = 1400, region_h = 40;
     int have_at = 0; double at_x = 0, at_y = 0;
     for(int i = 1; i < argc; i++)
     {
@@ -213,8 +254,15 @@ int main(int argc, char **argv)
     g_results = calloc((size_t)g_samples_wanted + 1, sizeof(double));
     if(!AXIsProcessTrusted())
     {
-      printf("note: this terminal has no Accessibility permission: keys may not arrive (System Settings > Privacy & Security > Accessibility)\n");
+      // rad: without it macOS drops the posted keys silently
+      printf("STOP: this terminal app has no Accessibility permission, so macOS blocks the keys it sends.\n"
+             "  System Settings > Privacy & Security > Accessibility: turn on your terminal app\n"
+             "  (Terminal, iTerm, ...), then quit it completely (Cmd+Q), reopen it and run this again.\n");
+      NSDictionary *opts = @{(__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES};
+      AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)opts);
+      return 1;
     }
+    printf("permissions: keys OK\n");
     if(!CGPreflightScreenCaptureAccess())
     {
       printf("note: no Screen Recording permission yet (System Settings > Privacy & Security > Screen Recording); asking...\n");
@@ -222,7 +270,7 @@ int main(int argc, char **argv)
     }
     if(!have_at)
     {
-      printf("click into the editor at the end of an empty line and leave the mouse there: starting in %.0f s\n", delay_s);
+      printf("click into the editor on an empty line and leave the mouse there: starting in %.0f s\n", delay_s);
       fflush(stdout);
       [NSThread sleepForTimeInterval:delay_s];
     }
@@ -232,7 +280,12 @@ int main(int argc, char **argv)
     CGGetDisplaysWithPoint(center, 1, &display_id, &count);
     if(count == 0) { printf("no display under (%.0f, %.0f)\n", center.x, center.y); return 1; }
     CGRect bounds = CGDisplayBounds(display_id);
+    // rad: a strip along the clicked line (the text cursor can be anywhere on
+    // it: an empty line puts it at the start), clamped to the display
     CGRect region = CGRectMake(center.x - region_w/2 - bounds.origin.x, center.y - region_h/2 - bounds.origin.y, region_w, region_h);
+    region = CGRectIntersection(region, CGRectMake(0, 0, bounds.size.width, bounds.size.height));
+    region_w = region.size.width;
+    region_h = region.size.height;
     double scale = (double)CGDisplayPixelsWide(display_id) / bounds.size.width;
     CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display_id);
     double hz = mode ? CGDisplayModeGetRefreshRate(mode) : 0;
