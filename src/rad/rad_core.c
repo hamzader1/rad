@@ -5957,6 +5957,20 @@ rad_exec_cmd(RAD_Cmd *cmd)
         rad_focus_tab(next_selected_tab);
       }
     }break;
+    case RAD_CmdKind_ToggleLineComment:
+    case RAD_CmdKind_MoveLineUp:
+    case RAD_CmdKind_MoveLineDown:
+    case RAD_CmdKind_DuplicateLineUp:
+    case RAD_CmdKind_DuplicateLineDown:
+    case RAD_CmdKind_DeleteLine:
+    case RAD_CmdKind_InsertLineBelow:
+    case RAD_CmdKind_InsertLineAbove:
+    if(str8_match(tab_cfg->string, str8_lit("text"), 0))
+    {
+      // rad: not in raddbg (TODO_2 E1): done by the editor's next build
+      rad_view_state_from_cfg(tab_cfg)->cv.pending_line_op = (U32)cmd->kind;
+      rad_request_frame();
+    }break;
     case RAD_CmdKind_ReopenClosedTab:
     {
       // rad: not in raddbg (TODO_2 E4): the last closed file tab, in its

@@ -1,0 +1,64 @@
+# Auto-closing pairs (TODO_2 E2; setting Auto-Close Brackets): ( [ { type
+# their closer when a space, a line end or a closer follows; the closer
+# typed right before an auto-closed one steps over it; Backspace in an
+# empty one deletes both; a selection gets wrapped. The file is never saved.
+
+write_file ../fixtures/auto_close.rs "fn a() {\n    \n}\n"
+open ../fixtures/auto_close.rs
+wait_idle
+click code 2 5
+key end
+text "f("
+wait_idle
+expect line 2 == "    f()"
+expect cursor_col == 7
+text "x)"
+wait_idle
+expect line 2 == "    f(x)"
+expect cursor_col == 9
+
+# nested pairs; the closers step over both
+text "(["
+wait_idle
+expect line 2 == "    f(x)([])"
+expect cursor_col == 11
+text "])"
+wait_idle
+expect line 2 == "    f(x)([])"
+expect cursor_col == 13
+
+# Backspace in an empty pair
+text "{"
+wait_idle
+expect line 2 == "    f(x)([]){}"
+key backspace
+wait_idle
+expect line 2 == "    f(x)([])"
+expect cursor_col == 13
+
+# not before a word character
+key home
+text "("
+wait_idle
+expect line 2 == "    (f(x)([])"
+key backspace
+wait_idle
+
+# a selection gets wrapped (and stays selected)
+click code 2 7
+key shift+right
+text "["
+wait_idle
+expect line 2 == "    f([x])([])"
+expect cursor_col == 9
+expect mark_col == 8
+
+# setting off: just the character
+set_setting auto_close_brackets 0
+key end
+text "("
+wait_idle
+expect line 2 == "    f([x])([])("
+set_setting auto_close_brackets 1
+delete_file ../fixtures/auto_close.rs
+quit

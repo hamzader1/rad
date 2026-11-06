@@ -183,14 +183,24 @@ then inlay hints (the biggest change to the code view).
 
 ## E. Suggestions (Claude)
 
-- [ ] **E1. [suggestion] Line editing keys**: toggle line comment (Cmd+/),
+- [x] **E1. [suggestion] Line editing keys**: toggle line comment (Cmd+/),
   move line up/down (Option+Up/Down), duplicate line (Shift+Option+Down),
   delete line (Cmd+Shift+K), new line below/above (Cmd+Enter /
   Cmd+Shift+Enter), indent/outdent (Cmd+] / Cmd+[ ... conflicts with A3's
   Go Back fallback: decide together).
-- [ ] **E2. [suggestion] Auto-closing pairs** ( `()`, `[]`, `{}`, `""` )
+  Done 2026-11-06 (script `line_keys`): all but indent/outdent (Tab /
+  Shift+Tab do it; Cmd+[ stays Navigate Backward), plus Duplicate Line Up.
+  Commands (menus, palette); each one undo step; `//` for every code
+  language, nothing for plain text. Option+Up/Down moved lines instead of
+  paragraphs (raddbg's). Toggle Fullscreen moves from Ctrl+Enter to F11.
+- [x] **E2. [suggestion] Auto-closing pairs** ( `()`, `[]`, `{}`, `""` )
   and typing over the closer; matching bracket highlight. User: yes, with
   an on/off setting.
+  Done 2026-11-06 (script `auto_close`): setting Auto-Close Brackets (on,
+  Editor). Pairs only before a space, line end, closer, `,` or `;`; a quote
+  not after a word; the closer steps over only auto-closed ones (a stack:
+  nesting works); Backspace in an empty one deletes both; ( [ { wrap a
+  selection. Not done: matching bracket highlight (raddbg has none).
 - [ ] **E3. [suggestion] Quick Open (Cmd+P)**: fuzzy file finder over the
   folder (Zed's, VS Code's). Cmd+P is Split Panel Right today (raddbg).
 - [x] **E4. [suggestion] Close tab Cmd+W, reopen closed tab Cmd+Shift+T.**

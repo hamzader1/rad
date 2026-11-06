@@ -1913,6 +1913,248 @@ rad_lang_display_name(TXT_LangKind lang)
   return result;
 }
 
+////////////////////////////////
+//~ rad: Line Commands (not in raddbg; TODO_2 E1)
+//
+// NOTE(rad): Toggle Line Comment, Move / Duplicate Line Up / Down, Delete
+// Line, Insert Line Below / Above (VS Code's keys), on the lines of the
+// selection (a selection ending at a line's start leaves that line out);
+// each is one undo step.
+
+internal Rng1U64
+rad_code_line_range_no_eol(TXT_Patched *text, U64 line_num)
+{
+  Rng1U64 range = txt_range_from_line_num(&text->line_map, line_num);
+  if(range.max > range.min)
+  {
+    U8 c = 0;
+    memory_map_read(&text->memory_map, r1u64(range.max-1, range.max), &c);
+    if(c == '\r')
+    {
+      range.max -= 1;
+    }
+  }
+  return range;
+}
+
+internal void
+rad_code_view_line_op(Arena *arena, RAD_CodeViewState *cv, TB_Buffer *buffer, TXT_TextInfo *text_info, String8 text_data,
+                      TXT_Patched *text, TXT_LangKind lang_kind, RAD_CmdKind kind)
+{
+  Temp scratch = scratch_begin(&arena, 1);
+  String8 eol = (buffer->crlf ? str8_lit("\r\n") : str8_lit("\n"));
+  U64 line_count = text->line_map.total_line_count;
+  U64 sel_min = Min(cv->cursor, cv->mark);
+  U64 sel_max = Max(cv->cursor, cv->mark);
+  U64 l0 = txt_line_num_from_off(&text->line_map, sel_min);
+  U64 l1 = txt_line_num_from_off(&text->line_map, sel_max);
+  if(l1 > l0 && sel_max == txt_range_from_line_num(&text->line_map, l1).min)
+  {
+    l1 -= 1;
+  }
+  Rng1U64 first_range = rad_code_line_range_no_eol(text, l0);
+  Rng1U64 last_range = rad_code_line_range_no_eol(text, l1);
+  String8 block = memory_map_data_from_range(scratch.arena, &text->memory_map, r1u64(first_range.min, last_range.max));
+  U64 cursor_line = txt_line_num_from_off(&text->line_map, cv->cursor);
+  Rng1U64 cursor_line_range = rad_code_line_range_no_eol(text, cursor_line);
+  String8 cursor_line_text = memory_map_data_from_range(scratch.arena, &text->memory_map, cursor_line_range);
+  U64 cursor_col = cv->cursor - cursor_line_range.min;
+
+  //- rad: the edits (any order: applied last in the text first) and where
+  // the cursor / mark end up (shift: moved by; else: mapped over the edits)
+  typedef struct RAD_LineEdit RAD_LineEdit;
+  struct RAD_LineEdit { Rng1U64 range; String8 text; };
+  RAD_LineEdit *edits = push_array(scratch.arena, RAD_LineEdit, (l1-l0+1)+2);
+  U64 edits_count = 0;
+  B32 use_shift = 0;
+  S64 shift = 0;
+  B32 set_cursor = 0;
+  U64 new_cursor = 0;
+  switch(kind)
+  {
+    default:{}break;
+    case RAD_CmdKind_ToggleLineComment:
+    if(lang_kind != TXT_LangKind_Null)
+    {
+      String8 prefix = str8_lit("//");
+      B32 all_commented = 1;
+      B32 any = 0;
+      U64 min_indent = max_U64;
+      for(U64 n = l0; n <= l1; n += 1)
+      {
+        String8 line = memory_map_data_from_range(scratch.arena, &text->memory_map, rad_code_line_range_no_eol(text, n));
+        U64 indent = 0;
+        for(;indent < line.size && (line.str[indent] == ' ' || line.str[indent] == '\t'); indent += 1);
+        if(indent == line.size)
+        {
+          continue;
+        }
+        any = 1;
+        min_indent = Min(min_indent, indent);
+        if(!str8_match(str8_prefix(str8_skip(line, indent), prefix.size), prefix, 0))
+        {
+          all_commented = 0;
+        }
+      }
+      for(U64 n = l0; any && n <= l1; n += 1)
+      {
+        Rng1U64 range = rad_code_line_range_no_eol(text, n);
+        String8 line = memory_map_data_from_range(scratch.arena, &text->memory_map, range);
+        U64 indent = 0;
+        for(;indent < line.size && (line.str[indent] == ' ' || line.str[indent] == '\t'); indent += 1);
+        if(indent == line.size)
+        {
+          continue;
+        }
+        if(all_commented)
+        {
+          U64 size = prefix.size + (indent+prefix.size < line.size && line.str[indent+prefix.size] == ' ');
+          edits[edits_count].range = r1u64(range.min+indent, range.min+indent+size);
+          edits[edits_count].text = str8_zero();
+        }
+        else
+        {
+          edits[edits_count].range = r1u64(range.min+min_indent, range.min+min_indent);
+          edits[edits_count].text = push_str8f(scratch.arena, "%S ", prefix);
+        }
+        edits_count += 1;
+      }
+    }break;
+    case RAD_CmdKind_MoveLineUp:
+    if(l0 > 1)
+    {
+      Rng1U64 prev_range = rad_code_line_range_no_eol(text, l0-1);
+      String8 prev = memory_map_data_from_range(scratch.arena, &text->memory_map, prev_range);
+      edits[0].range = r1u64(prev_range.min, last_range.max);
+      edits[0].text = push_str8f(scratch.arena, "%S%S%S", block, eol, prev);
+      edits_count = 1;
+      use_shift = 1;
+      shift = -(S64)(prev.size + eol.size);
+    }break;
+    case RAD_CmdKind_MoveLineDown:
+    if(l1 < line_count)
+    {
+      Rng1U64 next_range = rad_code_line_range_no_eol(text, l1+1);
+      String8 next = memory_map_data_from_range(scratch.arena, &text->memory_map, next_range);
+      edits[0].range = r1u64(first_range.min, next_range.max);
+      edits[0].text = push_str8f(scratch.arena, "%S%S%S", next, eol, block);
+      edits_count = 1;
+      use_shift = 1;
+      shift = (S64)(next.size + eol.size);
+    }break;
+    case RAD_CmdKind_DuplicateLineUp:
+    {
+      edits[0].range = r1u64(first_range.min, first_range.min);
+      edits[0].text = push_str8f(scratch.arena, "%S%S", block, eol);
+      edits_count = 1;
+      use_shift = 1;
+      shift = 0;
+    }break;
+    case RAD_CmdKind_DuplicateLineDown:
+    {
+      edits[0].range = r1u64(last_range.max, last_range.max);
+      edits[0].text = push_str8f(scratch.arena, "%S%S", eol, block);
+      edits_count = 1;
+      use_shift = 1;
+      shift = (S64)(block.size + eol.size);
+    }break;
+    case RAD_CmdKind_DeleteLine:
+    {
+      U64 keep_line = l0;
+      if(l1 < line_count)
+      {
+        edits[0].range = r1u64(first_range.min, txt_range_from_line_num(&text->line_map, l1+1).min);
+      }
+      else if(l0 > 1)
+      {
+        edits[0].range = r1u64(rad_code_line_range_no_eol(text, l0-1).max, last_range.max);
+        keep_line = l0-1;
+      }
+      else
+      {
+        edits[0].range = r1u64(first_range.min, last_range.max);
+      }
+      edits[0].text = str8_zero();
+      edits_count = 1;
+      set_cursor = 1;
+      new_cursor = keep_line; // (a line number: resolved after the edit)
+    }break;
+    case RAD_CmdKind_InsertLineBelow:
+    case RAD_CmdKind_InsertLineAbove:
+    {
+      U64 indent = 0;
+      for(;indent < cursor_line_text.size && (cursor_line_text.str[indent] == ' ' || cursor_line_text.str[indent] == '\t'); indent += 1);
+      String8 indent_text = str8_prefix(cursor_line_text, indent);
+      if(kind == RAD_CmdKind_InsertLineBelow)
+      {
+        edits[0].range = r1u64(cursor_line_range.max, cursor_line_range.max);
+        edits[0].text = push_str8f(scratch.arena, "%S%S", eol, indent_text);
+        new_cursor = cursor_line_range.max + eol.size + indent;
+      }
+      else
+      {
+        edits[0].range = r1u64(cursor_line_range.min, cursor_line_range.min);
+        edits[0].text = push_str8f(scratch.arena, "%S%S", indent_text, eol);
+        new_cursor = cursor_line_range.min + indent;
+      }
+      edits_count = 1;
+      set_cursor = 1;
+    }break;
+  }
+
+  //- rad: apply (one undo step), last in the text first
+  if(edits_count != 0)
+  {
+    for(U64 i = 1; i < edits_count; i += 1)
+    {
+      for(U64 j = i; j > 0 && edits[j-1].range.min < edits[j].range.min; j -= 1)
+      {
+        Swap(RAD_LineEdit, edits[j-1], edits[j]);
+      }
+    }
+    U64 version_before = buffer->version;
+    tb_buffer_close_undo_group(buffer);
+    tb_buffer_begin_step(buffer);
+    for EachIndex(idx, edits_count)
+    {
+      tb_buffer_edit(buffer, text, edits[idx].range, edits[idx].text);
+      *text = txt_patched_from_info_data_patches(arena, text_info, text_data, &buffer->patches);
+    }
+    tb_buffer_end_step(buffer);
+    tb_buffer_close_undo_group(buffer);
+
+    //- rad: cursor and mark
+    if(kind == RAD_CmdKind_DeleteLine)
+    {
+      U64 n = Clamp(1, new_cursor, text->line_map.total_line_count);
+      Rng1U64 range = rad_code_line_range_no_eol(text, n);
+      cv->cursor = cv->mark = range.min + Min(cursor_col, dim_1u64(range));
+    }
+    else if(set_cursor)
+    {
+      cv->cursor = cv->mark = new_cursor;
+    }
+    else if(use_shift)
+    {
+      cv->cursor = (U64)((S64)cv->cursor + shift);
+      cv->mark = (U64)((S64)cv->mark + shift);
+    }
+    else
+    {
+      U64 lo = sel_min, hi = sel_max;
+      tb_buffer_map_offset_side(buffer, version_before, &lo, Side_Min);
+      tb_buffer_map_offset_side(buffer, version_before, &hi, Side_Max);
+      B32 cursor_is_max = (cv->cursor >= cv->mark);
+      cv->cursor = (cursor_is_max ? hi : lo);
+      cv->mark = (cursor_is_max ? lo : hi);
+    }
+    U64 line_num = txt_line_num_from_off(&text->line_map, cv->cursor);
+    cv->preferred_column = (S64)(cv->cursor - txt_range_from_line_num(&text->line_map, line_num).min);
+    cv->typeover_armed = 0;
+  }
+  scratch_end(scratch);
+}
+
 internal void
 rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffer *buffer, Rng2F32 rect, TXT_LangKind lang_kind, TXT_TextInfo *text_info, String8 text_data)
 {
@@ -1972,8 +2214,17 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
 
   U64 fold_old_cursor = cv->cursor;
   B32 fold_vertical_move = 0;
+  RAD_CmdKind line_op = (RAD_CmdKind)cv->pending_line_op;
+  cv->pending_line_op = 0;
   UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && text_is_ready)
   {
+    //- rad: not in raddbg: a line command (TODO_2 E1)
+    if(line_op != RAD_CmdKind_Null && cv->editable)
+    {
+      rad_code_view_line_op(scratch.arena, cv, buffer, text_info, text_data, &text_patched, lang_kind, line_op);
+      snap[Axis2_Y] = 1;
+    }
+
     // rad: not in raddbg: a vertical move this frame (it skips folds)
     for(UI_Event *evt = 0; ui_next_event(&evt);)
     {
@@ -2267,6 +2518,85 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
         cv->typeover_armed = 0;
       }
 
+      //- rad: not in raddbg: auto-closing pairs (TODO_2 E2; setting Auto-Close
+      // Brackets): an opener types its closer (or wraps the selection); the
+      // closer typed right before an auto-closed one steps over it;
+      // Backspace in an empty auto-closed pair deletes both
+      U32 auto_close_kind = 0; // 1: pair typed, 2: selection wrapped
+      U8 auto_close_char = 0;
+      if(cv->editable && rad_state->settings.auto_close_brackets)
+      {
+        B32 is_typed_char = (evt->kind == UI_EventKind_Text && !(evt->flags & UI_EventFlag_Paste) && evt->string.size == 1 &&
+                             str8_match(single_line_op.replace, evt->string, 0));
+        U8 c = (is_typed_char ? evt->string.str[0] : 0);
+        U8 closer = (c == '(' ? ')' : c == '[' ? ']' : c == '{' ? '}' : c == '"' ? '"' : 0);
+        B32 stepped = 0;
+        if(is_typed_char && cv->autoclose_count != 0 && replaced_range.min == replaced_range.max)
+        {
+          // rad: the closer of the innermost pair, typed right before it
+          U64 top = cv->autoclose_count-1;
+          U64 close_off = cv->autoclose[top].close_off;
+          if(c == cv->autoclose[top].close_char && tb_buffer_map_offset(buffer, cv->autoclose[top].version, &close_off) &&
+             close_off == replaced_range.min)
+          {
+            single_line_op.replace = str8_zero();
+            *cursor = *mark = close_off+1;
+            cv->autoclose_count -= 1;
+            stepped = 1;
+          }
+        }
+        if(!stepped && closer != 0 && replaced_range.min != replaced_range.max && c != '"')
+        {
+          // rad: wrap the selection
+          String8 selected = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, replaced_range);
+          if(str8_find_needle(selected, 0, str8_lit("\n"), 0) == selected.size || c != '"')
+          {
+            single_line_op.replace = push_str8f(scratch.arena, "%c%S%c", c, selected, closer);
+            auto_close_kind = 2;
+          }
+        }
+        else if(!stepped && closer != 0)
+        {
+          // rad: the pair, when the next character allows it (a space, a
+          // line end, a closer, `,` `;`); a quote also not after a word
+          U8 next = 0;
+          U8 prev = 0;
+          if(replaced_range.max < text_patched.size)
+          {
+            memory_map_read(&text_patched.memory_map, r1u64(replaced_range.max, replaced_range.max+1), &next);
+          }
+          if(replaced_range.min > 0)
+          {
+            memory_map_read(&text_patched.memory_map, r1u64(replaced_range.min-1, replaced_range.min), &prev);
+          }
+          B32 next_ok = (next == 0 || next == ' ' || next == '\t' || next == '\r' || next == '\n' ||
+                         next == ')' || next == ']' || next == '}' || next == ',' || next == ';');
+          B32 prev_ok = (c != '"' || !(rad_char_is_word(prev) || prev == '"' || prev == '\''));
+          if(next_ok && prev_ok)
+          {
+            single_line_op.replace = push_str8f(scratch.arena, "%c%c", c, closer);
+            auto_close_kind = 1;
+            auto_close_char = closer;
+          }
+        }
+        if(!stepped && closer == 0 && cv->autoclose_count != 0 && (evt->flags & UI_EventFlag_Delete) &&
+           evt->delta_unit == UI_EventDeltaUnit_Char && evt->delta_2s32.x < 0 &&
+           start_cursor == start_mark && replaced_range.max == start_cursor && replaced_range.min+1 == replaced_range.max)
+        {
+          // rad: Backspace in the innermost empty pair: both go
+          U64 top = cv->autoclose_count-1;
+          U64 open_off = cv->autoclose[top].open_off;
+          U64 close_off = cv->autoclose[top].close_off;
+          if(tb_buffer_map_offset_side(buffer, cv->autoclose[top].version, &open_off, Side_Min) &&
+             tb_buffer_map_offset(buffer, cv->autoclose[top].version, &close_off) &&
+             open_off == replaced_range.min && close_off == replaced_range.max)
+          {
+            replaced_range.max += 1;
+            cv->autoclose_count -= 1;
+          }
+        }
+      }
+
       //- rad: push patch if we have one (same as raddbg, plus undo history);
       // moving the cursor without editing ends the current undo group
       if(cv->editable && (replaced_range.max != replaced_range.min || single_line_op.replace.size != 0))
@@ -2274,7 +2604,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
         // rad: not in raddbg: one typed character (completion triggers), a
         // deletion (the list follows), anything else (it closes)
         if(evt->kind == UI_EventKind_Text && !(evt->flags & UI_EventFlag_Paste) && evt->key != WM_Key_Tab &&
-           evt->string.size == 1 && single_line_op.replace.size == 1 && replaced_range.min == replaced_range.max)
+           evt->string.size == 1 && (single_line_op.replace.size == 1 || auto_close_kind == 1) && replaced_range.min == replaced_range.max)
         {
           cmp_typed = 1;
           cmp_typed_char = evt->string.str[0];
@@ -2286,6 +2616,28 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
         tb_buffer_edit(buffer, &text_patched, replaced_range, single_line_op.replace);
         text_patched = txt_patched_from_info_data_patches(scratch.arena, text_info, text_data, &buffer->patches);
         *cursor = *mark = replaced_range.min + single_line_op.replace.size;
+        if(auto_close_kind == 1)
+        {
+          // rad: between the pair (TODO_2 E2)
+          *cursor = *mark = replaced_range.min + 1;
+          if(cv->autoclose_count == ArrayCount(cv->autoclose))
+          {
+            MemoryCopy(&cv->autoclose[0], &cv->autoclose[1], sizeof(cv->autoclose[0])*(ArrayCount(cv->autoclose)-1));
+            cv->autoclose_count -= 1;
+          }
+          U64 top = cv->autoclose_count;
+          cv->autoclose[top].open_off = replaced_range.min;
+          cv->autoclose[top].close_off = replaced_range.min + 1;
+          cv->autoclose[top].version = buffer->version;
+          cv->autoclose[top].close_char = auto_close_char;
+          cv->autoclose_count += 1;
+        }
+        else if(auto_close_kind == 2)
+        {
+          // rad: the wrapped text stays selected
+          *mark = replaced_range.min + 1;
+          *cursor = replaced_range.min + single_line_op.replace.size - 1;
+        }
         U64 line_num = txt_line_num_from_off(&text_patched.line_map, *cursor);
         Rng1U64 line_range = txt_range_from_line_num(&text_patched.line_map, line_num);
         *preferred_column = (*cursor - line_range.min);
@@ -2318,6 +2670,21 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
   //- rad: not in raddbg: the `)` step-over ends once the cursor leaves the
   // parentheses (or the text is no longer the one it was armed in)
   //
+  for(;cv->autoclose_count != 0;)
+  {
+    // rad: auto-closed pairs (TODO_2 E2): the innermost is dropped once the
+    // cursor is not inside it
+    U64 top = cv->autoclose_count-1;
+    U64 open_off = cv->autoclose[top].open_off;
+    U64 close_off = cv->autoclose[top].close_off;
+    if(tb_buffer_map_offset_side(buffer, cv->autoclose[top].version, &open_off, Side_Min) &&
+       tb_buffer_map_offset(buffer, cv->autoclose[top].version, &close_off) &&
+       open_off < cv->cursor && cv->cursor <= close_off && cv->cursor == cv->mark)
+    {
+      break;
+    }
+    cv->autoclose_count -= 1;
+  }
   if(cv->typeover_armed)
   {
     U64 min = cv->typeover_min;

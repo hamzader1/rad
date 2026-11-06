@@ -185,6 +185,7 @@ RAD_SettingCode_smooth_code_text,
 RAD_SettingCode_hint_code_text,
 RAD_SettingCode_show_line_numbers,
 RAD_SettingCode_tab_width,
+RAD_SettingCode_auto_close_brackets,
 RAD_SettingCode_inlay_hints,
 RAD_SettingCode_inline_diagnostics,
 RAD_SettingCode_navigation_bar,
@@ -208,6 +209,14 @@ RAD_CmdKind_SaveAll,
 RAD_CmdKind_Exit,
 RAD_CmdKind_Undo,
 RAD_CmdKind_Redo,
+RAD_CmdKind_ToggleLineComment,
+RAD_CmdKind_MoveLineUp,
+RAD_CmdKind_MoveLineDown,
+RAD_CmdKind_DuplicateLineUp,
+RAD_CmdKind_DuplicateLineDown,
+RAD_CmdKind_DeleteLine,
+RAD_CmdKind_InsertLineBelow,
+RAD_CmdKind_InsertLineAbove,
 RAD_CmdKind_GoToLine,
 RAD_CmdKind_Search,
 RAD_CmdKind_SearchBackwards,
@@ -315,6 +324,7 @@ B32 smooth_code_text;
 B32 hint_code_text;
 B32 show_line_numbers;
 U64 tab_width;
+B32 auto_close_brackets;
 B32 inlay_hints;
 B32 inline_diagnostics;
 B32 navigation_bar;

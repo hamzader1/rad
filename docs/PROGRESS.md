@@ -452,6 +452,10 @@ of `text_buffer.h`.
   Shift+Up/Down); Cut / Copy / Paste / Delete / Copy Path act on all of
   them; the clipboard holds several paths. Query `explorer_selection`.
 - Reopen Closed Tab (Cmd/Ctrl+Shift+T); Cargo Test is F6 now.
+- Line commands (VS Code's keys): Toggle Line Comment, Move / Duplicate
+  Line Up / Down, Delete Line, Insert Line Below / Above. Toggle
+  Fullscreen is F11 now.
+- Auto-closing pairs ( ( [ { " ), setting Auto-Close Brackets.
 
 ### 2026-11-06 (TODO_2: keys, zoom, tabs, status bar, panel font, explorer, inlay hints)
 - `docs/TODO_2.md`: the user's new list (keys, look, diagnostics like Zed,

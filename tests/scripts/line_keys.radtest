@@ -1,0 +1,87 @@
+# Line commands (TODO_2 E1; VS Code's keys, Cmd for Ctrl on the Mac):
+# Ctrl+/ toggles // comments; Alt+Up/Down moves lines; Shift+Alt+Up/Down
+# duplicates them; Ctrl+Shift+K deletes them; Ctrl+Enter / Ctrl+Shift+Enter
+# open a line below / above with the same indent. Each is one undo step.
+# The file is written here and never saved.
+
+write_file ../fixtures/line_keys.rs "fn a() {\n    let x = 1;\n    let y = 2;\n}\n"
+open ../fixtures/line_keys.rs
+wait_idle
+
+# comment one line, then uncomment it
+click code 2 9
+key ctrl+slash
+wait_idle
+expect line 2 == "    // let x = 1;"
+expect cursor_col == 12
+key ctrl+slash
+wait_idle
+expect line 2 == "    let x = 1;"
+expect cursor_col == 9
+
+# two lines: both; one undo step
+key shift+down
+key ctrl+slash
+wait_idle
+expect line 2 == "    // let x = 1;"
+expect line 3 == "    // let y = 2;"
+key ctrl+z
+wait_idle
+expect line 2 == "    let x = 1;"
+expect line 3 == "    let y = 2;"
+
+# move down / up (the cursor goes along)
+click code 2 9
+key alt+down
+wait_idle
+expect line 2 == "    let y = 2;"
+expect line 3 == "    let x = 1;"
+expect cursor_line == 3
+expect cursor_col == 9
+key alt+up
+wait_idle
+expect line 2 == "    let x = 1;"
+expect line 3 == "    let y = 2;"
+expect cursor_line == 2
+
+# duplicate down: the cursor on the copy
+key shift+alt+down
+wait_idle
+expect line 2 == "    let x = 1;"
+expect line 3 == "    let x = 1;"
+expect line 4 == "    let y = 2;"
+expect cursor_line == 3
+
+# delete the copy
+key ctrl+shift+k
+wait_idle
+expect line 3 == "    let y = 2;"
+expect line_count == 5
+expect cursor_line == 3
+
+# open a line below / above, indented
+click code 2 9
+key ctrl+return
+wait_idle
+expect line 3 == "    "
+expect cursor_line == 3
+expect cursor_col == 5
+text "let z = 3;"
+wait_idle
+expect line 3 == "    let z = 3;"
+key ctrl+shift+return
+wait_idle
+expect line 3 == "    "
+expect line 4 == "    let z = 3;"
+expect cursor_line == 3
+
+# everything undone (9 steps: comment, uncomment, move, move, duplicate,
+# delete, line below, the typing, line above)
+key ctrl+z 9
+wait_idle
+expect line 2 == "    let x = 1;"
+expect line 3 == "    let y = 2;"
+expect line_count == 5
+expect dirty == 0
+delete_file ../fixtures/line_keys.rs
+quit

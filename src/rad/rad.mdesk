@@ -1155,6 +1155,14 @@ RAD_CmdTable:
   //- rad: editing
   {Undo                   undo                 "Undo"                 Undo              Z          ctrl   0      0      Null     0         0           0         0 }
   {Redo                   redo                 "Redo"                 Redo              Y          ctrl   0      0      Null     0         0           0         0 }
+  {ToggleLineComment      toggle_line_comment  "Toggle Line Comment"  Null              Slash      ctrl   0      0      Null     0         0           0         0 }
+  {MoveLineUp             move_line_up         "Move Line Up"         Null              Up         0      0      alt    Null     0         0           0         0 }
+  {MoveLineDown           move_line_down       "Move Line Down"       Null              Down       0      0      alt    Null     0         0           0         0 }
+  {DuplicateLineUp        duplicate_line_up    "Duplicate Line Up"    Null              Up         0      shift  alt    Null     0         0           0         0 }
+  {DuplicateLineDown      duplicate_line_down  "Duplicate Line Down"  Null              Down       0      shift  alt    Null     0         0           0         0 }
+  {DeleteLine             delete_line          "Delete Line"          Null              K          ctrl   shift  0      Null     0         0           0         0 }
+  {InsertLineBelow        insert_line_below    "Insert Line Below"    Null              Return     ctrl   0      0      Null     0         0           0         0 }
+  {InsertLineAbove        insert_line_above    "Insert Line Above"    Null              Return     ctrl   shift  0      Null     0         0           0         0 }
   
   //- rad: code navigation (port of raddbg's goto_line / search / find_next)
   {GoToLine               goto_line            "Go To Line"           Null              G          ctrl   0      0      LineNum  0         0           1         1 }
@@ -1164,7 +1172,7 @@ RAD_CmdTable:
   {FindPrev               find_prev            "Find Previous"        Find              F3         0      shift  0      Null     1         0           0         0 }
   
   //- rad: windows
-  {ToggleFullscreen       toggle_fullscreen    "Toggle Fullscreen"    Window            Return     ctrl   0      0      Null     0         0           0         0 }
+  {ToggleFullscreen       toggle_fullscreen    "Toggle Fullscreen"    Window            F11        0      0      0      Null     0         0           0         0 }
   {IncCodeFontSize        inc_code_font_size   "Zoom In (Code)"       Add               Equal      ctrl   0      0      Null     0         0           0         0 }
   {DecCodeFontSize        dec_code_font_size   "Zoom Out (Code)"      Minus             Minus      ctrl   0      0      Null     0         0           0         0 }
   {ResetCodeFontSize      reset_code_font_size "Reset Zoom (Code)"    Null              0          ctrl   0      0      Null     0         0           0         0 }
@@ -1288,6 +1296,7 @@ RAD_SettingTable:
   {hint_code_text               Bool  B32 1   0  1  Fonts      "Hint Code Text"                "Controls whether or not code text is hinted, for better text readability at small sizes." ""}
   {show_line_numbers            Bool  B32 1   0  1  Editor     "Line Numbers"                  "Shows line numbers in text views." ""}
   {tab_width                    U64   U64 2   1  16 Editor     "Tab Width"                     "The width of a tab character, in spaces." ""}
+  {auto_close_brackets          Bool  B32 1   0  1  Editor     "Auto-Close Brackets"           "Typing ( [ { or a double quote also types its closer; typing the closer right before it steps over it, and Backspace between the two deletes both. A selection gets wrapped." ""}
   {inlay_hints                  Bool  B32 1   0  1  "Language Server" "Inlay Hints"                   "Shows the language server's hints in the code, like a variable's type after its name. They are not part of the text." ""}
   {inline_diagnostics           Bool  B32 1   0  1  "Language Server" "Inline Diagnostics"            "Shows the worst error or warning of a line after its code, in a box tinted with its color (Zed's inline diagnostics)." ""}
   {navigation_bar               Bool  B32 1   0  1  Editor     "Navigation Bar"                "Shows the item and member around the cursor above the code, each a list to jump from (VS2022's navigation bar; Rust files)." ""}

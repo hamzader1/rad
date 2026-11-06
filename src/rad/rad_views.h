@@ -64,6 +64,7 @@ struct RAD_CodeViewState
   // rad: text
   U64 buffer_version;
   B32 editable;
+  U32 pending_line_op;          // rad: a line command for the next build (RAD_CmdKind, TODO_2 E1)
 
   // rad: code folding (not in raddbg): the foldable ranges of the text at
   // `fold_ranges_version`; the folded ones as the offsets of their first
@@ -131,6 +132,17 @@ struct RAD_CodeViewState
   U64 typeover_min;
   U64 typeover_off;
   U64 typeover_version;
+  // rad: auto-closed pairs (TODO_2 E2), innermost last: typing the closer
+  // right before it steps over it; Backspace in the empty pair deletes both
+  // (offsets in the text of `version`; dropped once the cursor leaves one)
+  struct
+  {
+    U64 open_off;
+    U64 close_off;
+    U64 version;
+    U8 close_char;
+  } autoclose[16];
+  U64 autoclose_count;
 
   // rad: layout of the last build, in window pixels (scripted input aims
   // with it; see rad_script.h)
