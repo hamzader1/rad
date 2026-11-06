@@ -801,7 +801,7 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   else if(str8_match(name, str8_lit("explorer_root"), 0) || str8_match(name, str8_lit("explorer_rows"), 0) ||
           str8_match(name, str8_lit("explorer_selected"), 0) || str8_match(name, str8_lit("explorer_row"), 0) ||
           str8_match(name, str8_lit("explorer_filter"), 0) || str8_match(name, str8_lit("explorer_filter_focused"), 0) ||
-          str8_match(name, str8_lit("explorer_row_height"), 0))
+          str8_match(name, str8_lit("explorer_row_height"), 0) || str8_match(name, str8_lit("explorer_selection"), 0))
   {
     CFG_Node *tab = rad_script_explorer_tab();
     RAD_ExplorerState *ex = (tab != &cfg_nil_node ? &rad_view_state_from_cfg(tab)->ex : 0);
@@ -829,6 +829,19 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     else if(str8_match(name, str8_lit("explorer_rows"), 0))
     {
       value = push_str8f(arena, "%I64u", ex->rows_count);
+    }
+    else if(str8_match(name, str8_lit("explorer_selection"), 0))
+    {
+      // rad: the selected rows' names, in path order, ", " between
+      String8Array sel = rad_explorer_selection(scratch.arena, ex);
+      String8List names = {0};
+      for EachIndex(idx, sel.count)
+      {
+        str8_list_push(scratch.arena, &names, str8_skip_last_slash(sel.v[idx]));
+      }
+      StringJoin join = {0};
+      join.sep = str8_lit(", ");
+      value = str8_list_join(arena, &names, &join);
     }
     else if(str8_match(name, str8_lit("explorer_selected"), 0))
     {

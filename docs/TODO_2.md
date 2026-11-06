@@ -226,9 +226,17 @@ setting).
   before). Not script-testable (scripts inject below the AppKit
   handler). Unverified with the user's mouse: if it still fails, run
   `RAID_SCROLL_LOG=1 build/raid` and scroll once.
-- [ ] **F2. Explorer: several items selected at once** (Cmd+click toggles,
+- [x] **F2. Explorer: several items selected at once** (Cmd+click toggles,
   Shift+click a range, Shift+Up/Down); Cut / Copy / Paste / Delete act
   on all of them.
+  Done 2026-11-06 (script `explorer_ops`, query `explorer_selection`;
+  screenshot): kept as paths (survives row rebuilds); Cut / Copy / Delete
+  / Copy Path take every selected row (a row inside a selected folder is
+  left out); Delete asks once ("these 3 items"); pasted items end up
+  selected; a right click inside the selection keeps it. Rename, New and
+  Open act on the cursor's row. Also: the explorer's search hint shows
+  the real key (it said "Ctrl+;" on the Mac). Not done: dragging several
+  rows.
 - [x] **F3. Mac key labels**: menus and the command palette show Cmd /
   Option (and Zed-like symbols?) instead of Ctrl / Alt on the Mac.
   Done 2026-11-06 (script `text_keys_mac`, query `key_label`): words, not

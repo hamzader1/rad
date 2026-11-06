@@ -448,6 +448,9 @@ of `text_buffer.h`.
 - Settings grouped: Appearance, Fonts, Editor, Language Server, Explorer,
   Tabs, Animations, Window, each under a header row; Up/Down skip them.
 - Compact density: a setting's name and description no longer overlap.
+- Explorer: several rows selected (Cmd/Ctrl+click, Shift+click,
+  Shift+Up/Down); Cut / Copy / Paste / Delete / Copy Path act on all of
+  them; the clipboard holds several paths. Query `explorer_selection`.
 
 ### 2026-11-06 (TODO_2: keys, zoom, tabs, status bar, panel font, explorer, inlay hints)
 - `docs/TODO_2.md`: the user's new list (keys, look, diagnostics like Zed,

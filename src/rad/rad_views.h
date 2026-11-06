@@ -246,9 +246,19 @@ struct RAD_ExplorerState
   U64 edit_size;
   U64 edit_cursor;
   U64 edit_mark;
-  U8 clip_path_buffer[4096];
-  U64 clip_path_size;
+  // rad: the explorer clipboard (Cut / Copy): paths
+  Arena *clip_arena;
+  String8 *clip_paths;
+  U64 clip_count;
   B32 clip_cut;
+
+  // rad: the selected rows (TODO_2 F2), as paths (rows are rebuilt): a
+  // press selects one, Cmd/Ctrl+press toggles one, Shift+press and
+  // Shift+Up/Down select from the mark to the cursor; none: the cursor's
+  // row (the selected path)
+  Arena *sel_arena;
+  String8 *sel_paths;
+  U64 sel_count;
   B32 menu_is_folder;
   B32 menu_is_root;
 };

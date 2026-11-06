@@ -158,6 +158,8 @@ rad_view_state_gc(void)
         {
           arena_release(vs->ex.expansions_arena);
           arena_release(vs->ex.rows_arena);
+          arena_release(vs->ex.clip_arena);
+          arena_release(vs->ex.sel_arena);
         }
         arena_release(vs->arena);
         SLLStackPush_N(rad_state->free_view_state, vs, hash_next);
@@ -4047,6 +4049,80 @@ rad_explorer_unique_path(Arena *arena, String8 folder, String8 name, B32 is_fold
 }
 
 internal void
+rad_explorer_paths_set__(Arena *arena, String8 **paths_out, U64 *count_out, String8 *paths, U64 count)
+{
+  // NOTE(rad): replaces a path list kept in its own arena (`paths` may
+  // point into it)
+  Temp scratch = scratch_begin(&arena, 1);
+  String8 *copies = push_array(scratch.arena, String8, count+1);
+  for EachIndex(idx, count)
+  {
+    copies[idx] = push_str8_copy(scratch.arena, paths[idx]);
+  }
+  arena_clear(arena);
+  *paths_out = push_array(arena, String8, count+1);
+  for EachIndex(idx, count)
+  {
+    (*paths_out)[idx] = push_str8_copy(arena, copies[idx]);
+  }
+  *count_out = count;
+  scratch_end(scratch);
+}
+
+internal B32
+rad_explorer_sel_contains(RAD_ExplorerState *ex, String8 path)
+{
+  B32 result = 0;
+  for EachIndex(idx, ex->sel_count)
+  {
+    if(str8_match(ex->sel_paths[idx], path, 0))
+    {
+      result = 1;
+      break;
+    }
+  }
+  return result;
+}
+
+internal String8Array
+rad_explorer_selection(Arena *arena, RAD_ExplorerState *ex)
+{
+  // NOTE(rad): the selected paths (TODO_2 F2): the set, else the cursor's
+  // row's path; never the root
+  String8Array result = {0};
+  String8 root = ex->rows_root;
+  result.v = push_array(arena, String8, ex->sel_count+1);
+  if(ex->sel_count != 0)
+  {
+    for EachIndex(idx, ex->sel_count)
+    {
+      if(!str8_match(ex->sel_paths[idx], root, 0))
+      {
+        result.v[result.count] = push_str8_copy(arena, ex->sel_paths[idx]);
+        result.count += 1;
+      }
+    }
+  }
+  else if(ex->selected_path_size != 0)
+  {
+    result.v[0] = push_str8_copy(arena, str8(ex->selected_path_buffer, ex->selected_path_size));
+    result.count = 1;
+  }
+  return result;
+}
+
+internal B32
+rad_explorer_clip_contains_under(RAD_ExplorerState *ex, String8 path)
+{
+  B32 result = 0;
+  for EachIndex(idx, ex->clip_count)
+  {
+    result = result || rad_path_is_under(ex->clip_paths[idx], path, 0);
+  }
+  return result;
+}
+
+internal void
 rad_explorer_select_path(RAD_ExplorerState *ex, String8 root, String8 path)
 {
   // NOTE(rad): selects `path` once the rows are rebuilt; its folders open
@@ -4056,8 +4132,27 @@ rad_explorer_select_path(RAD_ExplorerState *ex, String8 root, String8 path)
   }
   ex->selected_path_size = Min(path.size, sizeof(ex->selected_path_buffer));
   MemoryCopy(ex->selected_path_buffer, path.str, ex->selected_path_size);
+  ex->sel_count = 0;
   ex->rows_dirty = 1;
   rad_request_frame();
+}
+
+internal void
+rad_explorer_select_paths(RAD_ExplorerState *ex, String8 root, String8 *paths, U64 count)
+{
+  // NOTE(rad): selects all of `paths` once the rows are rebuilt (the
+  // cursor on the last); their folders open
+  if(count != 0)
+  {
+    for EachIndex(idx, count)
+    {
+      rad_explorer_select_path(ex, root, paths[idx]);
+    }
+    if(count > 1)
+    {
+      rad_explorer_paths_set__(ex->sel_arena, &ex->sel_paths, &ex->sel_count, paths, count);
+    }
+  }
 }
 
 internal void
@@ -4080,12 +4175,15 @@ rad_explorer_moved(RAD_ExplorerState *ex, String8 root, String8 old_path, String
   {
     rad_explorer_set_expanded(ex, n->string, 1);
   }
-  String8 suffix = {0};
-  if(rad_path_is_under(str8(ex->clip_path_buffer, ex->clip_path_size), old_path, &suffix))
+  for EachIndex(idx, ex->clip_count)
   {
-    String8 clip = push_str8f(scratch.arena, "%S%S", new_path, suffix);
-    ex->clip_path_size = Min(clip.size, sizeof(ex->clip_path_buffer));
-    MemoryCopy(ex->clip_path_buffer, clip.str, ex->clip_path_size);
+    // rad: (the paths are in the clip arena: replaced in place by new ones
+    // pushed there; it is cleared on the next Cut / Copy)
+    String8 suffix = {0};
+    if(rad_path_is_under(ex->clip_paths[idx], old_path, &suffix))
+    {
+      ex->clip_paths[idx] = push_str8f(ex->clip_arena, "%S%S", new_path, suffix);
+    }
   }
   rad_explorer_select_path(ex, root, new_path);
   scratch_end(scratch);
@@ -4238,6 +4336,45 @@ rad_explorer_cmd(CFG_Node *tab, RAD_CmdKind kind, RAD_CmdParams *params)
     rad_explorer_edit_end(tab, ex, 1);
   }
 
+  //- rad: the targets of Cut / Copy / Delete / Copy Path (TODO_2 F2): the
+  // command's path, else every selected row (never the root); a path
+  // inside another target is left out (its folder carries it)
+  String8Array targets = {0};
+  {
+    String8Array all = {0};
+    if(params->file_path.size != 0)
+    {
+      all.v = push_array(scratch.arena, String8, 1);
+      all.v[0] = path;
+      all.count = 1;
+    }
+    else
+    {
+      all = rad_explorer_selection(scratch.arena, ex);
+    }
+    targets.v = push_array(scratch.arena, String8, all.count+1);
+    for EachIndex(idx, all.count)
+    {
+      B32 skip = (str8_match(all.v[idx], root, 0) || !rad_path_is_under(all.v[idx], root, 0));
+      for EachIndex(other_idx, all.count)
+      {
+        if(other_idx != idx && !str8_match(all.v[other_idx], all.v[idx], 0) && rad_path_is_under(all.v[idx], all.v[other_idx], 0))
+        {
+          skip = 1;
+        }
+      }
+      for EachIndex(t_idx, targets.count)
+      {
+        skip = skip || str8_match(targets.v[t_idx], all.v[idx], 0);
+      }
+      if(!skip)
+      {
+        targets.v[targets.count] = all.v[idx];
+        targets.count += 1;
+      }
+    }
+  }
+
   switch(kind)
   {
     default:{}break;
@@ -4254,104 +4391,159 @@ rad_explorer_cmd(CFG_Node *tab, RAD_CmdKind kind, RAD_CmdParams *params)
       rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
     }break;
     case RAD_CmdKind_ExplorerDelete:
-    if(!is_root)
+    if(targets.count != 0)
     {
       if(!confirmed)
       {
+        B32 many = (targets.count > 1);
 #if OS_MAC
-        String8 desc = str8_lit("It goes to the Trash (Finder can put it back).");
+        String8 desc = (many ? str8_lit("They go to the Trash (Finder can put them back).") : str8_lit("It goes to the Trash (Finder can put it back)."));
 #elif OS_WINDOWS
-        String8 desc = str8_lit("It goes to the Recycle Bin.");
+        String8 desc = (many ? str8_lit("They go to the Recycle Bin.") : str8_lit("It goes to the Recycle Bin."));
 #else
-        String8 desc = str8_lit("It goes to the trash.");
+        String8 desc = (many ? str8_lit("They go to the trash.") : str8_lit("It goes to the trash."));
 #endif
-        rad_popup_open(push_str8f(scratch.arena, "Are you sure you want to delete \"%S\"?", name), desc, kind, path);
-      }
-      else if(!sh_move_to_trash(path))
-      {
-        log_user_errorf("Could not move \"%S\" to the Trash.", name);
+        String8 title = (many ? push_str8f(scratch.arena, "Are you sure you want to delete these %I64u items?", targets.count) :
+                         push_str8f(scratch.arena, "Are you sure you want to delete \"%S\"?", str8_skip_last_slash(targets.v[0])));
+        // rad: several: the confirmed command takes the selection again
+        rad_popup_open(title, desc, kind, many ? str8_zero() : targets.v[0]);
       }
       else
       {
-        if(rad_path_is_under(str8(ex->clip_path_buffer, ex->clip_path_size), path, 0))
+        for EachIndex(idx, targets.count)
         {
-          ex->clip_path_size = 0;
+          if(!sh_move_to_trash(targets.v[idx]))
+          {
+            log_user_errorf("Could not move \"%S\" to the Trash.", str8_skip_last_slash(targets.v[idx]));
+          }
+          else
+          {
+            U64 kept = 0;
+            for EachIndex(clip_idx, ex->clip_count)
+            {
+              if(!rad_path_is_under(ex->clip_paths[clip_idx], targets.v[idx], 0))
+              {
+                ex->clip_paths[kept] = ex->clip_paths[clip_idx];
+                kept += 1;
+              }
+            }
+            ex->clip_count = kept;
+          }
         }
+        ex->sel_count = 0;
         ex->rows_dirty = 1;
         rad_request_frame();
       }
     }break;
     case RAD_CmdKind_ExplorerCut:
     case RAD_CmdKind_ExplorerCopy:
-    if(!is_root)
+    if(targets.count != 0)
     {
-      ex->clip_path_size = Min(path.size, sizeof(ex->clip_path_buffer));
-      MemoryCopy(ex->clip_path_buffer, path.str, ex->clip_path_size);
+      rad_explorer_paths_set__(ex->clip_arena, &ex->clip_paths, &ex->clip_count, targets.v, targets.count);
       ex->clip_cut = (kind == RAD_CmdKind_ExplorerCut);
-      wm_set_clipboard_text(path);
+      StringJoin join = {0};
+      join.sep = str8_lit("\n");
+      String8List list = {0};
+      for EachIndex(idx, targets.count)
+      {
+        str8_list_push(scratch.arena, &list, targets.v[idx]);
+      }
+      wm_set_clipboard_text(str8_list_join(scratch.arena, &list, &join));
     }break;
     case RAD_CmdKind_ExplorerPaste:
-    if(ex->clip_path_size != 0)
+    if(ex->clip_count != 0)
     {
-      String8 src = push_str8_copy(scratch.arena, str8(ex->clip_path_buffer, ex->clip_path_size));
-      B32 src_is_folder = folder_path_exists(src);
-      String8 dst_folder = folder;
-      if(!rad_explorer_path_exists(src))
+      String8Array srcs = {0};
+      srcs.v = push_array(scratch.arena, String8, ex->clip_count);
+      srcs.count = ex->clip_count;
+      for EachIndex(idx, ex->clip_count)
       {
-        log_user_errorf("\"%S\" is gone.", str8_skip_last_slash(src));
-        ex->clip_path_size = 0;
+        srcs.v[idx] = push_str8_copy(scratch.arena, ex->clip_paths[idx]);
       }
-      else if(ex->clip_cut && rad_path_is_under(dst_folder, src, 0))
+      B32 cut = ex->clip_cut;
+      String8 *dsts = push_array(scratch.arena, String8, srcs.count);
+      U64 dsts_count = 0;
+      for EachIndex(src_idx, srcs.count)
       {
-        log_user_errorf("Cannot move \"%S\" into itself.", str8_skip_last_slash(src));
-      }
-      else if(ex->clip_cut && str8_match(str8_chop_last_slash(src), dst_folder, 0))
-      {
-        // rad: moved to where it is: nothing to do
-        ex->clip_path_size = 0;
-      }
-      else
-      {
-        // rad: a folder copied into itself: next to it instead
-        if(!ex->clip_cut && src_is_folder && rad_path_is_under(dst_folder, src, 0))
+      String8 src = srcs.v[src_idx];
+        B32 src_is_folder = folder_path_exists(src);
+        String8 dst_folder = folder;
+        if(!rad_explorer_path_exists(src))
         {
-          dst_folder = str8_chop_last_slash(src);
+          log_user_errorf("\"%S\" is gone.", str8_skip_last_slash(src));
         }
-        String8 dst = rad_explorer_unique_path(scratch.arena, dst_folder, str8_skip_last_slash(src), src_is_folder);
-        B32 ok = 0;
-        if(ex->clip_cut)
+        else if(cut && rad_path_is_under(dst_folder, src, 0))
         {
-          ok = move_file_path(dst, src);
-          if(ok)
-          {
-            ex->clip_path_size = 0;
-            rad_explorer_moved(ex, root, src, dst);
-          }
+          log_user_errorf("Cannot move \"%S\" into itself.", str8_skip_last_slash(src));
+        }
+        else if(cut && str8_match(str8_chop_last_slash(src), dst_folder, 0))
+        {
+          // rad: moved to where it is: nothing to do
+          dsts[dsts_count] = src;
+          dsts_count += 1;
         }
         else
         {
-          ok = (src_is_folder ? rad_copy_folder_recursive(dst, src) : copy_file_path(dst, src));
+          // rad: a folder copied into itself: next to it instead
+          if(!cut && src_is_folder && rad_path_is_under(dst_folder, src, 0))
+          {
+            dst_folder = str8_chop_last_slash(src);
+          }
+          String8 dst = rad_explorer_unique_path(scratch.arena, dst_folder, str8_skip_last_slash(src), src_is_folder);
+          B32 ok = 0;
+          if(cut)
+          {
+            ok = move_file_path(dst, src);
+            if(ok)
+            {
+              rad_explorer_moved(ex, root, src, dst);
+            }
+          }
+          else
+          {
+            ok = (src_is_folder ? rad_copy_folder_recursive(dst, src) : copy_file_path(dst, src));
+          }
           if(ok)
           {
-            rad_explorer_select_path(ex, root, dst);
+            dsts[dsts_count] = dst;
+            dsts_count += 1;
+          }
+          else
+          {
+            log_user_errorf("Could not %s \"%S\".", cut ? "move" : "copy", str8_skip_last_slash(src));
           }
         }
-        if(!ok)
-        {
-          log_user_errorf("Could not %s \"%S\".", ex->clip_cut ? "move" : "copy", str8_skip_last_slash(src));
-        }
       }
+
+      // rad: a cut is pasted once (a copy again and again); the pasted
+      // items are selected
+      if(cut)
+      {
+        ex->clip_count = 0;
+      }
+      rad_explorer_select_paths(ex, root, dsts, dsts_count);
     }break;
     case RAD_CmdKind_ExplorerCopyPath:
-    {
-      wm_set_clipboard_text(path);
-    }break;
     case RAD_CmdKind_ExplorerCopyRelativePath:
     {
-      String8 suffix = {0};
-      rad_path_is_under(path, root, &suffix);
-      suffix = str8_skip_chop_slashes(suffix);
-      wm_set_clipboard_text(suffix.size != 0 ? suffix : str8_lit("."));
+      // rad: one per line (the selected rows, else the menu's folder)
+      String8List list = {0};
+      U64 count = Max(1, targets.count);
+      for EachIndex(idx, count)
+      {
+        String8 p = (targets.count != 0 ? targets.v[idx] : path);
+        if(kind == RAD_CmdKind_ExplorerCopyRelativePath)
+        {
+          String8 suffix = {0};
+          rad_path_is_under(p, root, &suffix);
+          suffix = str8_skip_chop_slashes(suffix);
+          p = (suffix.size != 0 ? suffix : str8_lit("."));
+        }
+        str8_list_push(scratch.arena, &list, p);
+      }
+      StringJoin join = {0};
+      join.sep = str8_lit("\n");
+      wm_set_clipboard_text(str8_list_join(scratch.arena, &list, &join));
     }break;
     case RAD_CmdKind_ExplorerReveal:
     {
@@ -4391,6 +4583,8 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
     ex->initialized = 1;
     ex->expansions_arena = arena_alloc();
     ex->rows_arena = arena_alloc();
+    ex->clip_arena = arena_alloc();
+    ex->sel_arena = arena_alloc();
     ex->rows_dirty = 1;
   }
   String8 root = rad_explorer_folder_from_tab(tab);
@@ -4608,7 +4802,9 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
       UI_FocusHot(ex->filter_focused ? UI_FocusKind_On : UI_FocusKind_Off)
         UI_FocusActive(ex->filter_focused ? UI_FocusKind_On : UI_FocusKind_Off)
       {
-        UI_Signal sig = rad_cellf(&params, "Search Explorer (Ctrl+;)###explorer_filter");
+        CFG_Binding search_binding = rad_label_binding_from_cmd_kind(RAD_CmdKind_SearchExplorer);
+        UI_Signal sig = rad_cellf(&params, "Search Explorer (%S)###explorer_filter",
+                                  wm_string_from_modifiers_key(scratch.arena, search_binding.modifiers, search_binding.key));
         if(ui_pressed(sig))
         {
           ex->filter_focused = 1;
@@ -4699,12 +4895,40 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
     }
     Rng1S64 visible_row_rng = {0};
     UI_ScrollListSignal scroll_list_sig = {0};
+    Vec2S64 cursor_before_list = ex->cursor;
+    Vec2S64 mark_before_list = ex->mark;
     UI_Parent(column)
       UI_Focus(ex->filter_focused ? UI_FocusKind_Off : UI_FocusKind_On)
       UI_ScrollList(&scroll_list_params, &ex->scroll_pos.y, &ex->cursor, &ex->mark, &visible_row_rng, &scroll_list_sig)
       UI_Focus(UI_FocusKind_Null)
       UI_PrefHeight(ui_px(row_height_px, 1.f))
     {
+      //- rad: Up/Down (TODO_2 F2): one row selected; Shift+Up/Down: the
+      // rows from the mark to the cursor
+      if(ex->cursor.y != cursor_before_list.y || ex->mark.y != mark_before_list.y)
+      {
+        if(ex->cursor.y != ex->mark.y && ex->cursor.y >= 1 && ex->mark.y >= 1)
+        {
+          S64 min_y = Min(ex->cursor.y, ex->mark.y);
+          S64 max_y = Min(Max(ex->cursor.y, ex->mark.y), rows_count);
+          String8 *paths = push_array(scratch.arena, String8, max_y - min_y + 1);
+          U64 count = 0;
+          for(S64 y = min_y; y <= max_y; y += 1)
+          {
+            if(!ex->rows[y-1].is_edit_row)
+            {
+              paths[count] = ex->rows[y-1].path;
+              count += 1;
+            }
+          }
+          rad_explorer_paths_set__(ex->sel_arena, &ex->sel_paths, &ex->sel_count, paths, count);
+        }
+        else
+        {
+          ex->sel_count = 0;
+        }
+      }
+
       ui_set_next_pref_height(ui_children_sum(1));
       ui_set_next_child_layout_axis(Axis2_Y);
       UI_Box *table = ui_build_box_from_string(0, str8_lit("table"));
@@ -4713,7 +4937,7 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
       {
         RAD_ExplorerRow *row = &ex->rows[row_idx];
         U64 row_hash = u64_hash_from_str8(row->path);
-        B32 row_selected = (ex->cursor.y == row_idx+1);
+        B32 row_selected = (ex->sel_count != 0 ? rad_explorer_sel_contains(ex, row->path) : ex->cursor.y == row_idx+1);
         B32 row_editing = (row->is_edit_row ? (ex->edit_kind == RAD_ExplorerEditKind_NewFile || ex->edit_kind == RAD_ExplorerEditKind_NewFolder) :
                            ex->edit_kind == RAD_ExplorerEditKind_Rename && str8_match(row->path, str8(ex->edit_target_buffer, ex->edit_target_size), 0));
 
@@ -4830,7 +5054,62 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
             // rad: another row pressed: the typed name is done (VS Code)
             rad_explorer_edit_end(tab, ex, 1);
           }
-          ex->cursor = ex->mark = v2s64(0, row_idx+1);
+          WM_Modifiers press_modifiers = (ui_pressed(sig) ? sig.event_flags : row_sig.event_flags);
+          if(row->is_edit_row)
+          {
+            press_modifiers = 0;
+          }
+          if(press_modifiers & WM_Modifier_Ctrl)
+          {
+            // rad: Cmd/Ctrl+press (TODO_2 F2): this row in or out of the
+            // selection (it starts as the selected row)
+            String8Array sel = rad_explorer_selection(scratch.arena, ex);
+            String8 *paths = push_array(scratch.arena, String8, sel.count+1);
+            U64 count = 0;
+            B32 was_in = 0;
+            for EachIndex(idx, sel.count)
+            {
+              if(str8_match(sel.v[idx], row->path, 0))
+              {
+                was_in = 1;
+              }
+              else
+              {
+                paths[count] = sel.v[idx];
+                count += 1;
+              }
+            }
+            if(!was_in)
+            {
+              paths[count] = row->path;
+              count += 1;
+            }
+            rad_explorer_paths_set__(ex->sel_arena, &ex->sel_paths, &ex->sel_count, paths, count);
+            ex->cursor = ex->mark = v2s64(0, row_idx+1);
+          }
+          else if((press_modifiers & WM_Modifier_Shift) && ex->mark.y >= 1)
+          {
+            // rad: Shift+press: the rows from the mark to here
+            ex->cursor = v2s64(0, row_idx+1);
+            S64 min_y = Min(ex->cursor.y, ex->mark.y);
+            S64 max_y = Min(Max(ex->cursor.y, ex->mark.y), rows_count);
+            String8 *paths = push_array(scratch.arena, String8, max_y - min_y + 1);
+            U64 count = 0;
+            for(S64 y = min_y; y <= max_y; y += 1)
+            {
+              if(!ex->rows[y-1].is_edit_row)
+              {
+                paths[count] = ex->rows[y-1].path;
+                count += 1;
+              }
+            }
+            rad_explorer_paths_set__(ex->sel_arena, &ex->sel_paths, &ex->sel_count, paths, count);
+          }
+          else
+          {
+            ex->cursor = ex->mark = v2s64(0, row_idx+1);
+            ex->sel_count = 0;
+          }
           ex->filter_focused = 0;
           rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
         }
@@ -4840,6 +5119,12 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
           if(ex->edit_kind != RAD_ExplorerEditKind_None && !row_editing)
           {
             rad_explorer_edit_end(tab, ex, 1);
+          }
+          if(!rad_explorer_sel_contains(ex, row->path))
+          {
+            // rad: a row outside the selection: it alone (inside: the menu
+            // acts on all of them)
+            ex->sel_count = 0;
           }
           ex->cursor = ex->mark = v2s64(0, row_idx+1);
           ex->selected_path_size = Min(row->path.size, sizeof(ex->selected_path_buffer));
@@ -4894,6 +5179,7 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
       }
       ex->cursor = ex->mark = v2s64(0, 0);
       ex->selected_path_size = 0;
+      ex->sel_count = 0;
       ex->menu_is_folder = 1;
       ex->menu_is_root = 1;
       ui_ctx_menu_open(menu_key, ui_key_zero(), ui_mouse());
