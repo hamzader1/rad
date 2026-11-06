@@ -87,6 +87,16 @@ rad_cmd_binding_labels(RAD_CmdKind kind)
   // `RD_CmdBindingButtonFlag_NoEdit` - rebinding is not supported yet.
   Temp scratch = scratch_begin(0, 0);
   CFG_Binding binding = rad_binding_from_cmd_kind(kind);
+  for EachElement(idx, rad_explorer_binding_table)
+  {
+    // rad: the explorer's own keys (labels only: they are not global)
+    if(binding.key == WM_Key_Null && rad_explorer_binding_table[idx].kind == kind)
+    {
+      binding.key = rad_explorer_binding_table[idx].key;
+      binding.modifiers = rad_explorer_binding_table[idx].modifiers;
+      break;
+    }
+  }
   if(binding.key != WM_Key_Null) UI_CornerRadius(ui_top_font_size()*0.5f)
   {
     ui_spacer(ui_em(1.f, 1.f));
@@ -1104,12 +1114,108 @@ rad_fstrs_from_code_string_lang(Arena *arena, F32 alpha, Vec4F32 base_color, TXT
   return fstrs;
 }
 
+internal F32
+rad_code_slice_x_from_col(RAD_CodeSliceParams *params, U64 line_idx, String8 line_string, U64 col)
+{
+  // NOTE(rad): x of column `col` of a visible line (from the text's start),
+  // past the inlay hints before it; a hint at `col` is after it (the cursor
+  // there is drawn before the hint, as in Zed and VS Code)
+  F32 x = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, str8_prefix(line_string, col)).x;
+  if(params->line_inlays != 0)
+  {
+    RAD_CodeSliceInlayArray *inlays = &params->line_inlays[line_idx];
+    for(U64 idx = 0; idx < inlays->count && inlays->v[idx].col < col; idx += 1)
+    {
+      x += inlays->v[idx].width_px;
+    }
+  }
+  return x;
+}
+
+internal U64
+rad_code_slice_col_from_x(RAD_CodeSliceParams *params, U64 line_idx, String8 line_string, F32 x)
+{
+  // NOTE(rad): the column at `x` of a visible line; on an inlay hint: the
+  // column it is shown at
+  F32 shift = 0;
+  if(params->line_inlays != 0)
+  {
+    RAD_CodeSliceInlayArray *inlays = &params->line_inlays[line_idx];
+    for EachIndex(idx, inlays->count)
+    {
+      RAD_CodeSliceInlay *inlay = &inlays->v[idx];
+      F32 inlay_x0 = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, str8_prefix(line_string, inlay->col)).x + shift;
+      if(x < inlay_x0)
+      {
+        break;
+      }
+      if(x < inlay_x0 + inlay->width_px)
+      {
+        return Min(inlay->col, line_string.size);
+      }
+      shift += inlay->width_px;
+    }
+  }
+  U64 result = fnt_char_pos_from_tag_size_string_p(params->font, params->font_size, 0, params->tab_size, line_string, x - shift);
+  return result;
+}
+
+internal void
+rad_code_slice_fstrs_push_piece__(Arena *arena, DR_FStrList *fstrs, DR_FStrParams *fstr_params, RAD_CodeSliceInlayArray *inlays, U64 *next_inlay,
+                                  String8 line_string, Rng1U64 range, Vec4F32 color, Vec4F32 inlay_color)
+{
+  // NOTE(rad): pushes columns `range` of a line, with the inlay hints that
+  // fall before its end put in at their columns
+  U64 pos = range.min;
+  for(; *next_inlay < inlays->count && inlays->v[*next_inlay].col < range.max; *next_inlay += 1)
+  {
+    U64 col = Clamp(pos, inlays->v[*next_inlay].col, range.max);
+    if(col > pos)
+    {
+      dr_fstrs_push_new(arena, fstrs, fstr_params, str8_substr(line_string, r1u64(pos, col)), .color = color);
+      pos = col;
+    }
+    dr_fstrs_push_new(arena, fstrs, fstr_params, inlays->v[*next_inlay].text, .color = inlay_color);
+  }
+  if(range.max > pos)
+  {
+    dr_fstrs_push_new(arena, fstrs, fstr_params, str8_substr(line_string, r1u64(pos, range.max)), .color = color);
+  }
+}
+
+internal F32
+rad_code_slice_inlays_width(RAD_CodeSliceParams *params, U64 line_idx)
+{
+  F32 result = 0;
+  if(params->line_inlays != 0)
+  {
+    for EachIndex(idx, params->line_inlays[line_idx].count)
+    {
+      result += params->line_inlays[line_idx].v[idx].width_px;
+    }
+  }
+  return result;
+}
+
 internal RAD_CodeSliceSignal
 rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferred_column, String8 string)
 {
   RAD_CodeSliceSignal result = {0};
   ProfBeginFunction();
   Temp scratch = scratch_begin(0, 0);
+
+  //- rad: inlay hint widths (TODO_2 C3)
+  if(params->line_inlays != 0)
+  {
+    for(U64 line_idx = 0; line_idx <= (U64)dim_1s64(params->line_num_range); line_idx += 1)
+    {
+      RAD_CodeSliceInlayArray *inlays = &params->line_inlays[line_idx];
+      for EachIndex(idx, inlays->count)
+      {
+        inlays->v[idx].width_px = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, inlays->v[idx].text).x;
+      }
+    }
+  }
   B32 is_focused = ui_is_focus_active();
   F32 line_num_padding_px = ui_top_font_size()*1.f;
   RAD_Settings *settings = &rad_state->settings;
@@ -1392,7 +1498,8 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
     String8 line_string = (params->line_num_range.min <= line_num && line_num <= params->line_num_range.max) ? (params->line_text[mouse_y_line_idx]) : str8_zero();
 
     // rad: mouse x * string => line offset
-    U64 mouse_line_off = fnt_char_pos_from_tag_size_string_p(params->font, params->font_size, 0, params->tab_size, line_string, mouse.x-text_container_box->rect.x0-params->line_num_width_px-line_num_padding_px);
+    U64 mouse_line_off = ((params->line_num_range.min <= line_num && line_num <= params->line_num_range.max) ?
+                          rad_code_slice_col_from_x(params, (U64)mouse_y_line_idx, line_string, mouse.x-text_container_box->rect.x0-params->line_num_width_px-line_num_padding_px) : 0);
 
     // rad: compute
     mouse_off = line_range.min + mouse_line_off;
@@ -1443,8 +1550,8 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
     {
       String8 line_string = params->line_text[raw_line_idx];
       F32 x = mouse.x - text_container_box->rect.x0 - params->line_num_width_px - line_num_padding_px;
-      U64 boundary = fnt_char_pos_from_tag_size_string_p(params->font, params->font_size, 0, params->tab_size, line_string, x);
-      F32 boundary_x = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, str8_prefix(line_string, boundary)).x;
+      U64 boundary = rad_code_slice_col_from_x(params, (U64)raw_line_idx, line_string, x);
+      F32 boundary_x = rad_code_slice_x_from_col(params, (U64)raw_line_idx, line_string, boundary);
       U64 char_idx = ((boundary_x > x && boundary > 0) ? boundary-1 : boundary);
       if(x >= 0 && char_idx < line_string.size)
       {
@@ -1589,8 +1696,8 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
           U64 line_idx = (U64)(line_num - params->line_num_range.min);
           String8 line_string = params->line_text[line_idx];
           Rng1U64 line_off_range = r1u64(off_range.min - params->line_ranges[line_idx].min, off_range.max+1 - params->line_ranges[line_idx].min);
-          Rng1F32 x_px_range = r1f32(fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, str8_prefix(line_string, line_off_range.min)).x,
-                                     fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, str8_prefix(line_string, line_off_range.max)).x);
+          Rng1F32 x_px_range = r1f32(rad_code_slice_x_from_col(params, line_idx, line_string, line_off_range.min),
+                                     rad_code_slice_x_from_col(params, line_idx, line_string, line_off_range.max));
           F32 line_y = line_idx*params->line_height_px;
           Rng2F32 underline_rect = r2f32p(text_base_pos.x + x_px_range.min,
                                           text_base_pos.y + line_y + params->line_height_px*0.5f,
@@ -1690,6 +1797,11 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
       rad_rgba_from_code_color_slot(RAD_CodeColorSlot_CodeDefault),
       params->font_size,
     };
+    Vec4F32 inlay_color = {0};
+    UI_TagF("weak")
+    {
+      inlay_color = ui_color_from_name(str8_lit("text"));
+    }
     U64 line_idx = 0;
     for(S64 line_num = params->line_num_range.min;
         line_num <= params->line_num_range.max;
@@ -1699,9 +1811,12 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
       Rng1U64 line_range = params->line_ranges[line_idx];
       TXT_TokenArray *line_tokens = &params->line_tokens[line_idx];
       DR_FStrList fstrs = {0};
+      RAD_CodeSliceInlayArray no_inlays = {0};
+      RAD_CodeSliceInlayArray *inlays = (params->line_inlays != 0 ? &params->line_inlays[line_idx] : &no_inlays);
+      U64 next_inlay = 0;
       if(line_tokens->count == 0)
       {
-        dr_fstrs_push_new(scratch.arena, &fstrs, &fstr_params, line_string);
+        rad_code_slice_fstrs_push_piece__(scratch.arena, &fstrs, &fstr_params, inlays, &next_inlay, line_string, r1u64(0, line_string.size), fstr_params.color, inlay_color);
       }
       else
       {
@@ -1709,10 +1824,9 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
         TXT_Token *line_tokens_opl = line_tokens->v + line_tokens->count;
         for(TXT_Token *token = line_tokens_first; token < line_tokens_opl; token += 1)
         {
-          // rad: token -> token string
-          String8 token_string = {0};
+          // rad: token -> token columns in the line
+          Rng1U64 token_range = r1u64(0, line_string.size);
           {
-            Rng1U64 token_range = r1u64(0, line_string.size);
             if(token->range.min > line_range.min)
             {
               token_range.min += token->range.min-line_range.min;
@@ -1721,7 +1835,6 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
             {
               token_range.max = token->range.max-line_range.min;
             }
-            token_string = str8_substr(line_string, token_range);
           }
 
           // rad: token -> token color (rad: a semantic token starting there
@@ -1756,9 +1869,15 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
             }
           }
 
-          // rad: push fancy string
-          dr_fstrs_push_new(scratch.arena, &fstrs, &fstr_params, token_string, .color = token_color);
+          // rad: push fancy string (with the inlay hints inside it)
+          rad_code_slice_fstrs_push_piece__(scratch.arena, &fstrs, &fstr_params, inlays, &next_inlay, line_string, token_range, token_color, inlay_color);
         }
+      }
+
+      // rad: inlay hints at the line's end
+      for(; next_inlay < inlays->count; next_inlay += 1)
+      {
+        dr_fstrs_push_new(scratch.arena, &fstrs, &fstr_params, inlays->v[next_inlay].text, .color = inlay_color);
       }
       lines_fstrs[line_idx] = fstrs;
     }
@@ -1779,7 +1898,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
     {
       // NOTE(rad): raddbg's offset also counts its priority/catchall margins,
       // which rad does not have; the line's text padding takes their place
-      F32 line_text_dim = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, params->line_text[line_idx]).x + params->line_num_width_px + line_num_padding_px;
+      F32 line_text_dim = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, params->line_text[line_idx]).x + rad_code_slice_inlays_width(params, line_idx) + params->line_num_width_px + line_num_padding_px;
       line_extras_off[line_idx] = Max(line_text_dim, params->font_size*30);
       if(params->line_annotation_colors != 0 && params->line_annotation_colors[line_idx].w != 0)
       {
@@ -1854,7 +1973,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
       {
         continue;
       }
-      F32 line_text_dim = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, params->line_text[line_idx]).x + params->line_num_width_px + line_num_padding_px;
+      F32 line_text_dim = fnt_dim_from_tag_size_string(params->font, params->font_size, 0, params->tab_size, params->line_text[line_idx]).x + rad_code_slice_inlays_width(params, line_idx) + params->line_num_width_px + line_num_padding_px;
       F32 box_h = floor_f32(params->line_height_px*0.8f);
       ui_set_next_fixed_x(line_text_dim + params->font_size*0.5f);
       ui_set_next_fixed_y(line_idx*params->line_height_px + floor_f32((params->line_height_px - box_h)/2));
@@ -1939,8 +2058,8 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
         // rad: not in raddbg: the Ctrl+hover link (Go To Definition target)
         if(result.link_hovered && line_range.min <= result.link_range.min && result.link_range.max <= line_range.max)
         {
-          F32 x0 = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, result.link_range.min - line_range.min)).x;
-          F32 x1 = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, result.link_range.max - line_range.min)).x;
+          F32 x0 = rad_code_slice_x_from_col(params, line_idx, line_string, result.link_range.min - line_range.min);
+          F32 x1 = rad_code_slice_x_from_col(params, line_idx, line_string, result.link_range.max - line_range.min);
           Rng2F32 link_rect =
           {
             line_box->rect.x0+line_num_padding_px+x0-2.f,
@@ -1963,8 +2082,8 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
               Rng1U64 match_range = r1u64(needle_pos, needle_pos+params->search_query.size);
               Rng1F32 match_column_pixel_off_range =
               {
-                fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, match_range.min)).x,
-                fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, match_range.max)).x,
+                rad_code_slice_x_from_col(params, line_idx, line_string, match_range.min),
+                rad_code_slice_x_from_col(params, line_idx, line_string, match_range.max),
               };
               Rng2F32 match_rect =
               {
@@ -2001,8 +2120,8 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
               B32 next_line_good = (select_range_in_next_line.min < select_range_in_next_line.max);
               Rng1F32 select_column_pixel_off_range =
               {
-                fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, select_range_in_line.min - line_range.min)).x,
-                fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, select_range_in_line.max - line_range.min)).x,
+                rad_code_slice_x_from_col(params, line_idx, line_string, select_range_in_line.min - line_range.min),
+                rad_code_slice_x_from_col(params, line_idx, line_string, select_range_in_line.max - line_range.min),
               };
               Rng2F32 select_rect =
               {
@@ -2040,8 +2159,8 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
           {
             U64 min_col = (Max(u->range.min, line_range.min) - line_range.min);
             U64 max_col = (Min(u->range.max, line_range.max) - line_range.min);
-            F32 x0 = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, min_col)).x;
-            F32 x1 = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, max_col)).x;
+            F32 x0 = rad_code_slice_x_from_col(params, line_idx, line_string, min_col);
+            F32 x1 = rad_code_slice_x_from_col(params, line_idx, line_string, max_col);
             if(x1 <= x0)
             {
               x1 = x0 + fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_lit("H")).x;
@@ -2072,7 +2191,7 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
         // rad: extra rendering for cursor position
         if(line_range.min <= *cursor && *cursor <= line_range.max)
         {
-          Vec2F32 advance = fnt_dim_from_tag_size_string(line_box->font, line_box->font_size, 0, params->tab_size, str8_prefix(line_string, *cursor - line_range.min));
+          Vec2F32 advance = v2f32(rad_code_slice_x_from_col(params, line_idx, line_string, *cursor - line_range.min), 0);
           F32 cursor_y = text_container_box->rect.y0 + line_idx*params->line_height_px - params->font_size*0.125f;
           F32 cursor_y__animated = ui_anim(ui_key_from_stringf(text_container_box->key, "cursor_y_px"), cursor_y, .initial = cursor_y);
           F32 cursor_off_pixels = advance.x;

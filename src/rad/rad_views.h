@@ -147,6 +147,7 @@ struct RAD_CodeViewState
   S64 layout_cursor_line;    // rad: the cursor's line and column (1-based; the column
   S64 layout_cursor_col;     // counts characters): the status bar's Ln:Col
   U64 layout_inline_diag_count; // rad: visible lines with an inline diagnostic (scripts)
+  U64 layout_inlay_count;       // rad: inlay hints on the visible lines (scripts)
 };
 
 ////////////////////////////////
@@ -174,7 +175,18 @@ struct RAD_ExplorerRow
   S32 depth;
   B32 is_folder;
   B32 is_expanded;
+  B32 is_edit_row; // rad: the name field of a new file / folder (not on disk)
 };
+
+// rad: a name typed in the tree (TODO_2 D2)
+typedef enum RAD_ExplorerEditKind
+{
+  RAD_ExplorerEditKind_None,
+  RAD_ExplorerEditKind_NewFile,
+  RAD_ExplorerEditKind_NewFolder,
+  RAD_ExplorerEditKind_Rename,
+}
+RAD_ExplorerEditKind;
 
 typedef struct RAD_ExplorerState RAD_ExplorerState;
 struct RAD_ExplorerState
@@ -221,6 +233,24 @@ struct RAD_ExplorerState
   Rng2F32 layout_first_row_rect;
   F32 layout_row_height;
   F32 layout_font_size;
+  U64 layout_menu_frame;
+
+  // rad: file operations (TODO_2 D2): a name typed in the tree (new file or
+  // folder: a row under `edit_target`, the folder; rename: `edit_target`'s
+  // row); the explorer's clipboard (one path, cut or copied); the context
+  // menu's target (the selected row; none: the root folder)
+  RAD_ExplorerEditKind edit_kind;
+  U8 edit_target_buffer[4096];
+  U64 edit_target_size;
+  U8 edit_buffer[1024];
+  U64 edit_size;
+  U64 edit_cursor;
+  U64 edit_mark;
+  U8 clip_path_buffer[4096];
+  U64 clip_path_size;
+  B32 clip_cut;
+  B32 menu_is_folder;
+  B32 menu_is_root;
 };
 
 ////////////////////////////////
@@ -351,6 +381,8 @@ internal RAD_Document *rad_document_from_path(String8 path);
 internal RAD_Document *rad_document_from_tab(CFG_Node *tab);
 internal U64 rad_document_tab_count(RAD_Document *doc);
 internal B32 rad_document_save(RAD_Document *doc);
+internal B32 rad_path_is_under(String8 path, String8 root, String8 *suffix_out);
+internal void rad_paths_moved(String8 old_path, String8 new_path);
 internal void rad_documents_tick(void);
 internal void rad_documents_gc(void);
 
@@ -389,6 +421,7 @@ internal void rad_explorer_set_expanded(RAD_ExplorerState *ex, String8 path, B32
 internal void rad_explorer_rows_build(RAD_ExplorerState *ex, String8 root);
 internal CFG_Node *rad_explorer_target_panel_from_tab(CFG_Node *tab);
 internal void rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect);
+internal void rad_explorer_cmd(CFG_Node *tab, RAD_CmdKind kind, RAD_CmdParams *params);
 
 ////////////////////////////////
 //~ rad: Output + Problems

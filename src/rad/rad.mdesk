@@ -1205,6 +1205,21 @@ RAD_CmdTable:
   {ShowProblems           show_problems        "Problems"             WarningSmall      Null       0      0      0      Null     0         0           0         0 }
   {ShowExplorer           show_explorer        "Explorer"             FolderClosedFilled L          ctrl   0      alt    Null     0         0           0         0 }
   {SearchExplorer         search_explorer      "Search Explorer"      Find              Semicolon  ctrl   0      0      Null     0         0           0         0 }
+  // rad: explorer file operations (TODO_2 D2): on the explorer's selected
+  // row (or the command's file path); their keys work in the explorer only
+  // (rad_explorer_binding_table), so they have none here
+  {ExplorerNewFile        explorer_new_file    "New File"             FileOutline       Null       0      0      0      Null     0         0           0         0 }
+  {ExplorerNewFolder      explorer_new_folder  "New Folder"           FolderClosedOutline Null       0      0      0      Null     0         0           0         0 }
+  {ExplorerOpen           explorer_open        "Open"                 Null              Null       0      0      0      Null     0         0           0         0 }
+  {ExplorerOpenToSide     explorer_open_to_side "Open to the Side"     XSplit            Null       0      0      0      Null     0         0           0         0 }
+  {ExplorerCut            explorer_cut         "Cut"                  Null              Null       0      0      0      Null     0         0           0         0 }
+  {ExplorerCopy           explorer_copy        "Copy"                 Duplicate         Null       0      0      0      Null     0         0           0         0 }
+  {ExplorerPaste          explorer_paste       "Paste"                Clipboard         Null       0      0      0      Null     0         0           0         0 }
+  {ExplorerCopyPath       explorer_copy_path   "Copy Path"            Null              Null       0      0      0      Null     0         0           0         0 }
+  {ExplorerCopyRelativePath explorer_copy_relative_path "Copy Relative Path"   Null              Null       0      0      0      Null     0         0           0         0 }
+  {ExplorerRename         explorer_rename      "Rename"               Pencil            Null       0      0      0      Null     0         0           0         0 }
+  {ExplorerDelete         explorer_delete      "Delete"               Trash             Null       0      0      0      Null     0         0           0         0 }
+  {ExplorerReveal         explorer_reveal      "Reveal in File Manager" FolderOpenOutline Null       0      0      0      Null     0         0           0         0 }
   {TogglePinTab           toggle_pin_tab       "Pin Tab"              Pin               Null       0      0      0      Null     0         0           0         0 }
   {MoveTab                move_tab             "Move Tab"             Null              Null       0      0      0      Null     0         0           0         0 }
   {MoveTabToNewPanel      move_tab_to_new_panel "Move Tab To New Panel" Null            Null       0      0      0      Null     0         0           0         0 }
@@ -1272,6 +1287,7 @@ RAD_SettingTable:
   {hint_code_text               Bool  B32 1   0  1  Fonts      "Hint Code Text"                "Controls whether or not code text is hinted, for better text readability at small sizes." ""}
   {show_line_numbers            Bool  B32 1   0  1  Editor     "Line Numbers"                  "Shows line numbers in text views." ""}
   {tab_width                    U64   U64 2   1  16 Editor     "Tab Width"                     "The width of a tab character, in spaces." ""}
+  {inlay_hints                  Bool  B32 1   0  1  Editor     "Inlay Hints"                   "Shows the language server's hints in the code, like a variable's type after its name. They are not part of the text." ""}
   {inline_diagnostics           Bool  B32 1   0  1  Editor     "Inline Diagnostics"            "Shows the worst error or warning of a line after its code, in a box tinted with its color (Zed's inline diagnostics)." ""}
   {navigation_bar               Bool  B32 1   0  1  Editor     "Navigation Bar"                "Shows the item and member around the cursor above the code, each a list to jump from (VS2022's navigation bar; Rust files)." ""}
   {show_quick_fixes             Bool  B32 1   0  1  Editor     "Show Quick Fixes"              "Shows the quick fixes button (the language server's code actions) on the cursor's line, one second after the cursor stops. Quick Actions (Ctrl+.) works either way." ""}

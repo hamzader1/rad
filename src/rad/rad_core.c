@@ -403,6 +403,39 @@ read_only global RAD_CmdBinding rad_cmd_extra_binding_table[] =
 #endif
 };
 
+// rad: the explorer's own keys (TODO_2 D2), matched by the explorer while
+// its list has focus and never as global commands (Ctrl+C there copies a
+// file, in an editor text); menus show them. Ctrl+C / X / V and Delete reach
+// the explorer as edit / paste events (rad_text_nav_binding_table), the
+// others as key presses.
+read_only global RAD_CmdBinding rad_explorer_binding_table[] =
+{
+  {RAD_CmdKind_ExplorerRename,           WM_Key_F2,        0},
+#if OS_MAC
+  {RAD_CmdKind_ExplorerDelete,           WM_Key_Backspace, WM_Modifier_Ctrl},
+#else
+  {RAD_CmdKind_ExplorerDelete,           WM_Key_Delete,    0},
+#endif
+  {RAD_CmdKind_ExplorerCut,              WM_Key_X,         WM_Modifier_Ctrl},
+  {RAD_CmdKind_ExplorerCopy,             WM_Key_C,         WM_Modifier_Ctrl},
+  {RAD_CmdKind_ExplorerPaste,            WM_Key_V,         WM_Modifier_Ctrl},
+  {RAD_CmdKind_ExplorerCopyPath,         WM_Key_C,         WM_Modifier_Ctrl|WM_Modifier_Alt},
+  {RAD_CmdKind_ExplorerCopyRelativePath, WM_Key_C,         WM_Modifier_Ctrl|WM_Modifier_Alt|WM_Modifier_Shift},
+  {RAD_CmdKind_ExplorerReveal,           WM_Key_R,         WM_Modifier_Ctrl|WM_Modifier_Alt},
+};
+
+internal void
+rad_popup_open(String8 title, String8 desc, RAD_CmdKind kind, String8 path)
+{
+  arena_clear(rad_state->popup_arena);
+  rad_state->popup_active   = 1;
+  rad_state->popup_title    = push_str8_copy(rad_state->popup_arena, title);
+  rad_state->popup_desc     = push_str8_copy(rad_state->popup_arena, desc);
+  rad_state->popup_cmd_kind = kind;
+  rad_state->popup_cmd_path = push_str8_copy(rad_state->popup_arena, path);
+  rad_request_frame();
+}
+
 internal CFG_Binding
 rad_binding_from_cmd_kind(RAD_CmdKind kind)
 {
@@ -2480,6 +2513,70 @@ rad_window_frame(RAD_Window *ws)
       UI_Box *box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
       ui_box_equip_display_fstrs(box, &fstrs);
       scratch_end(scratch);
+    }
+
+    ////////////////////////////
+    //- rad: popup (port of raddbg's @window_ui_part popup; its PopupAccept /
+    // PopupCancel commands are done here)
+    //
+    {
+      if(rad_state->popup_t > 0.005f) UI_TextAlignment(UI_TextAlign_Center) UI_Focus(rad_state->popup_active ? UI_FocusKind_Root : UI_FocusKind_Off)
+      {
+        UI_Box *bg_box = &ui_nil_box;
+        Vec4F32 shadow_color = ui_color_from_name(str8_lit("drop_shadow"));
+        shadow_color.w += (1.f - shadow_color.w) * 0.5f;
+        UI_Rect(window_rect)
+          UI_ChildLayoutAxis(Axis2_X)
+          UI_Focus(UI_FocusKind_On)
+          UI_Transparency(1-rad_state->popup_t)
+          UI_TagF("floating")
+          UI_BackgroundColor(shadow_color)
+        {
+          bg_box = ui_build_box_from_stringf(UI_BoxFlag_FixedSize|
+                                             UI_BoxFlag_Floating|
+                                             UI_BoxFlag_Clickable|
+                                             UI_BoxFlag_Scroll|
+                                             UI_BoxFlag_DefaultFocusNav|
+                                             UI_BoxFlag_DisableFocusOverlay|
+                                             UI_BoxFlag_DisableFocusBorder|
+                                             UI_BoxFlag_DrawBackground, "###popup_%p", ws);
+        }
+        if(rad_state->popup_active) UI_Parent(bg_box) UI_Transparency(1-rad_state->popup_t)
+        {
+          ui_ctx_menu_close();
+          UI_WidthFill UI_PrefHeight(ui_children_sum(1.f)) UI_Column UI_Padding(ui_pct(1, 0)) UI_TagF("floating")
+          {
+            ui_set_next_blur_size(10*rad_state->popup_t);
+            ui_set_next_pref_width(ui_children_sum(1));
+            ui_set_next_pref_height(ui_children_sum(1));
+            ui_set_next_child_layout_axis(Axis2_Y);
+            UI_Box *panel = ui_build_box_from_stringf(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBackgroundBlur|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawDropShadow, "");
+            UI_Parent(panel)
+            {
+              ui_spacer(ui_em(1.5f, 1.f));
+              UI_TextRasterFlags(rad_raster_flags_from_slot(RAD_FontSlot_Main)) UI_FontSize(ui_top_font_size()*2.f) UI_PrefHeight(ui_em(3.f, 1.f)) ui_label(rad_state->popup_title);
+              UI_PrefHeight(ui_em(3.f, 1.f)) UI_TagF("weak") ui_label(rad_state->popup_desc);
+              ui_spacer(ui_em(1.5f, 1.f));
+              UI_Row UI_Padding(ui_pct(1.f, 0.f)) UI_PrefWidth(ui_em(16.f, 1.f)) UI_PrefHeight(ui_em(3.5f, 1.f)) UI_CornerRadius(ui_top_font_size()*0.5f)
+              {
+                UI_TagF("pop")
+                  if(ui_clicked(ui_buttonf("OK")) || (ui_key_match(bg_box->default_nav_focus_hot_key, ui_key_zero()) && ui_slot_press(UI_EventActionSlot_Accept)))
+                {
+                  rad_state->popup_active = 0;
+                  rad_cmd(rad_state->popup_cmd_kind, .file_path = rad_state->popup_cmd_path, .string = str8_lit("confirmed"));
+                }
+                ui_spacer(ui_em(1.f, 1.f));
+                if(ui_clicked(ui_buttonf("Cancel")) || ui_slot_press(UI_EventActionSlot_Cancel))
+                {
+                  rad_state->popup_active = 0;
+                }
+              }
+              ui_spacer(ui_em(3.f, 1.f));
+            }
+          }
+        }
+        ui_signal_from_box(bg_box);
+      }
     }
 
     ////////////////////////////
@@ -5875,6 +5972,27 @@ rad_exec_cmd(RAD_Cmd *cmd)
         rad_focus_panel(tab->parent);
       }
     }break;
+    case RAD_CmdKind_ExplorerNewFile:
+    case RAD_CmdKind_ExplorerNewFolder:
+    case RAD_CmdKind_ExplorerOpen:
+    case RAD_CmdKind_ExplorerOpenToSide:
+    case RAD_CmdKind_ExplorerCut:
+    case RAD_CmdKind_ExplorerCopy:
+    case RAD_CmdKind_ExplorerPaste:
+    case RAD_CmdKind_ExplorerCopyPath:
+    case RAD_CmdKind_ExplorerCopyRelativePath:
+    case RAD_CmdKind_ExplorerRename:
+    case RAD_CmdKind_ExplorerDelete:
+    case RAD_CmdKind_ExplorerReveal:
+    if(window != &cfg_nil_node)
+    {
+      // rad: explorer file operations (TODO_2 D2): done by the explorer
+      CFG_Node *tab = rad_tab_from_window_kind(window, str8_lit("explorer"));
+      if(tab != &cfg_nil_node)
+      {
+        rad_explorer_cmd(tab, cmd->kind, &cmd->params);
+      }
+    }break;
     case RAD_CmdKind_ShowExplorer:
     if(window != &cfg_nil_node)
     {
@@ -6297,6 +6415,7 @@ rad_init(CmdLine *cmdln)
   Arena *arena = arena_alloc();
   rad_state = push_array(arena, RAD_State, 1);
   rad_state->arena = arena;
+  rad_state->popup_arena = arena_alloc();
   for(U64 idx = 0; idx < ArrayCount(rad_state->frame_arenas); idx += 1)
   {
     rad_state->frame_arenas[idx] = arena_alloc();
@@ -7098,6 +7217,17 @@ rad_frame(void)
   //- rad: animate view states (scroll offsets ease to their targets)
   //
   rad_view_state_animate();
+
+  //- rad: animate the popup (raddbg's "animate confirmation")
+  {
+    F32 rate = rad_state->settings.menu_animations ? 1 - pow_f32(2, (-30.f * rad_state->frame_dt)) : 1.f;
+    B32 popup_open = rad_state->popup_active;
+    rad_state->popup_t += rate * ((F32)!!popup_open-rad_state->popup_t);
+    if(abs_f32(rad_state->popup_t - (F32)!!popup_open) > 0.005f)
+    {
+      rad_request_frame();
+    }
+  }
 
   //////////////////////////////
   //- rad: animate the code zoom (the drawn code font size eases to the

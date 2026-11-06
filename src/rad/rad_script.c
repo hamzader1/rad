@@ -754,6 +754,48 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     }
   }
 
+  else if(str8_match(name, str8_lit("path_exists"), 0))
+  {
+    // rad: 1 if a file or folder is there
+    if(args_count < 2)
+    {
+      *error_out = str8_lit("path_exists: needs a path");
+      result = 0;
+    }
+    else
+    {
+      String8 path = rad_script_path(scratch.arena, args[1]);
+      value = push_str8f(arena, "%i", (int)(file_path_exists(path) || folder_path_exists(path)));
+    }
+  }
+
+  //- rad: popup (raddbg's confirmation)
+  else if(str8_match(name, str8_lit("popup_active"), 0))
+  {
+    value = push_str8f(arena, "%i", (int)rad_state->popup_active);
+  }
+
+  //- rad: explorer file operations (TODO_2 D2)
+  else if(str8_match(name, str8_lit("explorer_editing"), 0) || str8_match(name, str8_lit("explorer_menu_open"), 0))
+  {
+    CFG_Node *tab = rad_script_window_tab(str8_lit("explorer"));
+    RAD_ExplorerState *ex = (tab != &cfg_nil_node ? &rad_view_state_from_cfg(tab)->ex : 0);
+    if(ex == 0)
+    {
+      *error_out = str8_lit("no explorer tab");
+      result = 0;
+    }
+    else if(str8_match(name, str8_lit("explorer_editing"), 0))
+    {
+      String8 names[] = {str8_lit("none"), str8_lit("new_file"), str8_lit("new_folder"), str8_lit("rename")};
+      value = push_str8_copy(arena, names[ex->edit_kind]);
+    }
+    else
+    {
+      value = push_str8f(arena, "%i", (int)(ex->layout_menu_frame+1 >= rad_state->frame_index));
+    }
+  }
+
   //- rad: explorer
   else if(str8_match(name, str8_lit("explorer_root"), 0) || str8_match(name, str8_lit("explorer_rows"), 0) ||
           str8_match(name, str8_lit("explorer_selected"), 0) || str8_match(name, str8_lit("explorer_row"), 0) ||
@@ -1032,6 +1074,19 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   }
 
   //- rad: the editor file's language server
+  else if(str8_match(name, str8_lit("lsp_hint_state"), 0))
+  {
+    // rad: the editor's document's inlay hint requests (TODO_2 C3):
+    // "supported asked in_flight valid count"
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    result = rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out);
+    RAD_LspServer *s = (doc != 0 ? rad_lsp_server_from_path(doc->path) : 0);
+    RAD_LspDoc *ld = (s != 0 ? rad_lsp_doc_from_id(s, doc->id) : 0);
+    value = (ld == 0 ? str8_lit("none") : push_str8f(arena, "%i %i %i %i %I64u", (int)s->hint_supported, (int)ld->hint_asked,
+                                                     (int)(ld->hint_request_id != 0), (int)ld->hint_valid, ld->hint_count));
+  }
   else if(str8_match(name, str8_lit("lsp_state"), 0) || str8_match(name, str8_lit("lsp_busy"), 0) ||
           str8_match(name, str8_lit("lsp_status"), 0))
   {
@@ -1175,6 +1230,14 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   }
 
   //- rad: the Output tab's cursor line (follows the end while it is there)
+  else if(str8_match(name, str8_lit("inlay_hint_count"), 0))
+  {
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    result = rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out);
+    value = push_str8f(arena, "%I64u", cv != 0 ? cv->layout_inlay_count : 0);
+  }
   else if(str8_match(name, str8_lit("inline_diag_count"), 0))
   {
     RAD_CodeViewState *cv = 0;
@@ -1299,6 +1362,12 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
           String8 line_text = rad_script_line_text(scratch.arena, &text, line_num);
           String8 prefix = str8_prefix(line_text, (U64)col-1);
           F32 advance = fnt_dim_from_tag_size_string(cv->layout_font, cv->layout_font_size, 0, cv->layout_tab_size, prefix).x;
+          {
+            // rad: past the inlay hints before the column (TODO_2 C3)
+            CFG_Node *tab = rad_script_editor_tab();
+            Rng1U64 line_range = txt_range_from_line_num(&text.patched.line_map, (U64)line_num);
+            advance += rad_inlay_hints_width_before(tab, cv->layout_font, cv->layout_font_size, line_range, line_range.min + prefix.size);
+          }
           pos.x = cv->layout_text_rect.x0 + cv->layout_text_x_off + advance + 1.f;
           pos.y = cv->layout_text_rect.y0 + ((F32)(row - cv->layout_visible_rows.min) + 0.5f)*cv->layout_line_height;
           args_used = 3;
@@ -2054,8 +2123,9 @@ rad_script_inject(RAD_ScriptInput *input)
       }
       if(input->kind == RAD_ScriptInputKind_MousePress || input->kind == RAD_ScriptInputKind_MouseRelease)
       {
-        evt->key = WM_Key_LeftMouseButton;
-        wm_sim_set_key_is_down(WM_Key_LeftMouseButton, input->kind == RAD_ScriptInputKind_MousePress);
+        WM_Key button = (input->key != WM_Key_Null ? input->key : WM_Key_LeftMouseButton);
+        evt->key = button;
+        wm_sim_set_key_is_down(button, input->kind == RAD_ScriptInputKind_MousePress);
       }
     }break;
   }
@@ -2274,6 +2344,17 @@ rad_script_run_line(RAD_ScriptLine *line)
         RAD_ScriptInput *input = rad_script_push_input(RAD_ScriptInputKind_Wheel, pos);
         input->wheel_delta = (F32)units;
       }
+    }
+  }
+  else if(str8_match(cmd, str8_lit("right_click"), 0))
+  {
+    U64 used = 0;
+    Vec2F32 pos = {0};
+    if(rad_script_target(scratch.arena, args, args_count, &used, &pos, &error))
+    {
+      rad_script_push_input(RAD_ScriptInputKind_MouseMove, pos);
+      rad_script_push_input(RAD_ScriptInputKind_MousePress, pos)->key = WM_Key_RightMouseButton;
+      rad_script_push_input(RAD_ScriptInputKind_MouseRelease, pos)->key = WM_Key_RightMouseButton;
     }
   }
   else if(str8_match(cmd, str8_lit("mouse"), 0) || str8_match(cmd, str8_lit("click"), 0) || str8_match(cmd, str8_lit("double_click"), 0) ||

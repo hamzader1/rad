@@ -391,13 +391,14 @@ rad_lsp_server_launch(RAD_LspServer *s)
                               "\"capabilities\":{"
                               "\"general\":{\"positionEncodings\":[\"utf-8\",\"utf-16\"]},"
                               "\"window\":{\"workDoneProgress\":true},"
-                              "\"workspace\":{\"workspaceFolders\":true,\"semanticTokens\":{\"refreshSupport\":true}},"
+                              "\"workspace\":{\"workspaceFolders\":true,\"semanticTokens\":{\"refreshSupport\":true},\"inlayHint\":{\"refreshSupport\":true}},"
                               "\"textDocument\":{"
                               "\"synchronization\":{\"didSave\":true},"
                               "\"publishDiagnostics\":{\"versionSupport\":true},"
                               "\"hover\":{\"contentFormat\":[\"markdown\",\"plaintext\"]},"
                               "\"definition\":{\"linkSupport\":false},"
                               "\"documentSymbol\":{\"hierarchicalDocumentSymbolSupport\":true},"
+                              "\"inlayHint\":{\"dynamicRegistration\":false},"
                               "\"codeAction\":{\"codeActionLiteralSupport\":{\"codeActionKind\":{\"valueSet\":[\"\",\"quickfix\",\"refactor\",\"refactor.extract\","
                               "\"refactor.inline\",\"refactor.rewrite\",\"source\",\"source.organizeImports\"]}},"
                               "\"resolveSupport\":{\"properties\":[\"edit\"]},\"dataSupport\":true,\"isPreferredSupport\":true},"
@@ -609,6 +610,11 @@ rad_lsp_doc_release(RAD_LspServer *s, RAD_LspDoc *ld)
   {
     arena_release(ld->sym_arena);
     arena_release(ld->sym_mapped_arena);
+  }
+  if(ld->hint_arena != 0)
+  {
+    arena_release(ld->hint_arena);
+    arena_release(ld->hint_mapped_arena);
   }
   arena_release(ld->arena);
 }
@@ -881,6 +887,11 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
           JSON_Value *sync_change = (sync->kind == JSON_ValueKind_Object ? json_value_from_key(sync, str8_lit("change")) : sync);
           s->sync_incremental = (json_s64_from_value(sync_change) == 2);
           rad_lsp_take_semantic_legend(s, json_value_from_key(json_value_from_key(m.result, str8_lit("capabilities")), str8_lit("semanticTokensProvider")));
+          {
+            JSON_Value *hint_provider = json_value_from_key(json_value_from_key(m.result, str8_lit("capabilities")), str8_lit("inlayHintProvider"));
+            s->hint_supported = (hint_provider->kind == JSON_ValueKind_Object ||
+                                 (hint_provider->kind == JSON_ValueKind_Bool && json_b32_from_value(hint_provider)));
+          }
           lsp_client_notify(s->client, str8_lit("initialized"), str8_lit("{}"));
           s->state = RAD_LspServerState_Ready;
         }
@@ -909,6 +920,9 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
       {
         rad_lsp_take_code_action_resolve(s, &m);
       }
+      else if(rad_lsp_take_inlay_hints(s, &m))
+      {
+      }
       else if(rad_lsp_take_semantic_tokens(s, &m))
       {
       }
@@ -936,6 +950,15 @@ rad_lsp_server_take_messages(RAD_LspServer *s)
           {
             ld->sem_asked = 0;
             ld->sym_asked = 0;
+            ld->hint_asked = 0;
+          }
+          rad_request_frame();
+        }
+        if(str8_match(m.method, str8_lit("workspace/inlayHint/refresh"), 0))
+        {
+          for(RAD_LspDoc *ld = s->first_doc; ld != 0; ld = ld->next)
+          {
+            ld->hint_asked = 0;
           }
           rad_request_frame();
         }
@@ -1527,6 +1550,159 @@ rad_lsp_symbols_from_document(RAD_Document *doc, U64 *count_out)
     }
     result = ld->sym_mapped;
     count = ld->sym_mapped_count;
+  }
+  *count_out = count;
+  return result;
+}
+
+////////////////////////////////
+//~ rad: Inlay Hints (not in raddbg; TODO_2 C3)
+//
+// NOTE(rad): asked after each sync for the whole text (like semantic
+// tokens); the answer's positions become offsets in that version's text,
+// carried to the buffer's version by its change log like the symbols.
+
+internal int
+rad_lsp_inlay_hint_compare(const void *a, const void *b)
+{
+  U64 a_off = ((RAD_LspInlayHint *)a)->off;
+  U64 b_off = ((RAD_LspInlayHint *)b)->off;
+  return (a_off < b_off ? -1 : a_off > b_off ? +1 : 0);
+}
+
+internal B32
+rad_lsp_take_inlay_hints(RAD_LspServer *s, LSP_Message *m)
+{
+  // NOTE(rad): InlayHint[] {position, label: string | InlayHintLabelPart[]
+  // {value}, kind, paddingLeft, paddingRight}, or null
+  RAD_LspDoc *ld = 0;
+  for(RAD_LspDoc *d = s->first_doc; d != 0; d = d->next)
+  {
+    if(d->hint_request_id != 0 && d->hint_request_id == m->id)
+    {
+      ld = d;
+      break;
+    }
+  }
+  if(ld != 0)
+  {
+    ld->hint_request_id = 0;
+    RAD_LspSnapshot *snap = rad_lsp_snapshot_from_version(ld, ld->hint_request_version);
+    if(!json_value_is_nil(m->error) && json_s64_from_value(json_value_from_key(m->error, str8_lit("code"))) == -32801)
+    {
+      ld->hint_asked = 0;
+    }
+    else if(snap != 0)
+    {
+      Temp scratch = scratch_begin(0, 0);
+      if(ld->hint_arena == 0)
+      {
+        ld->hint_arena = arena_alloc();
+        ld->hint_mapped_arena = arena_alloc();
+      }
+      arena_clear(ld->hint_arena);
+      U64 cap = 0;
+      for(JSON_Value *h = m->result->first; m->result->kind == JSON_ValueKind_Array && h != &json_value_nil; h = h->next)
+      {
+        cap += 1;
+      }
+      ld->hints = push_array(ld->hint_arena, RAD_LspInlayHint, cap+1);
+      U64 count = 0;
+      for(JSON_Value *h = m->result->first; m->result->kind == JSON_ValueKind_Array && h != &json_value_nil && count < cap; h = h->next)
+      {
+        JSON_Value *pos = json_value_from_key(h, str8_lit("position"));
+        JSON_Value *label = json_value_from_key(h, str8_lit("label"));
+        String8List parts = {0};
+        if(label->kind == JSON_ValueKind_String)
+        {
+          str8_list_push(scratch.arena, &parts, json_string_from_value(label));
+        }
+        else if(label->kind == JSON_ValueKind_Array)
+        {
+          for(JSON_Value *part = label->first; part != &json_value_nil; part = part->next)
+          {
+            str8_list_push(scratch.arena, &parts, json_string_from_value(json_value_from_key(part, str8_lit("value"))));
+          }
+        }
+        String8 text = str8_list_join(scratch.arena, &parts, 0);
+        if(text.size == 0)
+        {
+          continue;
+        }
+        B32 pad_left = json_b32_from_value(json_value_from_key(h, str8_lit("paddingLeft")));
+        B32 pad_right = json_b32_from_value(json_value_from_key(h, str8_lit("paddingRight")));
+        RAD_LspInlayHint *hint = &ld->hints[count];
+        hint->off = rad_lsp_offset_from_position(snap->text, snap->line_starts, snap->line_count,
+                                                 json_s64_from_value(json_value_from_key(pos, str8_lit("line"))),
+                                                 json_s64_from_value(json_value_from_key(pos, str8_lit("character"))), s->utf8_positions);
+        hint->label = push_str8f(ld->hint_arena, "%s%S%s", pad_left ? " " : "", text, pad_right ? " " : "");
+        hint->kind = json_s64_from_value(json_value_from_key(h, str8_lit("kind")));
+        count += 1;
+      }
+      qsort(ld->hints, count, sizeof(RAD_LspInlayHint), rad_lsp_inlay_hint_compare);
+      ld->hint_count = count;
+      ld->hint_version = ld->hint_request_version;
+      ld->hint_valid = 1;
+      ld->hint_mapped_valid = 0;
+      rad_request_frame();
+      scratch_end(scratch);
+    }
+  }
+  return (ld != 0);
+}
+
+internal RAD_LspInlayHint *
+rad_lsp_inlay_hints_from_document(RAD_Document *doc, U64 *count_out)
+{
+  // NOTE(rad): the document's inlay hints in its current text (sorted by
+  // offset), carried once per buffer version; a hint where text is typed is
+  // dropped until the next answer (Zed: typing after `x` hides its type)
+  RAD_LspInlayHint *result = 0;
+  U64 count = 0;
+  RAD_LspServer *s = (doc != 0 ? rad_lsp_server_from_path(doc->path) : 0);
+  RAD_LspDoc *ld = (s != 0 ? rad_lsp_doc_from_id(s, doc->id) : 0);
+  if(ld != 0 && ld->hint_valid)
+  {
+    U64 version = doc->buffer->version;
+    if(!ld->hint_mapped_valid || ld->hint_mapped_version != version)
+    {
+      B32 incremental = (ld->hint_mapped_valid && ld->hint_mapped_version <= version && ld->hint_mapped_count != 0);
+      if(!incremental)
+      {
+        arena_clear(ld->hint_mapped_arena);
+        ld->hint_mapped = push_array_no_zero(ld->hint_mapped_arena, RAD_LspInlayHint, ld->hint_count+1);
+        MemoryCopy(ld->hint_mapped, ld->hints, sizeof(RAD_LspInlayHint)*ld->hint_count);
+        ld->hint_mapped_count = ld->hint_count;
+        ld->hint_mapped_version = ld->hint_version;
+      }
+      B32 good = tb_buffer_can_map_from_version(doc->buffer, ld->hint_mapped_version);
+      if(good)
+      {
+        for(U64 v = ld->hint_mapped_version+1; v <= version; v += 1)
+        {
+          TB_Change *change = &doc->buffer->change_log[v%TB_CHANGE_LOG_SIZE];
+          U64 kept = 0;
+          for(U64 idx = 0; idx < ld->hint_mapped_count; idx += 1)
+          {
+            RAD_LspInlayHint hint = ld->hint_mapped[idx];
+            U64 before = tb_change_map_offset(change, hint.off, Side_Min);
+            U64 after = tb_change_map_offset(change, hint.off, Side_Max);
+            hint.off = after;
+            if(before == after)
+            {
+              ld->hint_mapped[kept] = hint;
+              kept += 1;
+            }
+          }
+          ld->hint_mapped_count = kept;
+        }
+      }
+      ld->hint_mapped_count = (good ? ld->hint_mapped_count : 0);
+      ld->hint_mapped_version = version;
+      ld->hint_mapped_valid = 1;
+    }
+    result = ld->hint_mapped;
+    count = ld->hint_mapped_count;
   }
   *count_out = count;
   return result;
@@ -2576,6 +2752,26 @@ rad_lsp_tick(void)
         ld->sem_request_version = ld->sent_version;
         ld->sem_asked = 1;
         scratch_end(scratch);
+      }
+      if(!changed && s->hint_supported && rad_state->settings.inlay_hints && ld->opened && ld->hint_request_id == 0 &&
+         (!ld->hint_asked || ld->hint_request_version != ld->sent_version))
+      {
+        // rad: inlay hints for the text the server has (all of it)
+        RAD_LspSnapshot *snap = rad_lsp_snapshot_from_version(ld, ld->sent_version);
+        if(snap != 0)
+        {
+          // NOTE(rad): the range ends at the text's end (a line past the last
+          // one is an error for rust-analyzer)
+          Temp scratch = scratch_begin(0, 0);
+          S64 end_line = 0, end_character = 0;
+          rad_lsp_position_from_snapshot_offset(snap, snap->text.size, s->utf8_positions, &end_line, &end_character);
+          ld->hint_request_id = lsp_client_request(s->client, str8_lit("textDocument/inlayHint"),
+                                                   push_str8f(scratch.arena, "{\"textDocument\":{\"uri\":%S},\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":%I64d,\"character\":%I64d}}}",
+                                                              json_escaped_from_str8(scratch.arena, ld->uri), end_line, end_character));
+          ld->hint_request_version = ld->sent_version;
+          ld->hint_asked = 1;
+          scratch_end(scratch);
+        }
       }
       if(!changed && ld->opened && ld->sym_request_id == 0 &&
          (!ld->sym_asked || ld->sym_request_version != ld->sent_version))

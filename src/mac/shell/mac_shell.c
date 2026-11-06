@@ -76,6 +76,19 @@ sh_show_in_file_browser(String8 path)
   }
 }
 
+internal B32
+sh_move_to_trash(String8 path)
+{
+  B32 result = 0;
+  @autoreleasepool
+  {
+    NSURL *url = [NSURL fileURLWithPath:mac_sh_nsstring_from_str8(path)];
+    NSError *error = nil;
+    result = ([[NSFileManager defaultManager] trashItemAtURL:url resultingItemURL:nil error:&error] ? 1 : 0);
+  }
+  return result;
+}
+
 internal void
 sh_open_in_browser(String8 url)
 {

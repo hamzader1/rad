@@ -102,6 +102,24 @@ enum
   RAD_CodeSliceFlag_CatchallMargin = (1<<4), // rad: ...the line's diagnostic icon
 };
 
+// rad: inlay hints (TODO_2 C3): text drawn in a line that is not in it, in
+// the weak text color, before the character at `col`. Columns and x
+// positions skip them: rad_code_slice_x_from_col / rad_code_slice_col_from_x.
+typedef struct RAD_CodeSliceInlay RAD_CodeSliceInlay;
+struct RAD_CodeSliceInlay
+{
+  U64 col;        // byte offset in the line
+  String8 text;   // as drawn
+  F32 width_px;   // (filled by rad_code_slice)
+};
+
+typedef struct RAD_CodeSliceInlayArray RAD_CodeSliceInlayArray;
+struct RAD_CodeSliceInlayArray
+{
+  RAD_CodeSliceInlay *v; // sorted by col
+  U64 count;
+};
+
 typedef struct RAD_CodeSliceUnderline RAD_CodeSliceUnderline;
 struct RAD_CodeSliceUnderline
 {
@@ -137,6 +155,7 @@ struct RAD_CodeSliceParams
   // underline (diagnostic spans)
   Vec4F32 *line_bg_colors;
   DR_FStrList *line_annotations;
+  RAD_CodeSliceInlayArray *line_inlays; // rad: per visible line (optional): inlay hints
   Vec4F32 *line_annotation_colors; // rad: per visible line (optional): alpha != 0 -> the annotation is
                                    // drawn right after the code in a box tinted with this color (Zed's
                                    // inline diagnostics); alpha 0 -> raddbg's plain annotation

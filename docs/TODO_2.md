@@ -129,11 +129,19 @@ then inlay hints (the biggest change to the code view).
   Done 2026-11-06 (script `lsp_code_actions`): not shown 0.6 s after the
   cursor stops, shown after 1 s; setting off: not asked for nor shown,
   Ctrl+. still asks and shows the button with its menu.
-- [ ] **C3. Inlay hints** (`PL9eiIVM`: `_k: i32` with `: i32` in weak
+- [x] **C3. Inlay hints** (`PL9eiIVM`: `_k: i32` with `: i32` in weak
   text): LSP `textDocument/inlayHint` for the visible lines, asked after
   each sync like semantic tokens, carried over edits. Drawn inside the
   line as text that is not in the buffer: the cursor, selection,
   mouse-to-offset and underlines skip it. Setting "Inlay Hints" (on).
+  Done 2026-11-06 (script `lsp_diagnostics`, query `inlay_hint_count`;
+  screenshot): asked for the whole text (the range must end at the text's
+  end: one line past it is an error for rust-analyzer), weak text color,
+  no background. Every x position in the code slice goes through
+  `rad_code_slice_x_from_col` / `rad_code_slice_col_from_x`; popups and
+  scrolling add `rad_inlay_hints_width_before`. A hint where text is
+  typed hides until the next answer. Type and parameter hints both show
+  (rust-analyzer's defaults); no per-kind setting yet.
 
 ## D. Explorer
 
@@ -145,7 +153,7 @@ then inlay hints (the biggest change to the code view).
   drawn under the row's icon by a custom draw (`RAD_CellParams`
   value_custom_draw). Color: the theme's new "folder text" (VSA only,
   #ffdf96); other themes: the weak text color, as before.
-- [ ] **D2. File operations** in a right-click menu (raddbg's context
+- [x] **D2. File operations** in a right-click menu (raddbg's context
   menu look) and keys: New File, New Folder (a name field in the tree, as
   Zed and VS Code), Rename (F2, in place), Delete (Cmd+Backspace; to the
   Trash, asks first), Cut / Copy / Paste (Cmd+X / C / V, also between
@@ -155,6 +163,21 @@ then inlay hints (the biggest change to the code view).
   open file's tab shows it is gone.
   Needs in `base`/`shell`: move to Trash (`sh_move_to_trash`: NSFileManager
   on the Mac, IFileOperation on Windows), recursive folder copy.
+  Done 2026-11-06 (script `explorer_ops`; screenshots of the menu, the
+  name field and the popup): commands `explorer_*` in RAD_CmdTable (no
+  global keys: `rad_explorer_binding_table` holds the explorer's own,
+  which menus show); right-click menus for a file, a folder, and the empty
+  area (the root); New File / New Folder type the name in a row first in
+  the folder ("a/b.rs" makes `a`); Rename selects the name without its
+  extension; Enter / Esc / a click on another row; Delete asks with a port
+  of raddbg's confirmation popup (`rad_popup_open`), then
+  `sh_move_to_trash` (Mac: NSFileManager; Windows: SHFileOperationW with
+  FOF_ALLOWUNDO, untested; Linux: `gio trash`, untested); Paste of a
+  folder into itself goes next to it. Renames and moves carry open
+  documents (text, undo; a new id, so the language server reopens them),
+  tabs, open folders and the explorer clipboard (`rad_paths_moved`).
+  Not done: several rows selected at once; drag and drop inside the tree;
+  key labels say "Ctrl" / "Alt" on the Mac in every menu (Cmd / Option).
 - [ ] **D3. Open in New Window**: rad has one window today. Later, after
   D2 (a second window with its own layout and session).
 

@@ -256,6 +256,62 @@ rad_document_tab_count(RAD_Document *doc)
 }
 
 internal B32
+rad_path_is_under(String8 path, String8 root, String8 *suffix_out)
+{
+  // NOTE(rad): `path` is `root` or inside it; the rest ("" or "/...") out
+  B32 result = 0;
+  if(root.size != 0 && path.size >= root.size &&
+     str8_match(str8_prefix(path, root.size), root, StringMatchFlag_CaseInsensitive|StringMatchFlag_SlashInsensitive) &&
+     (path.size == root.size || path.str[root.size] == '/' || path.str[root.size] == '\\'))
+  {
+    result = 1;
+    if(suffix_out != 0)
+    {
+      *suffix_out = str8_skip(path, root.size);
+    }
+  }
+  return result;
+}
+
+internal void
+rad_paths_moved(String8 old_path, String8 new_path)
+{
+  // NOTE(rad): a file or folder was renamed or moved (explorer, TODO_2 D2):
+  // its open documents keep their text, edits and undo under the new path;
+  // each gets a new id, so the language server closes the old URI and opens
+  // the new one; tabs follow
+  Temp scratch = scratch_begin(0, 0);
+  for(RAD_Document *doc = rad_state->first_document; doc != 0; doc = doc->next)
+  {
+    String8 suffix = {0};
+    if(rad_path_is_under(doc->path, old_path, &suffix))
+    {
+      doc->path = push_str8f(doc->arena, "%S%S", new_path, suffix);
+      rad_state->document_id_gen += 1;
+      doc->id = rad_state->document_id_gen;
+    }
+  }
+  CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
+  for(CFG_NodePtrNode *wn = windows.first; wn != 0; wn = wn->next)
+  {
+    CFG_PanelTree tree = cfg_panel_tree_from_cfg(scratch.arena, wn->v);
+    for(CFG_PanelNode *p = tree.root; p != &cfg_nil_panel_node; p = cfg_panel_node_rec__depth_first_pre(tree.root, p).next)
+    {
+      for(CFG_NodePtrNode *tn = p->tabs.first; tn != 0; tn = tn->next)
+      {
+        String8 suffix = {0};
+        if(str8_match(tn->v->string, str8_lit("text"), 0) && rad_path_is_under(rad_file_path_from_tab(tn->v), old_path, &suffix))
+        {
+          String8 tab_path = push_str8f(scratch.arena, "%S%S", new_path, suffix);
+          cfg_node_new_replace(rad_state->cfg, cfg_node_child_from_string(tn->v, str8_lit("path")), tab_path);
+        }
+      }
+    }
+  }
+  scratch_end(scratch);
+}
+
+internal B32
 rad_document_save(RAD_Document *doc)
 {
   B32 result = 0;
@@ -1813,6 +1869,30 @@ rad_code_view_fold_expand_line(RAD_CodeViewState *cv, TXT_Patched *patched, S64 
   }
 }
 
+internal F32
+rad_inlay_hints_width_before(CFG_Node *tab, FNT_Tag font, F32 font_size, Rng1U64 line_range, U64 off)
+{
+  // NOTE(rad): the width of the inlay hints (TODO_2 C3) shown on a line
+  // before offset `off` (x positions computed from the text alone add it)
+  F32 result = 0;
+  if(rad_state->settings.inlay_hints && str8_match(tab->string, str8_lit("text"), 0))
+  {
+    U64 count = 0;
+    RAD_LspInlayHint *hints = rad_lsp_inlay_hints_from_document(rad_document_from_tab(tab), &count);
+    U64 lo = 0, hi = count;
+    for(; lo < hi;)
+    {
+      U64 mid = (lo+hi)/2;
+      if(hints[mid].off < line_range.min) { lo = mid+1; } else { hi = mid; }
+    }
+    for(U64 idx = lo; idx < count && hints[idx].off < off && hints[idx].off <= line_range.max; idx += 1)
+    {
+      result += fnt_dim_from_tag_size_string(font, font_size, 0, 0, hints[idx].label).x;
+    }
+  }
+  return result;
+}
+
 internal String8
 rad_lang_display_name(TXT_LangKind lang)
 {
@@ -2507,6 +2587,39 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       }
     }
 
+    // rad: not in raddbg: inlay hints (TODO_2 C3), by line
+    cv->layout_inlay_count = 0;
+    if(cv->editable && rad_state->settings.inlay_hints)
+    {
+      U64 hint_count = 0;
+      RAD_LspInlayHint *hints = rad_lsp_inlay_hints_from_document(rad_document_from_tab(tab), &hint_count);
+      if(hint_count != 0)
+      {
+        code_slice_params.line_inlays = push_array(scratch.arena, RAD_CodeSliceInlayArray, visible_line_count);
+        for EachIndex(line_idx, visible_line_count)
+        {
+          Rng1U64 line_range = code_slice_params.line_ranges[line_idx];
+          U64 lo = 0, hi = hint_count;
+          for(; lo < hi;)
+          {
+            U64 mid = (lo+hi)/2;
+            if(hints[mid].off < line_range.min) { lo = mid+1; } else { hi = mid; }
+          }
+          U64 end = lo;
+          for(; end < hint_count && hints[end].off <= line_range.max; end += 1) {}
+          RAD_CodeSliceInlayArray *inlays = &code_slice_params.line_inlays[line_idx];
+          inlays->count = end - lo;
+          cv->layout_inlay_count += inlays->count;
+          inlays->v = push_array(scratch.arena, RAD_CodeSliceInlay, inlays->count);
+          for EachIndex(idx, inlays->count)
+          {
+            inlays->v[idx].col = hints[lo+idx].off - line_range.min;
+            inlays->v[idx].text = hints[lo+idx].label;
+          }
+        }
+      }
+    }
+
     // rad: bucket tokens by line
     {
       U64 token_idx = 0;
@@ -2906,7 +3019,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
         {
           Rng1U64 line_range = txt_range_from_line_num(&text_patched.line_map, (U64)line_num);
           String8 prefix = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, r1u64(line_range.min, Max(line_range.min, cmp->word_start)));
-          F32 advance = fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, prefix).x;
+          F32 advance = fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, prefix).x + rad_inlay_hints_width_before(tab, code_font, code_font_size, line_range, cmp->word_start);
           F32 x = sig.text_rect.x0 + sig.text_x_off + advance;
           F32 y = sig.text_rect.y0 + (F32)(line_row - visible_line_num_range.min)*code_line_height;
           cmp->anchor_line_rect = r2f32p(x, y, x + code_line_height, y + code_line_height);
@@ -2927,7 +3040,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
         {
           Rng1U64 line_range = txt_range_from_line_num(&text_patched.line_map, (U64)line_num);
           String8 prefix = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, r1u64(line_range.min, Max(line_range.min, cv->cursor)));
-          F32 advance = fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, prefix).x;
+          F32 advance = fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, prefix).x + rad_inlay_hints_width_before(tab, code_font, code_font_size, line_range, cv->cursor);
           F32 x = sig.text_rect.x0 + sig.text_x_off + advance;
           F32 y = sig.text_rect.y0 + (F32)(line_row - visible_line_num_range.min)*code_line_height;
           sh->anchor_line_rect = r2f32p(x, y, x + code_line_height, y + code_line_height);
@@ -2965,7 +3078,8 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
         {
           Rng1U64 line_range = txt_range_from_line_num(&text_patched.line_map, (U64)line_num);
           String8 prefix = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, r1u64(line_range.min, Max(line_range.min, sig.mouse_token_range.min)));
-          F32 x = sig.text_rect.x0 + sig.text_x_off + fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, prefix).x;
+          F32 x = sig.text_rect.x0 + sig.text_x_off + fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, prefix).x +
+                  rad_inlay_hints_width_before(tab, code_font, code_font_size, line_range, sig.mouse_token_range.min);
           F32 line_y0 = sig.text_rect.y0 + (F32)(line_row - visible_line_num_range.min)*code_line_height;
           F32 line_y1 = line_y0 + code_line_height;
           F32 gap = ui_top_font_size()*0.5f;
@@ -3109,7 +3223,8 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       {
         Rng1U64 cursor_line_range = txt_range_from_line_num(&text_patched.line_map, cursor_line_num);
         String8 cursor_line = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, cursor_line_range);
-        F32 cursor_advance = fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, str8_prefix(cursor_line, cursor-cursor_line_range.min)).x;
+        F32 cursor_advance = fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, str8_prefix(cursor_line, cursor-cursor_line_range.min)).x +
+                             rad_inlay_hints_width_before(tab, code_font, code_font_size, cursor_line_range, cursor);
 
         // rad: scroll x
         {
@@ -3142,7 +3257,8 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     {
       Rng1U64 cursor_line_range = txt_range_from_line_num(&text_patched.line_map, cursor_line_num);
       String8 cursor_line = memory_map_data_from_range(scratch.arena, &text_patched.memory_map, cursor_line_range);
-      S64 cursor_off = (S64)(fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, str8_prefix(cursor_line, cursor-cursor_line_range.min)).x + priority_margin_width_px + catchall_margin_width_px + line_num_width_px);
+      S64 cursor_off = (S64)(fnt_dim_from_tag_size_string(code_font, code_font_size, 0, code_tab_size, str8_prefix(cursor_line, cursor-cursor_line_range.min)).x +
+                             rad_inlay_hints_width_before(tab, code_font, code_font_size, cursor_line_range, cursor) + priority_margin_width_px + catchall_margin_width_px + line_num_width_px);
       Rng1S64 visible_pixel_range =
       {
         scroll_pos.x.idx,
@@ -3747,13 +3863,46 @@ rad_explorer_rows_build(RAD_ExplorerState *ex, String8 root)
   {
     rad_explorer_rows_push_folder__(ex->rows_arena, ex, &rows, ex->rows_root, 0);
   }
-  ex->rows = push_array(ex->rows_arena, RAD_ExplorerRow, rows.count);
+  ex->rows = push_array(ex->rows_arena, RAD_ExplorerRow, rows.count+1);
   ex->rows_count = rows.count;
   {
     U64 idx = 0;
     for(RAD_ExplorerRowNode *n = rows.first; n != 0; n = n->next, idx += 1)
     {
       ex->rows[idx] = n->v;
+    }
+  }
+
+  //- rad: a new file / folder's name field: first under its folder (Zed,
+  // VS Code), or first of all for the root
+  if(filter.size == 0 && (ex->edit_kind == RAD_ExplorerEditKind_NewFile || ex->edit_kind == RAD_ExplorerEditKind_NewFolder))
+  {
+    String8 target = str8(ex->edit_target_buffer, ex->edit_target_size);
+    S64 insert_idx = -1;
+    S32 depth = 0;
+    if(str8_match(target, ex->rows_root, 0))
+    {
+      insert_idx = 0;
+    }
+    else for EachIndex(idx, ex->rows_count)
+    {
+      if(ex->rows[idx].is_folder && ex->rows[idx].is_expanded && str8_match(ex->rows[idx].path, target, 0))
+      {
+        insert_idx = (S64)idx+1;
+        depth = ex->rows[idx].depth+1;
+        break;
+      }
+    }
+    if(insert_idx >= 0)
+    {
+      MemoryCopy(ex->rows+insert_idx+1, ex->rows+insert_idx, (ex->rows_count-insert_idx)*sizeof(RAD_ExplorerRow));
+      RAD_ExplorerRow *row = &ex->rows[insert_idx];
+      MemoryZeroStruct(row);
+      row->path = push_str8f(ex->rows_arena, "%S/", target);
+      row->depth = depth;
+      row->is_folder = (ex->edit_kind == RAD_ExplorerEditKind_NewFolder);
+      row->is_edit_row = 1;
+      ex->rows_count += 1;
     }
   }
   ex->rows_build_us = now_time_us();
@@ -3829,6 +3978,406 @@ internal UI_BOX_CUSTOM_DRAW(rad_explorer_folder_fill_draw)
   RAD_ExplorerFolderFillDrawData *data = (RAD_ExplorerFolderFillDrawData *)user_data;
   dr_text(rad_font_from_slot(RAD_FontSlot_Icons), box->font_size, 0, 0, rad_raster_flags_from_slot(RAD_FontSlot_Icons),
           ui_box_text_position(box), data->color, rad_icon_kind_text_table[RAD_IconKind_FolderFill]);
+}
+
+////////////////////////////////
+//~ rad: Explorer File Operations (TODO_2 D2)
+//
+// New File / New Folder / Rename type a name in the tree (Enter: done, Esc:
+// cancel); Delete asks first (the popup) and moves to the Trash; Cut / Copy
+// hold one path (also put on the clipboard as text), Paste copies or moves it
+// into the selected folder (a name that exists gets " copy"); renames and
+// moves carry open tabs along (rad_paths_moved).
+
+internal B32
+rad_explorer_path_exists(String8 path)
+{
+  B32 result = (file_path_exists(path) || folder_path_exists(path));
+  return result;
+}
+
+internal B32
+rad_copy_folder_recursive(String8 dst, String8 src)
+{
+  Temp scratch = scratch_begin(0, 0);
+  B32 ok = make_directory(dst);
+  FileIter *it = file_iter_begin(scratch.arena, src, 0);
+  for(FileInfo info = {0}; ok && file_iter_next(scratch.arena, it, &info);)
+  {
+    String8 src_child = push_str8f(scratch.arena, "%S/%S", src, info.name);
+    String8 dst_child = push_str8f(scratch.arena, "%S/%S", dst, info.name);
+    ok = ((info.props.flags & FilePropertyFlag_IsFolder) ? rad_copy_folder_recursive(dst_child, src_child) : copy_file_path(dst_child, src_child));
+  }
+  file_iter_end(it);
+  scratch_end(scratch);
+  return ok;
+}
+
+internal U64
+rad_explorer_stem_size(String8 name)
+{
+  // NOTE(rad): the name without its extension ("main" of "main.rs"; a
+  // leading dot is no extension: ".gitignore")
+  U64 result = name.size;
+  for(U64 idx = name.size; idx > 1; idx -= 1)
+  {
+    if(name.str[idx-1] == '.')
+    {
+      result = idx-1;
+      break;
+    }
+  }
+  return result;
+}
+
+internal String8
+rad_explorer_unique_path(Arena *arena, String8 folder, String8 name, B32 is_folder)
+{
+  // NOTE(rad): "name copy.ext", "name copy 2.ext", ... (Finder, VS Code)
+  U64 stem_size = (is_folder ? name.size : rad_explorer_stem_size(name));
+  String8 stem = str8_prefix(name, stem_size);
+  String8 ext = str8_skip(name, stem_size);
+  String8 result = push_str8f(arena, "%S/%S", folder, name);
+  for(U64 n = 1; n < 10000 && rad_explorer_path_exists(result); n += 1)
+  {
+    result = (n == 1 ? push_str8f(arena, "%S/%S copy%S", folder, stem, ext) :
+              push_str8f(arena, "%S/%S copy %I64u%S", folder, stem, n, ext));
+  }
+  return result;
+}
+
+internal void
+rad_explorer_select_path(RAD_ExplorerState *ex, String8 root, String8 path)
+{
+  // NOTE(rad): selects `path` once the rows are rebuilt; its folders open
+  for(String8 p = str8_chop_last_slash(path); p.size > root.size; p = str8_chop_last_slash(p))
+  {
+    rad_explorer_set_expanded(ex, p, 1);
+  }
+  ex->selected_path_size = Min(path.size, sizeof(ex->selected_path_buffer));
+  MemoryCopy(ex->selected_path_buffer, path.str, ex->selected_path_size);
+  ex->rows_dirty = 1;
+  rad_request_frame();
+}
+
+internal void
+rad_explorer_moved(RAD_ExplorerState *ex, String8 root, String8 old_path, String8 new_path)
+{
+  // NOTE(rad): tabs, documents, open folders and the clipboard follow a
+  // rename / move
+  Temp scratch = scratch_begin(0, 0);
+  rad_paths_moved(old_path, new_path);
+  String8List expanded = {0};
+  for(RAD_ExplorerExpansion *e = ex->first_expansion; e != 0; e = e->next)
+  {
+    String8 suffix = {0};
+    if(rad_path_is_under(e->path, old_path, &suffix))
+    {
+      str8_list_pushf(scratch.arena, &expanded, "%S%S", new_path, suffix);
+    }
+  }
+  for(String8Node *n = expanded.first; n != 0; n = n->next)
+  {
+    rad_explorer_set_expanded(ex, n->string, 1);
+  }
+  String8 suffix = {0};
+  if(rad_path_is_under(str8(ex->clip_path_buffer, ex->clip_path_size), old_path, &suffix))
+  {
+    String8 clip = push_str8f(scratch.arena, "%S%S", new_path, suffix);
+    ex->clip_path_size = Min(clip.size, sizeof(ex->clip_path_buffer));
+    MemoryCopy(ex->clip_path_buffer, clip.str, ex->clip_path_size);
+  }
+  rad_explorer_select_path(ex, root, new_path);
+  scratch_end(scratch);
+}
+
+internal void
+rad_explorer_edit_begin(RAD_ExplorerState *ex, String8 root, RAD_ExplorerEditKind kind, String8 target, String8 name)
+{
+  ex->edit_kind = kind;
+  ex->edit_target_size = Min(target.size, sizeof(ex->edit_target_buffer));
+  MemoryCopy(ex->edit_target_buffer, target.str, ex->edit_target_size);
+  ex->edit_size = Min(name.size, sizeof(ex->edit_buffer));
+  MemoryCopy(ex->edit_buffer, name.str, ex->edit_size);
+
+  // rad: rename: the name without its extension selected (VS Code, Zed)
+  ex->edit_mark = 0;
+  ex->edit_cursor = (kind == RAD_ExplorerEditKind_Rename ? rad_explorer_stem_size(str8(ex->edit_buffer, ex->edit_size)) : 0);
+  ex->filter_size = ex->filter_cursor = ex->filter_mark = 0;
+  ex->filter_focused = 0;
+  if(kind == RAD_ExplorerEditKind_Rename)
+  {
+    rad_explorer_select_path(ex, root, target);
+  }
+  else
+  {
+    // rad: the new row sits in the folder, which opens
+    Temp scratch = scratch_begin(0, 0);
+    if(target.size > root.size)
+    {
+      rad_explorer_set_expanded(ex, target, 1);
+    }
+    rad_explorer_select_path(ex, root, push_str8f(scratch.arena, "%S/", target));
+    scratch_end(scratch);
+  }
+}
+
+internal void
+rad_explorer_edit_end(CFG_Node *tab, RAD_ExplorerState *ex, B32 commit)
+{
+  Temp scratch = scratch_begin(0, 0);
+  String8 root = rad_explorer_folder_from_tab(tab);
+  String8 target = push_str8_copy(scratch.arena, str8(ex->edit_target_buffer, ex->edit_target_size));
+  String8 name = str8_skip_chop_whitespace(push_str8_copy(scratch.arena, str8(ex->edit_buffer, ex->edit_size)));
+  RAD_ExplorerEditKind kind = ex->edit_kind;
+  B32 is_new = (kind == RAD_ExplorerEditKind_NewFile || kind == RAD_ExplorerEditKind_NewFolder);
+  B32 done = 1;
+  String8 selected = target;
+  if(commit && kind != RAD_ExplorerEditKind_None && name.size != 0)
+  {
+    B32 bad_name = (str8_match(name, str8_lit("."), 0) || str8_match(name, str8_lit(".."), 0) ||
+                    str8_find_needle(name, 0, str8_lit("\\"), 0) < name.size ||
+                    (!is_new && str8_find_needle(name, 0, str8_lit("/"), 0) < name.size));
+    if(bad_name)
+    {
+      log_user_errorf("\"%S\" is not a valid name.", name);
+      done = 0;
+    }
+    else if(is_new)
+    {
+      // rad: "a/b/c.rs" makes the folders on the way (VS Code)
+      String8 path = push_str8f(scratch.arena, "%S/%S", target, name);
+      if(rad_explorer_path_exists(path))
+      {
+        log_user_errorf("\"%S\" already exists here.", name);
+        done = 0;
+      }
+      else
+      {
+        for(U64 off = target.size+1; off < path.size; off += 1)
+        {
+          if(path.str[off] == '/')
+          {
+            make_directory(str8_prefix(path, off));
+          }
+        }
+        B32 ok = (kind == RAD_ExplorerEditKind_NewFolder ? make_directory(path) : write_data_to_file_path(path, str8_zero()));
+        if(!ok)
+        {
+          log_user_errorf("Could not create \"%S\".", name);
+          done = 0;
+        }
+        else
+        {
+          selected = path;
+          if(kind == RAD_ExplorerEditKind_NewFile)
+          {
+            rad_cmd(RAD_CmdKind_OpenFile, .panel = rad_explorer_target_panel_from_tab(tab)->id, .file_path = path);
+          }
+        }
+      }
+    }
+    else if(kind == RAD_ExplorerEditKind_Rename)
+    {
+      String8 new_path = push_str8f(scratch.arena, "%S/%S", str8_chop_last_slash(target), name);
+      if(str8_match(new_path, target, 0))
+      {
+        // rad: unchanged
+      }
+      else if(!str8_match(new_path, target, StringMatchFlag_CaseInsensitive) && rad_explorer_path_exists(new_path))
+      {
+        log_user_errorf("\"%S\" already exists here.", name);
+        done = 0;
+      }
+      else if(!move_file_path(new_path, target))
+      {
+        log_user_errorf("Could not rename \"%S\".", str8_skip_last_slash(target));
+        done = 0;
+      }
+      else
+      {
+        ex->edit_kind = RAD_ExplorerEditKind_None;
+        rad_explorer_moved(ex, root, target, new_path);
+        selected = new_path;
+      }
+    }
+  }
+  if(done)
+  {
+    ex->edit_kind = RAD_ExplorerEditKind_None;
+    rad_explorer_select_path(ex, root, selected);
+  }
+  scratch_end(scratch);
+}
+
+internal void
+rad_explorer_cmd(CFG_Node *tab, RAD_CmdKind kind, RAD_CmdParams *params)
+{
+  RAD_ExplorerState *ex = &rad_view_state_from_cfg(tab)->ex;
+  String8 root = rad_explorer_folder_from_tab(tab);
+  if(!ex->initialized || root.size == 0)
+  {
+    return;
+  }
+  Temp scratch = scratch_begin(0, 0);
+
+  //- rad: the target: the command's path, else the selected row, else the root
+  String8 path = (params->file_path.size != 0 ? path_normalized_from_string(scratch.arena, params->file_path) :
+                  push_str8_copy(scratch.arena, str8(ex->selected_path_buffer, ex->selected_path_size)));
+  if(path.size == 0 || str8_match(str8_postfix(path, 1), str8_lit("/"), 0) || !rad_path_is_under(path, root, 0))
+  {
+    path = root;
+  }
+  B32 is_root = str8_match(path, root, 0);
+  B32 is_folder = (is_root || folder_path_exists(path));
+  String8 folder = (is_folder ? path : str8_chop_last_slash(path));
+  String8 name = str8_skip_last_slash(path);
+  B32 confirmed = str8_match(params->string, str8_lit("confirmed"), 0);
+  if(ex->edit_kind != RAD_ExplorerEditKind_None)
+  {
+    rad_explorer_edit_end(tab, ex, 1);
+  }
+
+  switch(kind)
+  {
+    default:{}break;
+    case RAD_CmdKind_ExplorerNewFile:
+    case RAD_CmdKind_ExplorerNewFolder:
+    {
+      rad_explorer_edit_begin(ex, root, (kind == RAD_CmdKind_ExplorerNewFile ? RAD_ExplorerEditKind_NewFile : RAD_ExplorerEditKind_NewFolder), folder, str8_zero());
+      rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
+    }break;
+    case RAD_CmdKind_ExplorerRename:
+    if(!is_root)
+    {
+      rad_explorer_edit_begin(ex, root, RAD_ExplorerEditKind_Rename, path, name);
+      rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
+    }break;
+    case RAD_CmdKind_ExplorerDelete:
+    if(!is_root)
+    {
+      if(!confirmed)
+      {
+#if OS_MAC
+        String8 desc = str8_lit("It goes to the Trash (Finder can put it back).");
+#elif OS_WINDOWS
+        String8 desc = str8_lit("It goes to the Recycle Bin.");
+#else
+        String8 desc = str8_lit("It goes to the trash.");
+#endif
+        rad_popup_open(push_str8f(scratch.arena, "Are you sure you want to delete \"%S\"?", name), desc, kind, path);
+      }
+      else if(!sh_move_to_trash(path))
+      {
+        log_user_errorf("Could not move \"%S\" to the Trash.", name);
+      }
+      else
+      {
+        if(rad_path_is_under(str8(ex->clip_path_buffer, ex->clip_path_size), path, 0))
+        {
+          ex->clip_path_size = 0;
+        }
+        ex->rows_dirty = 1;
+        rad_request_frame();
+      }
+    }break;
+    case RAD_CmdKind_ExplorerCut:
+    case RAD_CmdKind_ExplorerCopy:
+    if(!is_root)
+    {
+      ex->clip_path_size = Min(path.size, sizeof(ex->clip_path_buffer));
+      MemoryCopy(ex->clip_path_buffer, path.str, ex->clip_path_size);
+      ex->clip_cut = (kind == RAD_CmdKind_ExplorerCut);
+      wm_set_clipboard_text(path);
+    }break;
+    case RAD_CmdKind_ExplorerPaste:
+    if(ex->clip_path_size != 0)
+    {
+      String8 src = push_str8_copy(scratch.arena, str8(ex->clip_path_buffer, ex->clip_path_size));
+      B32 src_is_folder = folder_path_exists(src);
+      String8 dst_folder = folder;
+      if(!rad_explorer_path_exists(src))
+      {
+        log_user_errorf("\"%S\" is gone.", str8_skip_last_slash(src));
+        ex->clip_path_size = 0;
+      }
+      else if(ex->clip_cut && rad_path_is_under(dst_folder, src, 0))
+      {
+        log_user_errorf("Cannot move \"%S\" into itself.", str8_skip_last_slash(src));
+      }
+      else if(ex->clip_cut && str8_match(str8_chop_last_slash(src), dst_folder, 0))
+      {
+        // rad: moved to where it is: nothing to do
+        ex->clip_path_size = 0;
+      }
+      else
+      {
+        // rad: a folder copied into itself: next to it instead
+        if(!ex->clip_cut && src_is_folder && rad_path_is_under(dst_folder, src, 0))
+        {
+          dst_folder = str8_chop_last_slash(src);
+        }
+        String8 dst = rad_explorer_unique_path(scratch.arena, dst_folder, str8_skip_last_slash(src), src_is_folder);
+        B32 ok = 0;
+        if(ex->clip_cut)
+        {
+          ok = move_file_path(dst, src);
+          if(ok)
+          {
+            ex->clip_path_size = 0;
+            rad_explorer_moved(ex, root, src, dst);
+          }
+        }
+        else
+        {
+          ok = (src_is_folder ? rad_copy_folder_recursive(dst, src) : copy_file_path(dst, src));
+          if(ok)
+          {
+            rad_explorer_select_path(ex, root, dst);
+          }
+        }
+        if(!ok)
+        {
+          log_user_errorf("Could not %s \"%S\".", ex->clip_cut ? "move" : "copy", str8_skip_last_slash(src));
+        }
+      }
+    }break;
+    case RAD_CmdKind_ExplorerCopyPath:
+    {
+      wm_set_clipboard_text(path);
+    }break;
+    case RAD_CmdKind_ExplorerCopyRelativePath:
+    {
+      String8 suffix = {0};
+      rad_path_is_under(path, root, &suffix);
+      suffix = str8_skip_chop_slashes(suffix);
+      wm_set_clipboard_text(suffix.size != 0 ? suffix : str8_lit("."));
+    }break;
+    case RAD_CmdKind_ExplorerReveal:
+    {
+      sh_show_in_file_browser(path);
+    }break;
+    case RAD_CmdKind_ExplorerOpen:
+    case RAD_CmdKind_ExplorerOpenToSide:
+    if(!is_folder)
+    {
+      CFG_Node *target_panel = rad_explorer_target_panel_from_tab(tab);
+      if(kind == RAD_CmdKind_ExplorerOpen)
+      {
+        rad_cmd(RAD_CmdKind_OpenFile, .panel = target_panel->id, .file_path = path);
+      }
+      else
+      {
+        rad_cmd(RAD_CmdKind_OpenFile, .panel = target_panel->id, .file_path = path, .dst_panel = target_panel->id, .dir2 = Dir2_Right);
+      }
+    }
+    else if(!is_root)
+    {
+      rad_explorer_set_expanded(ex, path, !rad_explorer_is_expanded(ex, path));
+      rad_request_frame();
+    }break;
+  }
+  scratch_end(scratch);
 }
 
 internal void
@@ -3908,6 +4457,7 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
   String8 toggle_path = {0};
   String8 open_path = {0};
   String8 reveal_path = {0};
+  UI_Key menu_key = ui_key_from_stringf(ui_key_zero(), "_explorer_menu_%p", tab);
   ex->layout_rect = list_rect;
   ex->layout_row_height = row_height_px;
   ex->layout_font_size = ui_top_font_size();
@@ -3920,6 +4470,22 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
   {
     for(UI_Event *evt = 0; ui_next_event(&evt);)
     {
+      if(ex->edit_kind != RAD_ExplorerEditKind_None)
+      {
+        // rad: a name is typed (TODO_2 D2): Enter is done, Esc cancels; the
+        // rest goes to its cell
+        if(evt->kind == UI_EventKind_Press && evt->modifiers == 0 && (evt->key == WM_Key_Return || evt->key == WM_Key_Esc))
+        {
+          rad_explorer_edit_end(tab, ex, evt->key == WM_Key_Return);
+          ui_eat_event(evt);
+        }
+        else if(evt->kind == UI_EventKind_Text && str8_find_needle(evt->string, 0, str8_lit("\n"), 0) < evt->string.size)
+        {
+          rad_explorer_edit_end(tab, ex, 1);
+          ui_eat_event(evt);
+        }
+        continue;
+      }
       if(ex->filter_focused)
       {
         if((evt->kind == UI_EventKind_Press && evt->modifiers == 0 && evt->key == WM_Key_Return) ||
@@ -3951,7 +4517,42 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
         }
         continue;
       }
-      if(evt->kind == UI_EventKind_Text && evt->string.size != 0 && !(evt->flags & UI_EventFlag_Paste) &&
+      //- rad: file operation keys (rad_explorer_binding_table): key presses;
+      // Ctrl+C / X / V and Delete arrive as edit / paste events
+      RAD_CmdKind op = RAD_CmdKind_Null;
+      if(evt->kind == UI_EventKind_Press)
+      {
+        for EachElement(idx, rad_explorer_binding_table)
+        {
+          if(rad_explorer_binding_table[idx].key == evt->key && rad_explorer_binding_table[idx].modifiers == evt->modifiers)
+          {
+            op = rad_explorer_binding_table[idx].kind;
+            break;
+          }
+        }
+      }
+      else if(evt->kind == UI_EventKind_Edit && evt->flags & UI_EventFlag_Copy)
+      {
+        op = (evt->flags & UI_EventFlag_Delete ? RAD_CmdKind_ExplorerCut : RAD_CmdKind_ExplorerCopy);
+      }
+#if OS_MAC
+      else if(evt->kind == UI_EventKind_Edit && evt->flags & UI_EventFlag_Delete && evt->delta_unit == UI_EventDeltaUnit_Line && evt->delta_2s32.x < 0)
+#else
+      else if(evt->kind == UI_EventKind_Edit && evt->flags & UI_EventFlag_Delete && evt->delta_unit == UI_EventDeltaUnit_Char && evt->delta_2s32.x > 0)
+#endif
+      {
+        op = RAD_CmdKind_ExplorerDelete;
+      }
+      else if(evt->kind == UI_EventKind_Text && evt->flags & UI_EventFlag_Paste)
+      {
+        op = RAD_CmdKind_ExplorerPaste;
+      }
+      if(op != RAD_CmdKind_Null)
+      {
+        rad_cmd(op);
+        ui_eat_event(evt);
+      }
+      else if(evt->kind == UI_EventKind_Text && evt->string.size != 0 && !(evt->flags & UI_EventFlag_Paste) &&
          str8_find_needle(evt->string, 0, str8_lit("\n"), 0) == evt->string.size)
       {
         ex->filter_focused = 1;
@@ -3970,7 +4571,7 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
   UI_Box *column = &ui_nil_box;
   if(root.size != 0) UI_WidthFill UI_HeightFill UI_ChildLayoutAxis(Axis2_Y)
   {
-    column = ui_build_box_from_stringf(0, "###explorer_column");
+    column = ui_build_box_from_stringf(UI_BoxFlag_MouseClickable, "###explorer_column");
   }
   if(root.size != 0) UI_Parent(column)
   {
@@ -4113,6 +4714,8 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
         RAD_ExplorerRow *row = &ex->rows[row_idx];
         U64 row_hash = u64_hash_from_str8(row->path);
         B32 row_selected = (ex->cursor.y == row_idx+1);
+        B32 row_editing = (row->is_edit_row ? (ex->edit_kind == RAD_ExplorerEditKind_NewFile || ex->edit_kind == RAD_ExplorerEditKind_NewFolder) :
+                           ex->edit_kind == RAD_ExplorerEditKind_Rename && str8_match(row->path, str8(ex->edit_target_buffer, ex->edit_target_size), 0));
 
         //- rad: row title (same layout as raddbg's rd_title_fstrs_from_file_path)
         DR_FStrList fstrs = {0};
@@ -4197,9 +4800,19 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
           }
           cell_params.expanded_out = &next_expanded;
           cell_params.search_needle = (filtering ? str8(ex->rows_filter_buffer, ex->rows_filter_size) : str8_zero());
+          if(row_editing)
+          {
+            // rad: a name typed in the tree (as a Settings text value)
+            cell_params.pre_edit_value       = row->name;
+            cell_params.edit_buffer          = ex->edit_buffer;
+            cell_params.edit_buffer_size     = sizeof(ex->edit_buffer);
+            cell_params.edit_string_size_out = &ex->edit_size;
+            cell_params.cursor               = &ex->edit_cursor;
+            cell_params.mark                 = &ex->edit_mark;
+          }
           UI_Parent(cell_box)
             UI_FocusHot(row_selected ? UI_FocusKind_On : UI_FocusKind_Off)
-            UI_FocusActive(UI_FocusKind_Off)
+            UI_FocusActive(row_editing ? UI_FocusKind_On : UI_FocusKind_Off)
             RAD_Font(RAD_FontSlot_Code)
             UI_TagF("weak")
           {
@@ -4212,17 +4825,38 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
         // toggles a folder; the expander toggles
         if(ui_pressed(sig) || ui_pressed(row_sig))
         {
+          if(ex->edit_kind != RAD_ExplorerEditKind_None && !row_editing)
+          {
+            // rad: another row pressed: the typed name is done (VS Code)
+            rad_explorer_edit_end(tab, ex, 1);
+          }
           ex->cursor = ex->mark = v2s64(0, row_idx+1);
           ex->filter_focused = 0;
           rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
         }
-        else if((ui_dragging(sig) || ui_dragging(row_sig)) && !row->is_folder && !rad_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
+        else if((ui_right_clicked(sig) || ui_right_clicked(row_sig)) && !row->is_edit_row)
+        {
+          // rad: the context menu (TODO_2 D2) on this row
+          if(ex->edit_kind != RAD_ExplorerEditKind_None && !row_editing)
+          {
+            rad_explorer_edit_end(tab, ex, 1);
+          }
+          ex->cursor = ex->mark = v2s64(0, row_idx+1);
+          ex->selected_path_size = Min(row->path.size, sizeof(ex->selected_path_buffer));
+          MemoryCopy(ex->selected_path_buffer, row->path.str, ex->selected_path_size);
+          ex->filter_focused = 0;
+          ex->menu_is_folder = row->is_folder;
+          ex->menu_is_root = 0;
+          ui_ctx_menu_open(menu_key, ui_key_zero(), ui_mouse());
+          rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
+        }
+        else if((ui_dragging(sig) || ui_dragging(row_sig)) && !row->is_folder && !row_editing && !rad_drag_is_active() && length_2f32(ui_drag_delta()) > 10.f)
         {
           // rad: a file dragged out of the explorer opens where it is dropped
           // (raddbg's file drag from its file system views)
           rad_drag_begin_file(row->path);
         }
-        if(ui_double_clicked(sig) || ui_double_clicked(row_sig))
+        if(!row_editing && (ui_double_clicked(sig) || ui_double_clicked(row_sig)))
         {
           if(row->is_folder && filtering)
           {
@@ -4246,9 +4880,66 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
   }
 
   //////////////////////////////
-  //- rad: remember the selected path (selection survives row rebuilds)
+  //- rad: context menu (TODO_2 D2; raddbg's context menu look): a right
+  // click below the rows: the root folder's
   //
-  if(1 <= ex->cursor.y && ex->cursor.y <= rows_count)
+  if(root.size != 0)
+  {
+    UI_Signal column_sig = ui_signal_from_box(column);
+    if(ui_right_clicked(column_sig))
+    {
+      if(ex->edit_kind != RAD_ExplorerEditKind_None)
+      {
+        rad_explorer_edit_end(tab, ex, 1);
+      }
+      ex->cursor = ex->mark = v2s64(0, 0);
+      ex->selected_path_size = 0;
+      ex->menu_is_folder = 1;
+      ex->menu_is_root = 1;
+      ui_ctx_menu_open(menu_key, ui_key_zero(), ui_mouse());
+      rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
+    }
+  }
+  UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(30.f, 1.f)) UI_TagF("implicit")
+  {
+    ex->layout_menu_frame = rad_state->frame_index;
+    if(ex->menu_is_root)
+    {
+      RAD_CmdKind cmds[] = {RAD_CmdKind_ExplorerNewFile, RAD_CmdKind_ExplorerNewFolder, RAD_CmdKind_Null,
+                            RAD_CmdKind_ExplorerPaste, RAD_CmdKind_Null,
+                            RAD_CmdKind_ExplorerCopyPath, RAD_CmdKind_ExplorerReveal};
+      U32 codepoints[] = {'n', 'f', 0, 'p', 0, 'a', 'v'};
+      StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), explorer_root_menu_check);
+      rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
+    }
+    else if(ex->menu_is_folder)
+    {
+      RAD_CmdKind cmds[] = {RAD_CmdKind_ExplorerNewFile, RAD_CmdKind_ExplorerNewFolder, RAD_CmdKind_ExplorerReveal, RAD_CmdKind_Null,
+                            RAD_CmdKind_ExplorerCut, RAD_CmdKind_ExplorerCopy, RAD_CmdKind_ExplorerPaste, RAD_CmdKind_Null,
+                            RAD_CmdKind_ExplorerCopyPath, RAD_CmdKind_ExplorerCopyRelativePath, RAD_CmdKind_Null,
+                            RAD_CmdKind_ExplorerRename, RAD_CmdKind_ExplorerDelete};
+      U32 codepoints[] = {'n', 'f', 'v', 0, 't', 'c', 'p', 0, 'a', 'l', 0, 'r', 'd'};
+      StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), explorer_folder_menu_check);
+      rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
+    }
+    else
+    {
+      RAD_CmdKind cmds[] = {RAD_CmdKind_ExplorerOpen, RAD_CmdKind_ExplorerOpenToSide, RAD_CmdKind_ExplorerReveal, RAD_CmdKind_Null,
+                            RAD_CmdKind_ExplorerNewFile, RAD_CmdKind_ExplorerNewFolder, RAD_CmdKind_Null,
+                            RAD_CmdKind_ExplorerCut, RAD_CmdKind_ExplorerCopy, RAD_CmdKind_ExplorerPaste, RAD_CmdKind_Null,
+                            RAD_CmdKind_ExplorerCopyPath, RAD_CmdKind_ExplorerCopyRelativePath, RAD_CmdKind_Null,
+                            RAD_CmdKind_ExplorerRename, RAD_CmdKind_ExplorerDelete};
+      U32 codepoints[] = {'o', 's', 'v', 0, 'n', 'f', 0, 't', 'c', 'p', 0, 'a', 'l', 0, 'r', 'd'};
+      StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), explorer_file_menu_check);
+      rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
+    }
+  }
+
+  //////////////////////////////
+  //- rad: remember the selected path (selection survives row rebuilds;
+  // not while a rebuild is due: a path to select may be waiting for it)
+  //
+  if(!ex->rows_dirty && 1 <= ex->cursor.y && ex->cursor.y <= rows_count)
   {
     String8 path = ex->rows[ex->cursor.y-1].path;
     ex->selected_path_size = Min(path.size, sizeof(ex->selected_path_buffer));

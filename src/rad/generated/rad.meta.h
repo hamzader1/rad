@@ -185,6 +185,7 @@ RAD_SettingCode_smooth_code_text,
 RAD_SettingCode_hint_code_text,
 RAD_SettingCode_show_line_numbers,
 RAD_SettingCode_tab_width,
+RAD_SettingCode_inlay_hints,
 RAD_SettingCode_inline_diagnostics,
 RAD_SettingCode_navigation_bar,
 RAD_SettingCode_show_quick_fixes,
@@ -245,6 +246,18 @@ RAD_CmdKind_ShowOutput,
 RAD_CmdKind_ShowProblems,
 RAD_CmdKind_ShowExplorer,
 RAD_CmdKind_SearchExplorer,
+RAD_CmdKind_ExplorerNewFile,
+RAD_CmdKind_ExplorerNewFolder,
+RAD_CmdKind_ExplorerOpen,
+RAD_CmdKind_ExplorerOpenToSide,
+RAD_CmdKind_ExplorerCut,
+RAD_CmdKind_ExplorerCopy,
+RAD_CmdKind_ExplorerPaste,
+RAD_CmdKind_ExplorerCopyPath,
+RAD_CmdKind_ExplorerCopyRelativePath,
+RAD_CmdKind_ExplorerRename,
+RAD_CmdKind_ExplorerDelete,
+RAD_CmdKind_ExplorerReveal,
 RAD_CmdKind_TogglePinTab,
 RAD_CmdKind_MoveTab,
 RAD_CmdKind_MoveTabToNewPanel,
@@ -301,6 +314,7 @@ B32 smooth_code_text;
 B32 hint_code_text;
 B32 show_line_numbers;
 U64 tab_width;
+B32 inlay_hints;
 B32 inline_diagnostics;
 B32 navigation_bar;
 B32 show_quick_fixes;

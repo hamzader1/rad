@@ -28,6 +28,31 @@ set_setting inline_diagnostics 1
 wait_idle
 expect inline_diag_count == 2
 
+# inlay hints (TODO_2 C3): `: i32` after `unused` and `result`, drawn in the
+# line but not in its text: a click on `=` (col 16) is on it, not on the
+# hint; typing where a hint is hides it until the next answer; setting off:
+# none
+wait_until 60000 inlay_hint_count == 2
+expect line 2 == "    let unused = 5;"
+click code 2 16
+wait_idle
+expect cursor_line == 2
+expect cursor_col == 16
+key left
+text "x"
+wait_frames 2
+expect inlay_hint_count == 1
+key ctrl+z
+wait_idle
+expect dirty == 0
+wait_until 60000 inlay_hint_count == 2
+set_setting inlay_hints 0
+wait_idle
+expect inlay_hint_count == 0
+set_setting inlay_hints 1
+wait_idle
+wait_until 60000 inlay_hint_count == 2
+
 # they follow edits at once (anchored in the text of the version they were
 # computed for), and stay right when the server answers for the new text
 key ctrl+home
@@ -35,6 +60,7 @@ key return
 wait_idle
 expect line_diag 9 == "error"
 expect line_diag 3 == "warning"
+expect inlay_hint_count == 2
 wait 3000
 wait_until 60000 lsp_busy == 0
 expect line_diag 9 == "error"

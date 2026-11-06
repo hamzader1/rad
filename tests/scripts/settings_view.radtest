@@ -8,7 +8,7 @@ cmd settings
 wait_idle
 expect panel == "settings"
 expect tab_count == 3
-expect settings_rows == 37
+expect settings_rows == 38
 expect settings_selected == ""
 expect settings_filter_focused == 0
 
@@ -50,7 +50,7 @@ expect setting tab_width == 2
 click settings_filter
 key esc
 wait_idle
-expect settings_rows == 37
+expect settings_rows == 38
 
 # options menu: Density -> Compact (setting_option 2)
 click setting_row density
@@ -94,7 +94,7 @@ expect settings_rows == 12
 key esc
 wait_idle
 expect settings_filter == ""
-expect settings_rows == 37
+expect settings_rows == 38
 key esc
 wait_idle
 expect settings_filter_focused == 0
@@ -104,5 +104,5 @@ wait_idle
 expect settings_rows == 0
 key esc
 wait_idle
-expect settings_rows == 37
+expect settings_rows == 38
 quit

@@ -124,6 +124,32 @@ sh_show_in_file_browser(String8 path)
   scratch_end(scratch);
 }
 
+internal B32
+sh_move_to_trash(String8 path)
+{
+  // NOTE(rad): Windows: untested (written on the Mac). SHFileOperationW with
+  // FOF_ALLOWUNDO moves to the Recycle Bin; the path list ends with two zeros
+  Temp scratch = scratch_begin(0, 0);
+  String8 path_copy = push_str8_copy(scratch.arena, path);
+  for(U64 idx = 0; idx < path_copy.size; idx += 1)
+  {
+    if(path_copy.str[idx] == '/')
+    {
+      path_copy.str[idx] = '\\';
+    }
+  }
+  String16 path16 = str16_from_8(scratch.arena, path_copy);
+  U16 *from = push_array(scratch.arena, U16, path16.size + 2);
+  MemoryCopy(from, path16.str, path16.size*sizeof(U16));
+  SHFILEOPSTRUCTW op = {0};
+  op.wFunc = FO_DELETE;
+  op.pFrom = (WCHAR *)from;
+  op.fFlags = FOF_ALLOWUNDO|FOF_NOCONFIRMATION|FOF_SILENT|FOF_NOERRORUI;
+  B32 result = (path16.size != 0 && SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted);
+  scratch_end(scratch);
+  return result;
+}
+
 internal void
 sh_open_in_browser(String8 url)
 {

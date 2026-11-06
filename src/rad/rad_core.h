@@ -363,6 +363,17 @@ struct RAD_State
   CFG_ID discard_confirm_cfg_id;
   U64 discard_confirm_deadline_us;
 
+  //- rad: popup (port of raddbg's confirmation popup): a question over the
+  // window; OK sends `popup_cmd_kind` again with .file_path = popup_cmd_path
+  // and .string = "confirmed"
+  B32 popup_active;
+  F32 popup_t;
+  Arena *popup_arena;
+  String8 popup_title;
+  String8 popup_desc;
+  RAD_CmdKind popup_cmd_kind;
+  String8 popup_cmd_path;
+
   //- rad: last focused panel that is not showing an explorer (where the
   // explorer opens files)
   CFG_ID last_editor_panel;
@@ -488,6 +499,7 @@ internal void rad_set_error(String8 string);
 internal void rad_push_cmd(RAD_CmdKind kind, RAD_CmdParams *params);
 #define rad_cmd(kind, ...) rad_push_cmd((kind), &(RAD_CmdParams){.window = 0, __VA_ARGS__})
 internal void rad_exec_cmd(RAD_Cmd *cmd);
+internal void rad_popup_open(String8 title, String8 desc, RAD_CmdKind kind, String8 path);
 internal CFG_Binding rad_binding_from_cmd_kind(RAD_CmdKind kind);
 internal RAD_CmdKind rad_cmd_kind_from_key(WM_Key key, WM_Modifiers modifiers);
 

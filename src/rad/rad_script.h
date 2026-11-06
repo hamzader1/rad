@@ -42,6 +42,7 @@
 //   click <target>              left click
 //   double_click <target>
 //   ctrl_click <target>         left click with Ctrl held
+//   right_click <target>        right click
 //   drag <target> <target>      left press at the first, move, release at the second
 //   mouse_down <target>         left press there (no release; a held drag)
 //   mouse_up <target>           left release there
@@ -155,6 +156,9 @@
 //   editor_font_size            the editor view's font size (code font setting)
 //   output_font_size            the Output view's font size (Panel Font Size)
 //   inline_diag_count           editor lines showing an inline diagnostic (visible ones)
+//   inlay_hint_count            inlay hints shown on the editor's visible lines
+//   lsp_hint_state              the editor's inlay hint requests: "supported asked
+//                               in_flight valid count"
 //   panel_tabs <n>              editor panel n's tab names, space-separated
 //   drag_active                 1 while a tab or file is being dragged
 //   nav_item nav_member         the navigation bar's item / member names ("" = none)
@@ -180,6 +184,10 @@
 //   dirty                       1 if the editor's buffer has unsaved changes
 //   loading                     editor tab's loading overlay strength, 0..1
 //   file <path>                 contents of a file on disk
+//   path_exists <path>          1 if a file or folder is there
+//   popup_active                1 while the confirmation popup is open
+//   explorer_editing            none, new_file, new_folder or rename (a name typed in the tree)
+//   explorer_menu_open          1 while the explorer's context menu is open
 //   file_size <path>            its size in bytes
 //   explorer_root explorer_rows explorer_selected
 //   explorer_row <n>            name of explorer row n (1-based)

@@ -134,6 +134,18 @@ sh_show_in_file_browser(String8 path)
   }
 }
 
+internal B32
+sh_move_to_trash(String8 path)
+{
+  // NOTE(rad): Linux: untested; `gio trash` (GLib's, on most desktops)
+  Temp scratch = scratch_begin(0, 0);
+  String8 cmd = str8f(scratch.arena, "gio trash -- '%S' 2>/dev/null", path);
+  FILE *f = popen((char *)cmd.str, "r");
+  B32 result = (f != 0 && pclose(f) == 0);
+  scratch_end(scratch);
+  return result;
+}
+
 internal void
 sh_open_in_browser(String8 url)
 {

@@ -82,6 +82,16 @@ struct RAD_LspSymbol
   U64 depth;
 };
 
+// NOTE(rad): an inlay hint (textDocument/inlayHint, TODO_2 C3): text shown
+// in the code that is not in it (": i32" after a `let`'s name)
+typedef struct RAD_LspInlayHint RAD_LspInlayHint;
+struct RAD_LspInlayHint
+{
+  U64 off;                      // shown before the character here (offset in its list's version)
+  String8 label;                // as shown, padding included
+  S64 kind;                     // 1: type, 2: parameter, 0: other
+};
+
 typedef struct RAD_LspDoc RAD_LspDoc;
 struct RAD_LspDoc
 {
@@ -115,6 +125,22 @@ struct RAD_LspDoc
   U64 sem_mapped_count;
   U64 sem_mapped_version;
   B32 sem_mapped_valid;
+
+  //- rad: inlay hints (TODO_2 C3), asked like semantic tokens, for the
+  // whole text
+  S64 hint_request_id;
+  U64 hint_request_version;
+  B32 hint_asked;
+  Arena *hint_arena;
+  RAD_LspInlayHint *hints;
+  U64 hint_count;
+  U64 hint_version;
+  B32 hint_valid;
+  Arena *hint_mapped_arena;
+  RAD_LspInlayHint *hint_mapped;
+  U64 hint_mapped_count;
+  U64 hint_mapped_version;
+  B32 hint_mapped_valid;
 
   //- rad: document symbols (the navigation bar), asked like semantic tokens
   S64 sym_request_id;
@@ -185,6 +211,7 @@ struct RAD_LspServer
   //- rad: semantic tokens legend (initialize answer): token type index ->
   // code color slot + 1 (0: keep the lexer's color); the `unsafe` modifier
   B32 sem_supported;
+  B32 hint_supported;           // capabilities.inlayHintProvider
   U8 sem_type_slots[128];
   U64 sem_unsafe_mask;
 };
@@ -542,6 +569,8 @@ internal void rad_lsp_take_semantic_legend(RAD_LspServer *s, JSON_Value *provide
 internal RAD_LspSymbol *rad_lsp_symbols_from_document(RAD_Document *doc, U64 *count_out);
 internal B32 rad_lsp_take_document_symbols(RAD_LspServer *s, LSP_Message *m);
 internal B32 rad_lsp_take_semantic_tokens(RAD_LspServer *s, LSP_Message *m);
+internal B32 rad_lsp_take_inlay_hints(RAD_LspServer *s, LSP_Message *m);
+internal RAD_LspInlayHint *rad_lsp_inlay_hints_from_document(RAD_Document *doc, U64 *count_out);
 
 ////////////////////////////////
 //~ rad: Completion Functions

@@ -437,7 +437,7 @@ of `text_buffer.h`.
 
 ## Journal
 
-### 2026-11-06 (TODO_2: keys, zoom, tabs, status bar, panel font)
+### 2026-11-06 (TODO_2: keys, zoom, tabs, status bar, panel font, explorer, inlay hints)
 - `docs/TODO_2.md`: the user's new list (keys, look, diagnostics like Zed,
   inlay hints, explorer file operations) plus suggestions.
 - Cmd+- split the panel: Ctrl+- was raddbg's Split Panel Down and the Mac
@@ -459,6 +459,22 @@ of `text_buffer.h`.
   red line background. Themes get a "warn text" color.
 - Explorer folders: the user's two-tone folder icon (`icons/Folder_16x.svg`),
   the same open or closed.
+- Explorer file operations: right-click menus (raddbg's look), New File /
+  New Folder / Rename typed in the tree, Delete to the Trash after raddbg's
+  confirmation popup (ported: `rad_popup_open`), Cut / Copy / Paste, Copy
+  Path, Copy Relative Path, Reveal, Open, Open to the Side; the explorer's
+  own keys (F2, Cmd+C/X/V, Cmd+Backspace, Cmd+Option+C/R). Open tabs and
+  documents follow renames and moves. New: `sh_move_to_trash`, script
+  `right_click`, queries `path_exists`, `popup_active`,
+  `explorer_editing`, `explorer_menu_open`.
+- Fixed: the explorer's keys were global (Cmd+C in the editor ran
+  Explorer Copy): `rad_binding_from_cmd_kind` fell back to their table;
+  now only the menu labels do.
+- Inlay hints (setting Inlay Hints): rust-analyzer's `: i32` and
+  parameter names, in the weak text color, inside the line but not in
+  the text; cursor, clicks, selection, underlines and popups skip them.
+  Carried over edits like the symbols. Query `inlay_hint_count`,
+  `lsp_hint_state`.
 - Quick fixes (the screwdriver): 1 s after the cursor stops (was 0.3 s),
   setting Show Quick Fixes (Ctrl+. works either way).
 - Script language: `only_on`, `float_window` (a covered window is not
