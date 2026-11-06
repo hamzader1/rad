@@ -71,6 +71,7 @@ struct MAC_WM_State
   WM_SystemInfo gfx_info;
   WM_Cursor last_set_cursor;
   WM_Modifiers modifier_state;
+  B32 control_down;
   U64 key_down_state[(WM_Key_COUNT+63)/64];
   U64 get_events_depth;
   B32 in_live_resize;

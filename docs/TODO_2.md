@@ -221,6 +221,45 @@ then inlay hints (the biggest change to the code view).
 - [ ] **E5. [suggestion] Integrated terminal** in the bottom panel: a
   shell on a pseudo-terminal (`base` API: pty spawn) and a VT100/xterm
   parser drawing into a grid. Large; after the rest.
+  **NOT DONE (stopped 2026-11-06 at the user's request). Nothing is
+  visible in Raid yet.** Done so far:
+  1. `base` pseudo-terminals (commit ba2dbee): `pty_launch`, `pty_read`
+     (waits with a deadline, reports the end), `pty_write` (non-blocking
+     on POSIX), `pty_resize`, `pty_close` (hang-up, then kill, reaps).
+     POSIX in `src/mac/base` (tested, `rad_tests`) and `src/linux/base`
+     (untested); ConPTY in `src/win32/base` (untested, never compiled).
+  2. `terminal` layer, `TERM_` (commit 123e38e, `src/terminal/`, base
+     only): the emulator: screen, alternate screen, scrollback ring, SGR
+     16/256/RGB, margins, insert/delete, DEC line drawing, UTF-8 and wide
+     characters, DSR/DA/size replies, title. Tested in `rad_tests`.
+  3. `WM_Event.control_down` (the Mac's physical Control key; Cmd and
+     Control are both `WM_Modifier_Ctrl`), set by the Mac window manager.
+     Needed so Control+C goes to the shell while Cmd+C copies.
+  Left (step 3, the Raid side), planned:
+  - `src/rad/rad_terminal.h/.c` (`RAD_Terminal` per "terminal" tab: pty,
+    reader thread -> mutex-protected output chunks -> `term_write` on the
+    UI thread each frame, replies and typed input written back, the end
+    shows "[Process exited. Press Enter to start a new shell.]").
+  - A third fixed tab "terminal" in the bottom tool window (icon
+    Machine): `rad_tab_is_tool`, `rad_tool_kind_from_panel`, the layout
+    check and rebuild in `rad_core.c`, tab title/icon, view dispatch.
+  - Command Show Terminal (Ctrl/Cmd+`); settings group "Terminal": Shell
+    (empty: $SHELL with -l on the Mac, powershell.exe on Windows) and
+    Scrollback lines. TERM=xterm-256color, COLORTERM=truecolor, LANG
+    when missing; starts in the explorer's folder.
+  - Keys routed before the global hotkeys when a terminal tab is
+    focused: Mac Cmd+keys stay commands (Cmd+C copy, Cmd+V paste,
+    Cmd+K clear); Control+letters, arrows, Home/End, PgUp/PgDn,
+    Delete, F-keys (unless bound), Tab, Esc, Backspace encoded as xterm
+    sequences (application cursor mode, modifier parameters); bracketed
+    paste.
+  - View: code font at the panel font size, grid from the tab rect
+    (resize -> `term_resize` + `pty_resize`), custom draw (backgrounds,
+    text runs, bold as bright, underline/strike, block/bar cursor),
+    wheel scrolls the scrollback, drag selection, copy.
+  - Script queries (`terminal_line`, `terminal_running`, ...),
+    `wait_terminal "<text>"`, a `terminal.radtest` (with Shell =
+    /bin/sh).
 - [x] **E6. [suggestion] Reveal the open file in the explorer** when its
   tab is selected (setting, VS Code's "auto reveal").
   Done 2026-11-06 (script `explorer_reveal`): setting Auto Reveal (on,

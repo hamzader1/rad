@@ -213,6 +213,12 @@ Milestone 6 details (each item with its script):
 0. **Now: `docs/TODO_2.md`** (the user's list of 2026-11-06 plus
    suggestions). `docs/TASKS.md` (A-H) is done. Hint images are in
    `.dev_hints/` (private, git-ignored, never push it).
+   **NOTE: the integrated terminal (TODO_2 E5) is NOT done.** Stopped
+   2026-11-06 at the user's request after its groundwork (base `pty_*`,
+   the `terminal` emulator layer, `WM_Event.control_down`); nothing shows
+   in Raid yet. The remaining plan (the Raid tab, input, drawing,
+   scripts) is in TODO_2 E5. Ask the user before resuming it. D3 (Open
+   in New Window) is deferred by the user.
 1. Speed, continued (see the 2026-11-06 journal entries; app side:
    `tests/perf/run_perf.sh`; key to screen: `tests/perf/typelat.m`). The
    Mac renderer is Metal now; typing latency on a 60 Hz monitor is at
@@ -467,6 +473,13 @@ of `text_buffer.h`.
   into a screen + alternate screen + scrollback ring (SGR 16/256/RGB,
   margins, insert/delete, DEC line drawing, UTF-8 and wide characters,
   DSR/DA replies, title). Tested in `rad_tests`.
+- E5 step 3 started, then stopped at the user's request: only
+  `WM_Event.control_down` (the Mac's physical Control key) went in. The
+  terminal is NOT usable yet: no tab, view or input in Raid. Plan for the
+  rest: TODO_2 E5.
+- Not verified by the user yet: the mouse wheel fix (F1) with their
+  mouse; if it still fails, `RAID_SCROLL_LOG=1 build/raid` and one scroll
+  show what the Mac sends.
 
 ### 2026-11-06 (TODO_2: keys, zoom, tabs, status bar, panel font, explorer, inlay hints)
 - `docs/TODO_2.md`: the user's new list (keys, look, diagnostics like Zed,

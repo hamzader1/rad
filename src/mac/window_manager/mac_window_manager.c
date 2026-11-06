@@ -125,6 +125,7 @@ mac_wm_push_event(WM_EventKind kind, MAC_WM_Window *w)
     event->timestamp_us = now_time_us();
     event->window.u64[0] = (U64)w;
     event->modifiers = mac_wm_state->modifier_state;
+    event->control_down = mac_wm_state->control_down;
   }
   return event;
 }
@@ -372,6 +373,7 @@ mac_wm_handle_event(NSEvent *event)
   if(type != NSEventTypeApplicationDefined)
   {
     mac_wm_state->modifier_state = mac_wm_modifiers_from_flags(event.modifierFlags);
+    mac_wm_state->control_down = !!(event.modifierFlags & NSEventModifierFlagControl);
   }
   switch(type)
   {

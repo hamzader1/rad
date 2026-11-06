@@ -124,6 +124,7 @@ struct WM_Event
   Vec2F32 pos;
   Vec2F32 delta;
   String8List strings;
+  B32 control_down; // rad: the Control key itself (the Mac reports Cmd and Control both as WM_Modifier_Ctrl); set on the Mac only
 };
 
 typedef struct WM_EventList WM_EventList;
