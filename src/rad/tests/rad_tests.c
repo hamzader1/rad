@@ -34,6 +34,7 @@
 #include "text_buffer/text_buffer.h"
 #include "json/json.h"
 #include "lsp/lsp.h"
+#include "terminal/terminal.h"
 
 #include "base/base_inc.c"
 #include "win32/win32_inc.c"
@@ -45,6 +46,7 @@
 #include "text_buffer/text_buffer.c"
 #include "json/json.c"
 #include "lsp/lsp.c"
+#include "terminal/terminal.c"
 
 ////////////////////////////////
 //~ rad: Helpers
@@ -1523,6 +1525,181 @@ test_pty(void)
 #endif
 }
 
+////////////////////////////////
+//~ rad: terminal emulator (TERM_)
+
+internal void
+test_term_expect_line(char *test_name, TERM_State *t, U64 screen_row, char *expected)
+{
+  Temp scratch = scratch_begin(0, 0);
+  U64 line_idx = term_line_count(t) - (U64)t->rows + screen_row;
+  String8 line = term_string_from_line(scratch.arena, t, line_idx);
+  test_checks += 1;
+  if(!str8_match(line, str8_cstring(expected), 0))
+  {
+    printf("FAIL %s: row %llu is `%.*s`, expected `%s`\n", test_name, screen_row, str8_varg(line), expected);
+    test_failures += 1;
+  }
+  scratch_end(scratch);
+}
+
+internal void
+test_term_expect_cursor(char *test_name, TERM_State *t, S32 x, S32 y)
+{
+  test_checks += 1;
+  if(t->cursor.x != x || t->cursor.y != y)
+  {
+    printf("FAIL %s: cursor at %i,%i, expected %i,%i\n", test_name, t->cursor.x, t->cursor.y, x, y);
+    test_failures += 1;
+  }
+}
+
+internal void
+test_term(void)
+{
+  Temp scratch = scratch_begin(0, 0);
+
+  //- rad: text, CR LF, autowrap (the last column waits for the next character)
+  {
+    TERM_State *t = term_alloc(10, 4, 100);
+    term_write(t, str8_lit("hello\r\nworld"));
+    test_term_expect_line("term_text", t, 0, "hello");
+    test_term_expect_line("term_text", t, 1, "world");
+    test_term_expect_cursor("term_text", t, 5, 1);
+    term_write(t, str8_lit("\r\n0123456789"));
+    test_term_expect_cursor("term_wrap_pending", t, 9, 2);
+    term_write(t, str8_lit("ab"));
+    test_term_expect_line("term_wrap", t, 2, "0123456789");
+    test_term_expect_line("term_wrap", t, 3, "ab");
+    test_expect("term_wrap", "the wrapped line is marked", term_line_from_idx(t, 2, 0).wrapped);
+    String8 copied = term_string_from_range(scratch.arena, t, 2, 0, 3, 2);
+    test_expect("term_wrap_copy", "a wrapped line copies without a newline", str8_match(copied, str8_lit("0123456789ab"), 0));
+    term_release(t);
+  }
+
+  //- rad: scrolling into the scrollback; the ring keeps the newest lines
+  {
+    TERM_State *t = term_alloc(8, 3, 4);
+    for(int i = 0; i < 9; i += 1)
+    {
+      term_write(t, push_str8f(scratch.arena, "line%i\r\n", i));
+    }
+    test_expect("term_scrollback", "4 lines kept", t->scrollback_count == 4);
+    test_expect("term_scrollback", "line count", term_line_count(t) == 7);
+    test_expect("term_scrollback", "oldest kept is line3", str8_match(term_string_from_line(scratch.arena, t, 0), str8_lit("line3"), 0));
+    test_term_expect_line("term_scrollback", t, 0, "line7");
+    test_term_expect_line("term_scrollback", t, 1, "line8");
+    test_term_expect_line("term_scrollback", t, 2, "");
+    test_expect("term_scrollback", "absolute ids", term_line_base(t) == 3);
+    term_write(t, str8_lit("\x1b[3J"));
+    test_expect("term_scrollback_clear", "ED 3 clears it", t->scrollback_count == 0);
+    term_release(t);
+  }
+
+  //- rad: cursor movement, erase, insert / delete characters and lines
+  {
+    TERM_State *t = term_alloc(10, 5, 100);
+    term_write(t, str8_lit("abcdefghij\x1b[2;3Hxy\x1b[1;1H\x1b[3C\x1b[K"));
+    test_term_expect_line("term_csi", t, 0, "abc");
+    test_term_expect_line("term_csi", t, 1, "  xy");
+    term_write(t, str8_lit("\x1b[2;1H\x1b[2@<<\x1b[1;2H\x1b[1P"));
+    test_term_expect_line("term_ich_dch", t, 0, "ac");
+    test_term_expect_line("term_ich_dch", t, 1, "<<  xy");
+    term_write(t, str8_lit("\x1b[5;1Hlast\x1b[2;1H\x1b[L"));
+    test_term_expect_line("term_il", t, 1, "");
+    test_term_expect_line("term_il", t, 2, "<<  xy");
+    test_term_expect_line("term_il", t, 4, "");
+    term_write(t, str8_lit("\x1b[M"));
+    test_term_expect_line("term_dl", t, 1, "<<  xy");
+    term_write(t, str8_lit("\x1b[2J\x1b[H"));
+    test_term_expect_line("term_ed", t, 1, "");
+    test_term_expect_cursor("term_ed", t, 0, 0);
+    term_release(t);
+  }
+
+  //- rad: SGR: 16 / 256 / RGB colors (';' and ':'), attributes, reset; BCE
+  {
+    TERM_State *t = term_alloc(20, 2, 100);
+    term_write(t, str8_lit("\x1b[1;31mA\x1b[38;5;200mB\x1b[38;2;1;2;3mC\x1b[38:2::4:5:6mD\x1b[0;7;44mE\x1b[0m F"));
+    TERM_Cell *cells = term_line_from_idx(t, 0, 0).cells;
+    test_expect("term_sgr", "A bold red", cells[0].fg == (TERM_ColorKind_Index|1) && (cells[0].flags & TERM_CellFlag_Bold));
+    test_expect("term_sgr", "B 256", cells[1].fg == (TERM_ColorKind_Index|200) && (cells[1].flags & TERM_CellFlag_Bold));
+    test_expect("term_sgr", "C rgb", cells[2].fg == (TERM_ColorKind_RGB|0x010203));
+    test_expect("term_sgr", "D rgb with colons", cells[3].fg == (TERM_ColorKind_RGB|0x040506));
+    test_expect("term_sgr", "E inverse on blue", cells[4].bg == (TERM_ColorKind_Index|4) && (cells[4].flags & TERM_CellFlag_Inverse) && cells[4].fg == 0);
+    test_expect("term_sgr", "F reset", cells[6].fg == 0 && cells[6].bg == 0 && cells[6].flags == 0);
+    term_write(t, str8_lit("\x1b[42m\x1b[2K"));
+    test_expect("term_bce", "erase keeps the background", term_line_from_idx(t, 0, 0).cells[0].bg == (TERM_ColorKind_Index|2));
+    term_release(t);
+  }
+
+  //- rad: scrolling margins; reverse index; origin mode
+  {
+    TERM_State *t = term_alloc(6, 5, 100);
+    term_write(t, str8_lit("0\r\n1\r\n2\r\n3\r\n4\x1b[2;4r\x1b[4;1H\nx"));
+    test_term_expect_line("term_margins", t, 0, "0");
+    test_term_expect_line("term_margins", t, 1, "2");
+    test_term_expect_line("term_margins", t, 2, "3");
+    test_term_expect_line("term_margins", t, 3, "x");
+    test_term_expect_line("term_margins", t, 4, "4");
+    test_expect("term_margins", "nothing to the scrollback", t->scrollback_count == 0);
+    term_write(t, str8_lit("\x1b[2;1H\x1bM"));
+    test_term_expect_line("term_ri", t, 1, "");
+    test_term_expect_line("term_ri", t, 2, "2");
+    test_term_expect_line("term_ri", t, 4, "4");
+    term_write(t, str8_lit("\x1b[?6h\x1b[1;1Ho\x1b[6n"));
+    test_term_expect_line("term_origin", t, 1, "o");
+    String8 replies = term_take_replies(scratch.arena, t);
+    test_expect("term_origin", "the position is relative to the margin", str8_match(replies, str8_lit("\x1b[1;2R"), 0));
+    term_release(t);
+  }
+
+  //- rad: alternate screen (1049): saved cursor, separate content, no scrollback
+  {
+    TERM_State *t = term_alloc(8, 3, 100);
+    term_write(t, str8_lit("main\x1b[?1049h\x1b[Halt\r\n\r\n\r\n\r\nmore"));
+    test_expect("term_alt", "active", t->alt_active);
+    test_expect("term_alt", "no scrollback", t->scrollback_count == 0 && term_line_count(t) == 3);
+    term_write(t, str8_lit("\x1b[?1049l"));
+    test_expect("term_alt", "back", !t->alt_active);
+    test_term_expect_line("term_alt", t, 0, "main");
+    test_term_expect_cursor("term_alt", t, 4, 0);
+    term_release(t);
+  }
+
+  //- rad: replies; title; DEC line drawing; UTF-8; wide characters; broken sequences
+  {
+    TERM_State *t = term_alloc(10, 3, 100);
+    term_write(t, str8_lit("\x1b[5n\x1b[c\x1b[>c\x1b[18t\x1b]0;my title\x07\x1b]2;other\x1b\\"));
+    String8 replies = term_take_replies(scratch.arena, t);
+    test_expect("term_replies", "DSR, DA1, DA2, size", str8_match(replies, str8_lit("\x1b[0n\x1b[?1;2c\x1b[>0;10;1c\x1b[8;3;10t"), 0));
+    test_expect("term_title", "OSC 2 with ST", str8_match(term_title(t), str8_lit("other"), 0));
+    term_write(t, str8_lit("\x1b(0lqk\x1b(Bx\r\n\xc3\xa9\xe4\xb8\xad|\xff|"));
+    test_term_expect_line("term_line_drawing", t, 0, "\xe2\x94\x8c\xe2\x94\x80\xe2\x94\x90x");
+    test_term_expect_line("term_utf8", t, 1, "\xc3\xa9\xe4\xb8\xad|\xef\xbf\xbd|");
+    test_term_expect_cursor("term_wide", t, 6, 1);
+    term_write(t, str8_lit("\x1b[2;3Hz"));
+    test_term_expect_line("term_wide_split", t, 1, "\xc3\xa9 z|\xef\xbf\xbd|");
+    term_release(t);
+  }
+
+  //- rad: resize: a shorter screen keeps the cursor's line (the rest to the scrollback); narrower cuts
+  {
+    TERM_State *t = term_alloc(10, 4, 100);
+    term_write(t, str8_lit("a\r\nb\r\nc\r\nd-long"));
+    term_resize(t, 6, 2);
+    test_term_expect_line("term_resize", t, 0, "c");
+    test_term_expect_line("term_resize", t, 1, "d-long");
+    test_expect("term_resize", "a, b to the scrollback", t->scrollback_count == 2);
+    test_term_expect_cursor("term_resize", t, 5, 1);
+    term_resize(t, 12, 5);
+    test_term_expect_line("term_resize_grow", t, 1, "d-long");
+    test_expect("term_resize_grow", "scrollback widened", str8_match(term_string_from_line(scratch.arena, t, 0), str8_lit("a"), 0));
+    term_release(t);
+  }
+  scratch_end(scratch);
+}
+
 internal void
 test_lsp(void)
 {
@@ -1659,6 +1836,10 @@ entry_point(CmdLine *cmd_line)
   //- rad: json parsing and writing
   test_json();
   test_section_end("json: values, escapes, errors, random", &section_start_us);
+
+  //- rad: terminal emulator
+  test_term();
+  test_section_end("terminal: parser, screen, scrollback", &section_start_us);
 
   //- rad: pseudo-terminals
   test_pty();

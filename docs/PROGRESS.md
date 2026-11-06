@@ -459,6 +459,14 @@ of `text_buffer.h`.
 - Explorer Auto Reveal (setting): follows the active editor's file.
 - Go to File (Cmd/Ctrl+P): Quick Open over the explorer folder's files;
   Split Panel Right is Cmd/Ctrl+\ now.
+- Integrated terminal (E5), step 1: `base` pseudo-terminals (`pty_launch`,
+  `pty_read`, `pty_write`, `pty_resize`, `pty_close`): POSIX
+  (posix_openpt + fork) on the Mac (tested in `rad_tests`) and Linux
+  (untested), ConPTY on Windows (untested, never compiled).
+- E5 step 2: `terminal` layer (`TERM_`, base only): VT100/xterm parser
+  into a screen + alternate screen + scrollback ring (SGR 16/256/RGB,
+  margins, insert/delete, DEC line drawing, UTF-8 and wide characters,
+  DSR/DA replies, title). Tested in `rad_tests`.
 
 ### 2026-11-06 (TODO_2: keys, zoom, tabs, status bar, panel font, explorer, inlay hints)
 - `docs/TODO_2.md`: the user's new list (keys, look, diagnostics like Zed,
