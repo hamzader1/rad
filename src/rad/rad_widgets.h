@@ -212,6 +212,7 @@ internal UI_Signal rad_icon_buttonf(RAD_IconKind kind, FuzzyMatchRangeList *matc
 ////////////////////////////////
 //~ rad: Command Widgets
 
+internal CFG_Binding rad_label_binding_from_cmd_kind(RAD_CmdKind kind);
 internal void rad_cmd_binding_labels(RAD_CmdKind kind);
 internal UI_Signal rad_cmd_spec_button(RAD_CmdKind kind);
 internal void rad_cmd_list_menu_buttons(U64 count, RAD_CmdKind *kinds, U32 *fastpath_codepoints);

@@ -178,8 +178,8 @@ then inlay hints (the biggest change to the code view).
   tabs, open folders and the explorer clipboard (`rad_paths_moved`).
   Not done: several rows selected at once; drag and drop inside the tree;
   key labels say "Ctrl" / "Alt" on the Mac in every menu (Cmd / Option).
-- [ ] **D3. Open in New Window**: rad has one window today. Later, after
-  D2 (a second window with its own layout and session).
+- [ ] **D3. Open in New Window** (later, user 2026-11-06: "do not make
+  new window for now"): rad has one window today.
 
 ## E. Suggestions (Claude)
 
@@ -189,7 +189,8 @@ then inlay hints (the biggest change to the code view).
   Cmd+Shift+Enter), indent/outdent (Cmd+] / Cmd+[ ... conflicts with A3's
   Go Back fallback: decide together).
 - [ ] **E2. [suggestion] Auto-closing pairs** ( `()`, `[]`, `{}`, `""` )
-  and typing over the closer; matching bracket highlight.
+  and typing over the closer; matching bracket highlight. User: yes, with
+  an on/off setting.
 - [ ] **E3. [suggestion] Quick Open (Cmd+P)**: fuzzy file finder over the
   folder (Zed's, VS Code's). Cmd+P is Split Panel Right today (raddbg).
 - [ ] **E4. [suggestion] Close tab Cmd+W, reopen closed tab Cmd+Shift+T.**
@@ -198,3 +199,51 @@ then inlay hints (the biggest change to the code view).
   parser drawing into a grid. Large; after the rest.
 - [ ] **E6. [suggestion] Reveal the open file in the explorer** when its
   tab is selected (setting, VS Code's "auto reveal").
+
+## F. Second list (user, 2026-11-06)
+
+User: "first Solve the issue of Mouse wheel ... with my mouse it does not
+... second make explorer select several items at once, and cmd/options
+instead of ctrl/alt also ... add your suggestions from E1 to E6 ... E2
+... on/off from settings, and please settings is growing, so group by
+business, like UI business, editor.. etc.. and compact mode is not great
+yet since it has like when we have two lines they get crossed."
+Order: F1 first, then the rest; E1-E6 above are approved (E2 with a
+setting).
+
+- [x] **F1. Mouse wheel with an external mouse (Mac).** The user's mouse
+  (Cooler Master MM710, LinearMouse installed) does not scroll; the
+  trackpad does. Not reproducible with synthetic wheel events (line
+  units, fractional lines: they scroll). Found: precise (pixel) wheel
+  events outside a trackpad gesture (no phase: high-resolution wheels,
+  mouse utilities) were accumulated like trackpad points, so a notch of a
+  few points did nothing. Now each such event moves at least one step;
+  line events whose fractional fields are 0 fall back to the whole-line
+  fields; pinch (and LinearMouse's Cmd+wheel "pinch zoom") zooms the
+  code. `RAID_SCROLL_LOG=1` prints each wheel event's fields.
+  Done 2026-11-06 (checked with synthetic events posted at the window:
+  3 phase-less 3-point events scroll 3 lines, were 0; line events as
+  before). Not script-testable (scripts inject below the AppKit
+  handler). Unverified with the user's mouse: if it still fails, run
+  `RAID_SCROLL_LOG=1 build/raid` and scroll once.
+- [ ] **F2. Explorer: several items selected at once** (Cmd+click toggles,
+  Shift+click a range, Shift+Up/Down); Cut / Copy / Paste / Delete act
+  on all of them.
+- [x] **F3. Mac key labels**: menus and the command palette show Cmd /
+  Option (and Zed-like symbols?) instead of Ctrl / Alt on the Mac.
+  Done 2026-11-06 (script `text_keys_mac`, query `key_label`): words, not
+  symbols (the UI font has no ⌘ glyph): "Cmd + Option + C"; also the
+  "save first" messages and the quick-fix tooltip.
+- [x] **F4. Settings grouped**: rows under group headers (Appearance /
+  UI, Editor, Explorer, Language Server, Build, ...), in a fixed order.
+  Done 2026-11-06 (script `settings_view`): Appearance, Fonts, Editor,
+  Language Server, Explorer, Tabs, Animations, Window; a header row (name
+  over a line) per group with matches; Up/Down skip headers.
+- [x] **F5. Compact density: two-line rows crossed.** Settings rows
+  (name + description) take raddbg's cell layout, sized for 5-font-size
+  rows; in Compact (4) the two lines were squeezed into each other and
+  the controls were off center.
+  Done 2026-11-06 (screenshots at the user's sizes, UI font 25): in
+  Compact each line gets one text line's height, centered; Comfortable
+  is unchanged (raddbg's).
+

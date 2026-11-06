@@ -437,6 +437,18 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-06 (TODO_2 F: mouse wheel, key labels, settings groups, Compact)
+- Mouse wheel (Mac): precise wheel events outside a trackpad gesture
+  (high-resolution wheels, LinearMouse) were accumulated like trackpad
+  points: a notch of a few points did nothing. Each now moves at least
+  one step; pinch (and LinearMouse's Cmd+wheel pinch) zooms the code;
+  `RAID_SCROLL_LOG=1` logs wheel events. Unverified with the user's mouse.
+- Key labels on the Mac: Cmd / Option (`wm_string_list_from_modifiers`);
+  query `key_label`.
+- Settings grouped: Appearance, Fonts, Editor, Language Server, Explorer,
+  Tabs, Animations, Window, each under a header row; Up/Down skip them.
+- Compact density: a setting's name and description no longer overlap.
+
 ### 2026-11-06 (TODO_2: keys, zoom, tabs, status bar, panel font, explorer, inlay hints)
 - `docs/TODO_2.md`: the user's new list (keys, look, diagnostics like Zed,
   inlay hints, explorer file operations) plus suggestions.

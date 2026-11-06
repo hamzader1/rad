@@ -157,6 +157,8 @@
 //   output_font_size            the Output view's font size (Panel Font Size)
 //   inline_diag_count           editor lines showing an inline diagnostic (visible ones)
 //   inlay_hint_count            inlay hints shown on the editor's visible lines
+//   key_label <command>         the key its menus show ("Cmd + S" on the Mac,
+//                               "Ctrl + S" elsewhere), "" if none
 //   lsp_hint_state              the editor's inlay hint requests: "supported asked
 //                               in_flight valid count"
 //   panel_tabs <n>              editor panel n's tab names, space-separated

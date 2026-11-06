@@ -80,16 +80,14 @@ rad_icon_buttonf(RAD_IconKind kind, FuzzyMatchRangeList *matches, char *fmt, ...
 ////////////////////////////////
 //~ rad: Command Widgets
 
-internal void
-rad_cmd_binding_labels(RAD_CmdKind kind)
+internal CFG_Binding
+rad_label_binding_from_cmd_kind(RAD_CmdKind kind)
 {
-  // NOTE(rad): same box as raddbg's `rd_cmd_binding_buttons` with
-  // `RD_CmdBindingButtonFlag_NoEdit` - rebinding is not supported yet.
-  Temp scratch = scratch_begin(0, 0);
+  // NOTE(rad): the key shown next to a command: its global key, else the
+  // explorer's own key (labels only: those are not global)
   CFG_Binding binding = rad_binding_from_cmd_kind(kind);
   for EachElement(idx, rad_explorer_binding_table)
   {
-    // rad: the explorer's own keys (labels only: they are not global)
     if(binding.key == WM_Key_Null && rad_explorer_binding_table[idx].kind == kind)
     {
       binding.key = rad_explorer_binding_table[idx].key;
@@ -97,6 +95,16 @@ rad_cmd_binding_labels(RAD_CmdKind kind)
       break;
     }
   }
+  return binding;
+}
+
+internal void
+rad_cmd_binding_labels(RAD_CmdKind kind)
+{
+  // NOTE(rad): same box as raddbg's `rd_cmd_binding_buttons` with
+  // `RD_CmdBindingButtonFlag_NoEdit` - rebinding is not supported yet.
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Binding binding = rad_label_binding_from_cmd_kind(kind);
   if(binding.key != WM_Key_Null) UI_CornerRadius(ui_top_font_size()*0.5f)
   {
     ui_spacer(ui_em(1.f, 1.f));
@@ -376,6 +384,11 @@ rad_cell(RAD_CellParams *params, String8 string)
   //////////////////////////////
   //- rad: build left-hand-side name/desc box
   //
+  // NOTE(rad): the name and description rows take the cell's height
+  // (raddbg's), which fits two lines in raddbg's 5-font-size rows; Compact
+  // rows (4) squeezed them into each other, so there each gets one text
+  // line's height, centered by the padding
+  B32 lhs_text_heights = (build_lhs_name_desc && params->description.size != 0 && rad_state->settings.density == 1);
   if(build_lhs_name_desc) UI_Parent(lhs_box) UI_Padding(ui_em(3.f, 0.f)) UI_WidthFill UI_HeightFill
   {
     FuzzyMatchRangeList fuzzy_matches = {0};
@@ -383,6 +396,7 @@ rad_cell(RAD_CellParams *params, String8 string)
     {
       fuzzy_matches = dr_fuzzy_match_find_from_fstrs(scratch.arena, &lhs_name_fstrs, params->search_needle);
     }
+    if(lhs_text_heights) { ui_set_next_pref_height(ui_em(1.4f, 1.f)); }
     UI_Row
     {
       UI_Box *name_box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
@@ -391,6 +405,7 @@ rad_cell(RAD_CellParams *params, String8 string)
     }
     if(params->description.size != 0) RAD_Font(RAD_FontSlot_Main) UI_FontSize(ui_top_font_size()*0.85f)
     {
+      if(lhs_text_heights) { ui_set_next_pref_height(ui_em(1.4f, 1.f)); }
       UI_Row
       {
         UI_Box *desc_box = ui_label(params->description).box;
@@ -1375,7 +1390,9 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
     result.action_button_rect = button->rect;
     if(ui_hovering(sig) && !ui_any_ctx_menu_is_open()) UI_Tooltip RAD_Font(RAD_FontSlot_Main) UI_FontSize(ui_bottom_font_size())
     {
-      ui_label(str8_lit("Show potential fixes (Ctrl+.)"));
+      Temp scratch = scratch_begin(0, 0);
+      ui_label(push_str8f(scratch.arena, "Show potential fixes (%S)", wm_string_from_modifiers_key(scratch.arena, WM_Modifier_Ctrl, WM_Key_Period)));
+      scratch_end(scratch);
     }
   }
 

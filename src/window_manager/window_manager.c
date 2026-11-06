@@ -59,9 +59,17 @@ internal String8List
 wm_string_list_from_modifiers(Arena *arena, WM_Modifiers modifiers)
 {
   String8List result = {0};
+#if OS_MAC
+  // rad: the Mac sends Cmd (and Control) as Ctrl, Option as Alt: labels
+  // say what is on the keyboard
+  if(modifiers & WM_Modifier_Ctrl)  { str8_list_push(arena, &result, str8_lit("Cmd")); }
+  if(modifiers & WM_Modifier_Alt)   { str8_list_push(arena, &result, str8_lit("Option")); }
+  if(modifiers & WM_Modifier_Shift) { str8_list_push(arena, &result, str8_lit("Shift")); }
+#else
   if(modifiers & WM_Modifier_Ctrl)  { str8_list_push(arena, &result, str8_lit("Ctrl")); }
   if(modifiers & WM_Modifier_Shift) { str8_list_push(arena, &result, str8_lit("Shift")); }
   if(modifiers & WM_Modifier_Alt)   { str8_list_push(arena, &result, str8_lit("Alt")); }
+#endif
   return result;
 }
 

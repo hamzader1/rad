@@ -5539,7 +5539,8 @@ rad_exec_cmd(RAD_Cmd *cmd)
       {
         rad_state->discard_confirm_cfg_id = confirm_id;
         rad_state->discard_confirm_deadline_us = now_time_us() + 4000000;
-        rad_set_error(push_str8f(scratch.arena, "%I64u file%s with unsaved changes. Exit again to discard them, or save first (Ctrl+S).", dirty_count, dirty_count == 1 ? "" : "s"));
+        rad_set_error(push_str8f(scratch.arena, "%I64u file%s with unsaved changes. Exit again to discard them, or save first (%S).", dirty_count, dirty_count == 1 ? "" : "s",
+                                 wm_string_from_modifiers_key(scratch.arena, WM_Modifier_Ctrl, WM_Key_S)));
       }
     }break;
 
@@ -5884,7 +5885,8 @@ rad_exec_cmd(RAD_Cmd *cmd)
       // within a few seconds
       rad_state->discard_confirm_cfg_id = tab_cfg->id;
       rad_state->discard_confirm_deadline_us = now_time_us() + 4000000;
-      rad_set_error(push_str8f(scratch.arena, "\"%S\" has unsaved changes. Close it again to discard them, or save first (Ctrl+S).", str8_skip_last_slash(rad_file_path_from_tab(tab_cfg))));
+      rad_set_error(push_str8f(scratch.arena, "\"%S\" has unsaved changes. Close it again to discard them, or save first (%S).", str8_skip_last_slash(rad_file_path_from_tab(tab_cfg)),
+                               wm_string_from_modifiers_key(scratch.arena, WM_Modifier_Ctrl, WM_Key_S)));
     }
     else if(tab_cfg != &cfg_nil_node)
     {

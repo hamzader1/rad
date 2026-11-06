@@ -540,11 +540,12 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       RAD_SettingsState *ss = &rad_view_state_from_cfg(tab)->ss;
       if(str8_match(name, str8_lit("settings_rows"), 0))
       {
-        value = push_str8f(arena, "%I64u", ss->layout_rows_count);
+        value = push_str8f(arena, "%I64u", ss->layout_setting_rows_count);
       }
       else if(str8_match(name, str8_lit("settings_selected"), 0))
       {
-        value = (ss->cursor.y >= 1 && (U64)ss->cursor.y <= ss->layout_rows_count ? rad_setting_info_table[ss->layout_row_settings[ss->cursor.y-1]].name : str8_lit(""));
+        value = (ss->cursor.y >= 1 && (U64)ss->cursor.y <= ss->layout_rows_count && ss->layout_row_settings[ss->cursor.y-1] < RAD_SettingCode_COUNT ?
+                 rad_setting_info_table[ss->layout_row_settings[ss->cursor.y-1]].name : str8_lit(""));
       }
       else if(str8_match(name, str8_lit("settings_filter"), 0))
       {
@@ -1230,6 +1231,29 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   }
 
   //- rad: the Output tab's cursor line (follows the end while it is there)
+  else if(str8_match(name, str8_lit("key_label"), 0))
+  {
+    // rad: the key a command's menus show (TODO_2 F3)
+    RAD_CmdKind kind = RAD_CmdKind_Null;
+    for EachNonZeroEnumVal(RAD_CmdKind, k)
+    {
+      if(args_count >= 2 && str8_match(rad_cmd_kind_info_table[k].code_name, args[1], 0))
+      {
+        kind = k;
+        break;
+      }
+    }
+    if(kind == RAD_CmdKind_Null)
+    {
+      *error_out = str8_lit("key_label: needs a command name");
+      result = 0;
+    }
+    else
+    {
+      CFG_Binding binding = rad_label_binding_from_cmd_kind(kind);
+      value = wm_string_from_modifiers_key(arena, binding.modifiers, binding.key);
+    }
+  }
   else if(str8_match(name, str8_lit("inlay_hint_count"), 0))
   {
     RAD_CodeViewState *cv = 0;

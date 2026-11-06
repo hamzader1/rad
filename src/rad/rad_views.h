@@ -311,8 +311,9 @@ struct RAD_SettingsState
   // setting, zero if not visible
   U64 layout_frame;
   Rng2F32 layout_filter_rect;
-  U64 layout_rows_count;
-  U64 layout_row_settings[RAD_SettingCode_COUNT];
+  U64 layout_rows_count;          // rows, group headers included
+  U64 layout_setting_rows_count;  // rows that are settings
+  U64 layout_row_settings[RAD_SettingCode_COUNT+16]; // setting index, or a group header: RAD_SettingCode_COUNT + group rank
   Rng2F32 layout_row_rects[RAD_SettingCode_COUNT];
   Rng2F32 layout_control_rects[RAD_SettingCode_COUNT];
   Rng2F32 layout_revert_rects[RAD_SettingCode_COUNT];

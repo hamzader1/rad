@@ -5357,11 +5357,42 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
   //////////////////////////////
   //- rad: rows: the settings whose name, description or group match the filter
   //
+  // NOTE(rad): not in raddbg (TODO_2 F4): by group, in this order, each
+  // under a header row (headers of groups with no match are left out; the
+  // cursor skips them)
+  read_only local_persist String8 group_order[] =
+  {
+    str8_lit_comp("Appearance"),
+    str8_lit_comp("Fonts"),
+    str8_lit_comp("Editor"),
+    str8_lit_comp("Language Server"),
+    str8_lit_comp("Explorer"),
+    str8_lit_comp("Tabs"),
+    str8_lit_comp("Animations"),
+    str8_lit_comp("Window"),
+  };
   String8 needle = str8(ss->filter_buffer, ss->filter_size);
   S64 rows_count = 0;
+  S64 setting_rows_count = 0;
+  S64 *row_idx_in_group = push_array(scratch.arena, S64, ArrayCount(ss->layout_row_settings));
+  U64 header_rank = max_U64;
+  for(U64 rank = 0; rank <= ArrayCount(group_order); rank += 1)
   for EachElement(idx, rad_setting_info_table)
   {
     RAD_SettingInfo *info = &rad_setting_info_table[idx];
+    U64 info_rank = ArrayCount(group_order);
+    for EachElement(g_idx, group_order)
+    {
+      if(str8_match(group_order[g_idx], info->group, 0))
+      {
+        info_rank = g_idx;
+        break;
+      }
+    }
+    if(info_rank != rank)
+    {
+      continue;
+    }
     B32 matches = (needle.size == 0);
     String8 haystacks[] = {info->display_name, info->description, info->group};
     for EachElement(h_idx, haystacks)
@@ -5374,13 +5405,22 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
     }
     if(matches)
     {
+      if(header_rank != rank)
+      {
+        header_rank = rank;
+        ss->layout_row_settings[rows_count] = RAD_SettingCode_COUNT + rank;
+        rows_count += 1;
+      }
+      row_idx_in_group[rows_count] = (ss->layout_row_settings[rows_count-1] < RAD_SettingCode_COUNT ? row_idx_in_group[rows_count-1]+1 : 0);
       ss->layout_row_settings[rows_count] = idx;
       rows_count += 1;
+      setting_rows_count += 1;
     }
   }
   ss->layout_rows_count = (U64)rows_count;
+  ss->layout_setting_rows_count = (U64)setting_rows_count;
   ss->cursor.y = ss->mark.y = Clamp(0, ss->cursor.y, rows_count);
-  U64 selected_setting = (ss->cursor.y >= 1 ? ss->layout_row_settings[ss->cursor.y-1] : max_U64);
+  U64 selected_setting = (ss->cursor.y >= 1 && ss->layout_row_settings[ss->cursor.y-1] < RAD_SettingCode_COUNT ? ss->layout_row_settings[ss->cursor.y-1] : max_U64);
 
   //////////////////////////////
   //- rad: a setting's value -> slider position, and back
@@ -5403,11 +5443,12 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
         if((evt->kind == UI_EventKind_Press && evt->modifiers == 0 && evt->key == WM_Key_Return) ||
            (evt->kind == UI_EventKind_Navigate && !(evt->flags & UI_EventFlag_KeepMark) && evt->delta_unit == UI_EventDeltaUnit_Char && evt->delta_2s32.y > 0))
         {
-          // rad: Down/Enter from the filter: the first match
+          // rad: Down/Enter from the filter: the first match (past its
+          // group's header)
           ss->filter_focused = 0;
-          if(rows_count != 0)
+          if(rows_count >= 2)
           {
-            ss->cursor = ss->mark = v2s64(0, 1);
+            ss->cursor = ss->mark = v2s64(0, 2);
           }
           ui_eat_event(evt);
         }
@@ -5583,11 +5624,25 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
       }
       Rng1S64 visible_row_rng = {0};
       UI_ScrollListSignal scroll_list_sig = {0};
+      S64 cursor_y_before_list = ss->cursor.y;
       UI_Focus(ss->filter_focused ? UI_FocusKind_Off : UI_FocusKind_On)
         UI_ScrollList(&scroll_list_params, &ss->scroll_pos.y, &ss->cursor, &ss->mark, &visible_row_rng, &scroll_list_sig)
         UI_Focus(UI_FocusKind_Null)
         UI_PrefHeight(ui_px(row_height_px, 1.f))
       {
+        //- rad: the cursor skips group headers (on in its direction; Up from
+        // a group's first row past the first header: no selection)
+        if(ss->cursor.y >= 1 && ss->cursor.y <= rows_count && ss->layout_row_settings[ss->cursor.y-1] >= RAD_SettingCode_COUNT)
+        {
+          S64 dir = (ss->cursor.y >= cursor_y_before_list ? +1 : -1);
+          S64 y = ss->cursor.y + dir;
+          if(y > rows_count)
+          {
+            y = ss->cursor.y - 1;
+          }
+          ss->cursor = ss->mark = v2s64(0, Max(0, y));
+        }
+
         ui_set_next_pref_height(ui_children_sum(1));
         ui_set_next_child_layout_axis(Axis2_Y);
         UI_Box *table = ui_build_box_from_string(0, str8_lit("table"));
@@ -5595,6 +5650,27 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
           for(S64 row_idx = visible_row_rng.min; row_idx <= visible_row_rng.max && row_idx < rows_count; row_idx += 1)
         {
           U64 setting_idx = ss->layout_row_settings[row_idx];
+
+          //- rad: group header (TODO_2 F4): the group's name at the bottom
+          // of the row, over a line
+          if(setting_idx >= RAD_SettingCode_COUNT)
+          {
+            U64 rank = setting_idx - RAD_SettingCode_COUNT;
+            String8 group_name = (rank < ArrayCount(group_order) ? group_order[rank] : str8_lit("Other"));
+            ui_set_next_pref_width(ui_px(contents_width_px, 1.f));
+            ui_set_next_child_layout_axis(Axis2_Y);
+            UI_Box *header_box = ui_build_box_from_stringf(UI_BoxFlag_DrawSideBottom, "setting_group_%S", group_name);
+            UI_Parent(header_box)
+            {
+              ui_spacer(ui_pct(1.f, 0.f));
+              UI_PrefHeight(ui_em(2.f, 1.f)) UI_Row
+              {
+                ui_spacer(ui_em(1.f, 1.f));
+                UI_PrefWidth(ui_text_dim(1.f, 1.f)) UI_FontSize(ui_top_font_size()*1.15f) ui_label(group_name);
+              }
+            }
+            continue;
+          }
           RAD_SettingInfo *info = &rad_setting_info_table[setting_idx];
           B32 row_selected = (ss->cursor.y == row_idx+1);
           F64 value = rad_setting_f64_from_settings(settings, setting_idx);
@@ -5648,7 +5724,7 @@ rad_settings_view_ui(CFG_Node *tab, Rng2F32 rect)
 
           //- rad: build row box
           UI_BoxFlags row_flags = UI_BoxFlag_DisableFocusOverlay;
-          if(row_idx & 1)
+          if(row_idx_in_group[row_idx] & 1)
           {
             ui_set_next_tag(str8_lit("alt"));
             row_flags |= UI_BoxFlag_DrawBackground;

@@ -85,6 +85,15 @@ key right 2
 wait_idle
 expect setting rounded_corner_amount == 1.00
 
+# groups (TODO_2 F4): rows under group headers; Down/Up skip a header
+# (Rounded Corner Amount ends Appearance, UI Font starts Fonts)
+key down
+wait_idle
+expect settings_selected == "main_font"
+key up
+wait_idle
+expect settings_selected == "rounded_corner_amount"
+
 # filter: typing goes to it, rows narrow; Esc clears, Esc again leaves it
 text "font"
 wait_idle

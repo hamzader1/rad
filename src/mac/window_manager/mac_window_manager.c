@@ -515,14 +515,38 @@ mac_wm_handle_event(NSEvent *event)
     }break;
 
     //- rad: scrolling. Win32 units: 120 per wheel notch, and the UI scrolls
-    // one step per 40 (at least one per event). Trackpads send many small
-    // deltas, so they are accumulated and sent in whole steps.
+    // one step per 40 (at least one per event). Three kinds of devices:
+    // - wheels (not precise): lines, 120 units each (macOS's acceleration
+    //   sends fractions of a line: still one step);
+    // - trackpads, the Magic Mouse (precise, in a gesture: a phase or a
+    //   momentum phase): points, 2.5 units each, accumulated and sent in
+    //   whole steps (they send many small deltas);
+    // - wheels sending precise points outside a gesture (high-resolution
+    //   wheels, mouse utilities such as LinearMouse): points, 2.5 units
+    //   each, not accumulated: every event is a notch and moves at least
+    //   one step (accumulated, a notch of a few points did nothing).
+    // RAID_SCROLL_LOG=1 prints each event's fields (to check a device).
     case NSEventTypeScrollWheel:
     {
       forward = 0;
+      local_persist S32 log_scroll = -1;
+      if(log_scroll < 0)
+      {
+        char *env = getenv("RAID_SCROLL_LOG");
+        log_scroll = (env != 0 && env[0] == '1');
+      }
+      if(log_scroll)
+      {
+        fprintf(stderr, "scroll: window %i precise %i phase %i momentum %i scrollingDelta %g %g delta %g %g lines %lli %lli\n",
+                (int)(w != 0), (int)event.hasPreciseScrollingDeltas, (int)event.phase, (int)event.momentumPhase,
+                event.scrollingDeltaX, event.scrollingDeltaY, event.deltaX, event.deltaY,
+                (long long)CGEventGetIntegerValueField(event.CGEvent, kCGScrollWheelEventDeltaAxis2),
+                (long long)CGEventGetIntegerValueField(event.CGEvent, kCGScrollWheelEventDeltaAxis1));
+      }
       if(w == 0) { break; }
       Vec2F32 delta = {0};
-      if(event.hasPreciseScrollingDeltas)
+      B32 in_gesture = (event.phase != NSEventPhaseNone || event.momentumPhase != NSEventPhaseNone);
+      if(event.hasPreciseScrollingDeltas && in_gesture)
       {
         if(event.phase == NSEventPhaseBegan) { w->scroll_accum = v2f32(0, 0); }
         F32 units_per_point = 2.5f;
@@ -535,15 +559,43 @@ mac_wm_handle_event(NSEvent *event)
           w->scroll_accum.v[axis] -= steps*40.f;
         }
       }
+      else if(event.hasPreciseScrollingDeltas)
+      {
+        F32 units_per_point = 2.5f;
+        delta = v2f32((F32)event.scrollingDeltaX*units_per_point, -(F32)event.scrollingDeltaY*units_per_point);
+      }
       else
       {
-        delta = v2f32((F32)event.scrollingDeltaX*120.f, -(F32)event.scrollingDeltaY*120.f);
+        Vec2F32 lines = v2f32((F32)event.scrollingDeltaX, (F32)event.scrollingDeltaY);
+        if(lines.x == 0 && lines.y == 0)
+        {
+          // rad: a utility may leave only the whole-line fields set
+          lines = v2f32((F32)CGEventGetIntegerValueField(event.CGEvent, kCGScrollWheelEventDeltaAxis2),
+                        (F32)CGEventGetIntegerValueField(event.CGEvent, kCGScrollWheelEventDeltaAxis1));
+        }
+        delta = v2f32(lines.x*120.f, -lines.y*120.f);
       }
       if(delta.x != 0 || delta.y != 0)
       {
         WM_Event *e = mac_wm_push_event(WM_EventKind_Scroll, w);
         e->pos = mac_wm_pixel_pos_from_event(w, event);
         e->delta = delta;
+      }
+    }break;
+
+    //- rad: pinch (trackpads; LinearMouse's "pinch zoom" turns Cmd+wheel
+    // into it): a Ctrl+wheel event, which zooms the code (setting Mouse
+    // Wheel Zoom); a 10% pinch = 1 point
+    case NSEventTypeMagnify:
+    {
+      if(w == 0) { break; }
+      forward = 0;
+      if(event.magnification != 0)
+      {
+        WM_Event *e = mac_wm_push_event(WM_EventKind_Scroll, w);
+        e->pos = mac_wm_pixel_pos_from_event(w, event);
+        e->modifiers = WM_Modifier_Ctrl;
+        e->delta = v2f32(0, -(F32)event.magnification*1200.f);
       }
     }break;
   }
