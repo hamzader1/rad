@@ -1587,25 +1587,95 @@ make_directory(String8 path)
   return result;
 }
 
-//- rad: folder change watches. TODO(rad): inotify; until then every check
-// reports a change, so callers fall back to polling.
+//- rad: folder change watches: an FSEvents stream per folder, delivering on
+// one serial queue; its callback only sets the watch's flag. FSEvents
+// streams always cover subfolders, so a non-recursive watch also reports
+// changes below the folder (callers rescan; nothing is missed).
+
+global dispatch_queue_t mac_file_watch_queue = 0;
+global dispatch_once_t mac_file_watch_queue_once = 0;
+
+internal void
+mac_file_watch_queue_init(void *p)
+{
+  mac_file_watch_queue = dispatch_queue_create("rad.file_watch", DISPATCH_QUEUE_SERIAL);
+}
+
+internal void
+mac_file_watch_callback(ConstFSEventStreamRef stream, void *info, size_t num_events, void *event_paths, const FSEventStreamEventFlags event_flags[], const FSEventStreamEventId event_ids[])
+{
+  MAC_FileWatch *w = (MAC_FileWatch *)info;
+  ins_atomic_u32_eval_assign(&w->changed, 1);
+}
+
+internal void
+mac_file_watch_noop(void *p)
+{
+}
 
 internal FileWatch
 file_watch_alloc(String8 folder_path, B32 recursive)
 {
   FileWatch result = {0};
+  dispatch_once_f(&mac_file_watch_queue_once, 0, mac_file_watch_queue_init);
+  CFStringRef path = CFStringCreateWithBytes(kCFAllocatorDefault, folder_path.str, (CFIndex)folder_path.size, kCFStringEncodingUTF8, false);
+  if(path != 0)
+  {
+    CFArrayRef paths = CFArrayCreate(kCFAllocatorDefault, (const void **)&path, 1, &kCFTypeArrayCallBacks);
+    MAC_FileWatch *w = (MAC_FileWatch *)calloc(1, sizeof(MAC_FileWatch));
+    FSEventStreamContext context = {0, w, 0, 0, 0};
+    w->stream = FSEventStreamCreate(kCFAllocatorDefault, mac_file_watch_callback, &context, paths,
+                                    kFSEventStreamEventIdSinceNow, 0.05,
+                                    kFSEventStreamCreateFlagNoDefer);
+    if(w->stream != 0)
+    {
+      FSEventStreamSetDispatchQueue(w->stream, mac_file_watch_queue);
+      if(FSEventStreamStart(w->stream))
+      {
+        result.u64[0] = (U64)w;
+      }
+      else
+      {
+        FSEventStreamInvalidate(w->stream);
+        FSEventStreamRelease(w->stream);
+        free(w);
+      }
+    }
+    else
+    {
+      free(w);
+    }
+    CFRelease(paths);
+    CFRelease(path);
+  }
   return result;
 }
 
 internal void
 file_watch_release(FileWatch watch)
 {
+  MAC_FileWatch *w = (MAC_FileWatch *)watch.u64[0];
+  if(w != 0)
+  {
+    FSEventStreamStop(w->stream);
+    FSEventStreamInvalidate(w->stream);
+    FSEventStreamRelease(w->stream);
+    // rad: a callback already running on the queue may still touch w
+    dispatch_sync_f(mac_file_watch_queue, 0, mac_file_watch_noop);
+    free(w);
+  }
 }
 
 internal B32
 file_watch_check(FileWatch watch)
 {
-  return 1;
+  MAC_FileWatch *w = (MAC_FileWatch *)watch.u64[0];
+  B32 result = 1;
+  if(w != 0)
+  {
+    result = !!ins_atomic_u32_eval_assign(&w->changed, 0);
+  }
+  return result;
 }
 
 ////////////////////////////////

@@ -10,13 +10,16 @@
 #define R_BACKEND_STUB 0
 #define R_BACKEND_D3D11 1
 #define R_BACKEND_OPENGL 2
+#define R_BACKEND_METAL 3
 
 ////////////////////////////////
 //~ rjf: Decide On Backend
 
 #if !defined(R_BACKEND) && OS_WINDOWS
 # define R_BACKEND R_BACKEND_D3D11
-#elif !defined(R_BACKEND) && (OS_LINUX || OS_MAC)
+#elif !defined(R_BACKEND) && OS_MAC
+# define R_BACKEND R_BACKEND_METAL
+#elif !defined(R_BACKEND) && OS_LINUX
 # define R_BACKEND R_BACKEND_OPENGL
 #endif
 
@@ -34,6 +37,8 @@
 # include "d3d11/render_d3d11.h"
 #elif R_BACKEND == R_BACKEND_OPENGL
 # include "opengl/render_opengl.h"
+#elif R_BACKEND == R_BACKEND_METAL
+# include "metal/render_metal.h"
 #else
 # error Renderer backend not specified.
 #endif

@@ -36,6 +36,17 @@
   MemoryZeroArray(mac_wm_state->key_down_state);
   mac_wm_state->modifier_state = 0;
 }
+- (void)windowDidChangeOcclusionState:(NSNotification *)notification
+{
+  // rad: frames drawn while the window was covered never reached the screen
+  // (the Metal renderer does not present them), so it shows an old one:
+  // draw a new frame now that it can be seen
+  NSWindow *window = notification.object;
+  if(window.occlusionState & NSWindowOcclusionStateVisible)
+  {
+    wm_send_wakeup_event();
+  }
+}
 - (void)windowDidResize:(NSNotification *)notification
 {
   // rad: AppKit runs its own loop while the user resizes; draw a whole frame
@@ -1059,6 +1070,28 @@ wm_get_events(Arena *arena, B32 wait)
   MemoryZeroStruct(&mac_wm_event_list);
   mac_wm_state->get_events_depth -= 1;
   wm_sim_take_events(arena, &result);
+
+  //- rad: the refresh rate is the one of the screen showing the key window
+  // (else the first window), which can change when a window moves to
+  // another screen (a 60 Hz monitor next to a 120 Hz laptop panel). rad
+  // derives its animation step from it; its frame-time guess alone is wrong
+  // when frames do not wait for the display (the Metal renderer skips
+  // unchanged ones)
+  {
+    NSWindow *window = NSApp.keyWindow;
+    if(window == nil && mac_wm_state->first_window != 0)
+    {
+      window = mac_wm_state->first_window->window;
+    }
+    if(@available(macOS 12.0, *))
+    {
+      NSInteger fps = window.screen.maximumFramesPerSecond;
+      if(fps > 0)
+      {
+        mac_wm_state->gfx_info.default_refresh_rate = (F32)fps;
+      }
+    }
+  }
   return result;
 }
 

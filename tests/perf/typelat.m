@@ -12,6 +12,10 @@
 // Use:   build/typelat [-n samples] [-d start_delay_s] [-w region_w] [-h region_h]
 //          [-at x,y]   (watch a w x h box there, global points; default: the
 //                       focused app's whole window)
+//          [-pid pid]  (activate that app, watch its window, and post the keys
+//                       to it only, not to whatever has focus: for unattended
+//                       runs on an app that starts with its text cursor placed,
+//                       e.g. raid --user:<scratch file> <file>)
 //   1. Run it, then within the start delay (5 s) click into the editor's
 //      text (an empty line of an open file) and take your hands off. It
 //      watches the focused app's whole window (-at x,y: a box instead).
@@ -54,6 +58,8 @@ static uint64_t g_last_frame_time;
 static double g_frame_interval_sum;
 static int g_frame_interval_count;
 
+static pid_t g_pid; // -pid: keys go to this process only
+
 static void save_png(const uint8_t *bgra, const char *path);
 static size_t changed_pixels(const uint8_t *a, const uint8_t *b);
 
@@ -63,8 +69,16 @@ static void post_key(void)
   CGEventRef down = CGEventCreateKeyboardEvent(NULL, code, true);
   CGEventRef up = CGEventCreateKeyboardEvent(NULL, code, false);
   g_key_time = mach_absolute_time();
-  CGEventPost(kCGHIDEventTap, down);
-  CGEventPost(kCGHIDEventTap, up);
+  if(g_pid != 0)
+  {
+    CGEventPostToPid(g_pid, down);
+    CGEventPostToPid(g_pid, up);
+  }
+  else
+  {
+    CGEventPost(kCGHIDEventTap, down);
+    CGEventPost(kCGHIDEventTap, up);
+  }
   CFRelease(down);
   CFRelease(up);
 }
@@ -250,7 +264,8 @@ int main(int argc, char **argv)
       else if(!strcmp(argv[i], "-w") && i+1 < argc) { region_w = atof(argv[++i]); }
       else if(!strcmp(argv[i], "-h") && i+1 < argc) { region_h = atof(argv[++i]); }
       else if(!strcmp(argv[i], "-at") && i+1 < argc) { have_at = (sscanf(argv[++i], "%lf,%lf", &at_x, &at_y) == 2); }
-      else { printf("usage: typelat [-n samples] [-d start_delay_s] [-w w] [-h h] [-at x,y]\n"); return 2; }
+      else if(!strcmp(argv[i], "-pid") && i+1 < argc) { g_pid = (pid_t)atoi(argv[++i]); }
+      else { printf("usage: typelat [-n samples] [-d start_delay_s] [-w w] [-h h] [-at x,y] [-pid pid]\n"); return 2; }
     }
     g_results = calloc((size_t)g_samples_wanted + 1, sizeof(double));
     if(!AXIsProcessTrusted())
@@ -269,7 +284,17 @@ int main(int argc, char **argv)
       printf("note: no Screen Recording permission yet (System Settings > Privacy & Security > Screen Recording); asking...\n");
       CGRequestScreenCaptureAccess();
     }
-    if(!have_at)
+    NSRunningApplication *pid_app = nil;
+    if(g_pid != 0)
+    {
+      pid_app = [NSRunningApplication runningApplicationWithProcessIdentifier:g_pid];
+      if(pid_app == nil) { printf("no process %d\n", (int)g_pid); return 1; }
+      [pid_app activateWithOptions:0];
+      printf("activated %s; starting in %.0f s\n", pid_app.localizedName.UTF8String, delay_s);
+      fflush(stdout);
+      [NSThread sleepForTimeInterval:delay_s];
+    }
+    else if(!have_at)
     {
       printf("click into the editor's text (an empty line in a file with text), then hands off: starting in %.0f s\n", delay_s);
       fflush(stdout);
@@ -279,7 +304,7 @@ int main(int argc, char **argv)
     // largest window (any visible reaction to the key counts: the character,
     // the cursor, a status bar); -at x,y: a w x h box there instead
     CGRect global = CGRectZero;
-    NSRunningApplication *front_app = NSWorkspace.sharedWorkspace.frontmostApplication;
+    NSRunningApplication *front_app = (pid_app != nil ? pid_app : NSWorkspace.sharedWorkspace.frontmostApplication);
     if(have_at)
     {
       global = CGRectMake(at_x - region_w/2, at_y - region_h/2, region_w, region_h);

@@ -1,0 +1,285 @@
+// Copyright (c) Epic Games Tools
+// Licensed under the MIT license (https://opensource.org/license/mit/)
+
+////////////////////////////////
+//~ rad: Metal Shaders
+//
+// Line-for-line ports of the OpenGL backend's shaders (render_opengl.mdesk),
+// so both backends produce the same pixels. Differences, all from Metal's
+// conventions: texture row 0 is the top (GL: the bottom), so the blur pass
+// does not flip its texture coordinates; vertex inputs come from the
+// instance buffer by instance id instead of vertex attributes.
+
+@embed_string r_mtl_shader_src:
+```
+#include <metal_stdlib>
+using namespace metal;
+
+////////////////////////////////
+//~ Helpers
+
+float rect_sdf(float2 sample_pos, float2 rect_half_size, float r)
+{
+  return length(max(abs(sample_pos) - rect_half_size + r, 0.0)) - r;
+}
+
+float linear_from_srgb_f32(float x)
+{
+  return x < 0.0404482362771082 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4);
+}
+
+float4 linear_from_srgba(float4 v)
+{
+  float4 result = float4(linear_from_srgb_f32(v.x),
+                         linear_from_srgb_f32(v.y),
+                         linear_from_srgb_f32(v.z),
+                         v.w);
+  return result;
+}
+
+////////////////////////////////
+//~ UI Rectangles
+
+// R_Rect2DInst
+struct RectInst
+{
+  float4 dst_rect;
+  float4 src_rect;
+  float4 colors[4];
+  float4 corner_radii;
+  float4 style; // x: border_thickness_px, y: softness_px, z: omit_texture, w: shear
+};
+
+// R_MTL_RectUniforms
+struct RectUniforms
+{
+  float4 xform[3]; // u_xform's columns (xyz)
+  float4x4 texture_sample_channel_map;
+  float2 viewport_size_px;
+  float opacity;
+  float _pad;
+};
+
+struct RectV2P
+{
+  float4 position [[position]];
+  float2 sdf_sample_pos;
+  float2 texcoord_pct;
+  float2 rect_half_size_px;
+  float4 tint;
+  float corner_radius;
+  float border_thickness;
+  float softness;
+  float omit_texture;
+};
+
+vertex RectV2P
+r_mtl_rect_vs(uint vertex_id [[vertex_id]],
+              uint instance_id [[instance_id]],
+              const device RectInst *insts [[buffer(0)]],
+              constant RectUniforms &u [[buffer(1)]],
+              texture2d<float> tex_color [[texture(0)]])
+{
+  RectInst c2v = insts[instance_id];
+
+  // rjf: constants
+  const float2 vertices[] = {float2(-1, -1), float2(-1, +1), float2(+1, -1), float2(+1, +1)};
+
+  // rjf: unpack shears
+  float shears[] = {0, 0, c2v.style.w, c2v.style.w};
+
+  // rjf: find dst position
+  float3x3 xform = float3x3(u.xform[0].xyz, u.xform[1].xyz, u.xform[2].xyz);
+  float2 dst_half_size = (c2v.dst_rect.zw - c2v.dst_rect.xy) / 2;
+  float2 dst_center    = (c2v.dst_rect.zw + c2v.dst_rect.xy) / 2;
+  float2 dst_position  = vertices[vertex_id] * dst_half_size + dst_center;
+  dst_position.y += shears[vertex_id];
+  dst_position = (xform * float3(dst_position.x, dst_position.y, 1)).xy;
+
+  // rjf: find src position
+  float2 src_half_size = (c2v.src_rect.zw - c2v.src_rect.xy) / 2;
+  float2 src_center    = (c2v.src_rect.zw + c2v.src_rect.xy) / 2;
+  float2 src_position  = vertices[vertex_id] * src_half_size + src_center;
+
+  // rjf: find color
+  float4 colors[] = {c2v.colors[0], c2v.colors[1], c2v.colors[2], c2v.colors[3]};
+  float4 color = colors[vertex_id];
+
+  // rjf: find corner radius
+  float corner_radii[] = {c2v.corner_radii.x, c2v.corner_radii.y, c2v.corner_radii.z, c2v.corner_radii.w};
+  float corner_radius = corner_radii[vertex_id];
+
+  // rjf: fill outputs
+  float2 dst_verts_pct = float2(((vertex_id >> 1) != 1) ? 1.f : 0.f,
+                                ((vertex_id & 1) != 0)  ? 0.f : 1.f);
+  float2 tex_color_size = float2(float(tex_color.get_width()), float(tex_color.get_height()));
+  RectV2P v2p;
+  {
+    v2p.position = float4(2 * dst_position.x / u.viewport_size_px.x - 1,
+                          2 * (1 - dst_position.y / u.viewport_size_px.y) - 1,
+                          0.0, 1.0);
+    v2p.sdf_sample_pos    = (2.f * dst_verts_pct - 1.f) * dst_half_size;
+    v2p.texcoord_pct      = src_position / tex_color_size;
+    v2p.rect_half_size_px = dst_half_size;
+    v2p.tint              = color;
+    v2p.corner_radius     = corner_radius;
+    v2p.border_thickness  = c2v.style.x;
+    v2p.softness          = c2v.style.y;
+    v2p.omit_texture      = c2v.style.z;
+  }
+  return v2p;
+}
+
+fragment float4
+r_mtl_rect_ps(RectV2P v2p [[stage_in]],
+              constant RectUniforms &u [[buffer(1)]],
+              texture2d<float> tex_color [[texture(0)]],
+              sampler tex_sampler [[sampler(0)]])
+{
+  // rjf: sample texture
+  float4 albedo_sample = float4(1, 1, 1, 1);
+  if(v2p.omit_texture < 1)
+  {
+    albedo_sample = u.texture_sample_channel_map * tex_color.sample(tex_sampler, v2p.texcoord_pct);
+    albedo_sample = linear_from_srgba(albedo_sample);
+  }
+
+  // rjf: sample for borders
+  float border_sdf_t = 1;
+  if(v2p.border_thickness > 0)
+  {
+    float border_sdf_s = rect_sdf(v2p.sdf_sample_pos,
+                                  v2p.rect_half_size_px - float2(v2p.softness*2.f, v2p.softness*2.f) - v2p.border_thickness,
+                                  max(v2p.corner_radius-v2p.border_thickness, 0.f));
+    border_sdf_t = smoothstep(0.f, 2*v2p.softness, border_sdf_s);
+  }
+  if(border_sdf_t < 0.001f)
+  {
+    discard_fragment();
+  }
+
+  // rjf: sample for corners
+  float corner_sdf_t = 1;
+  if(v2p.corner_radius > 0 || v2p.softness > 0.75f)
+  {
+    float corner_sdf_s = rect_sdf(v2p.sdf_sample_pos,
+                                  v2p.rect_half_size_px - float2(v2p.softness*2.f, v2p.softness*2.f),
+                                  v2p.corner_radius);
+    corner_sdf_t = 1-smoothstep(0.f, 2*v2p.softness, corner_sdf_s);
+  }
+
+  // rjf: form+return final color
+  float4 final_color = albedo_sample;
+  final_color *= v2p.tint;
+  final_color.a *= u.opacity;
+  final_color.a *= corner_sdf_t;
+  final_color.a *= border_sdf_t;
+  return final_color;
+}
+
+////////////////////////////////
+//~ Blur
+
+// R_MTL_BlurUniforms
+struct BlurUniforms
+{
+  float4 rect;
+  float4 corner_radii_px;
+  float2 direction;
+  float2 viewport_size;
+  uint blur_count;
+  uint _pad[3];
+  float4 blur_kernel[32];
+};
+
+struct BlurV2P
+{
+  float4 position [[position]];
+  float2 texcoord;
+  float2 sdf_sample_pos;
+  float2 rect_half_size;
+  float corner_radius;
+};
+
+vertex BlurV2P
+r_mtl_blur_vs(uint vertex_id [[vertex_id]],
+              constant BlurUniforms &u [[buffer(0)]])
+{
+  float4 rect = u.rect;
+  float4 corner_radii_px = u.corner_radii_px;
+  float2 vertex_positions_scrn[] = {rect.xw, rect.xy, rect.zw, rect.zy};
+  float corner_radii[] = {corner_radii_px.y, corner_radii_px.x, corner_radii_px.w, corner_radii_px.z};
+  float2 cornercoords_pct = float2((vertex_id >> 1) != 0 ? 1.f : 0.f,
+                                   (vertex_id & 1) != 0  ? 0.f : 1.f);
+
+  float2 vertex_position_pct = vertex_positions_scrn[vertex_id] / u.viewport_size;
+  float2 vertex_position_scr = 2.f * vertex_position_pct - 1.f;
+
+  float2 rect_half_size_local = float2((rect.z-rect.x)/2, (rect.w-rect.y)/2);
+
+  BlurV2P v2p;
+  v2p.position = float4(vertex_position_scr.x, -vertex_position_scr.y, 0.f, 1.f);
+  v2p.texcoord = vertex_position_pct;
+  v2p.sdf_sample_pos = (2.f * cornercoords_pct - 1.f) * rect_half_size_local;
+  v2p.rect_half_size = rect_half_size_local - 2.f;
+  v2p.corner_radius = corner_radii[vertex_id];
+  return v2p;
+}
+
+fragment float4
+r_mtl_blur_ps(BlurV2P v2p [[stage_in]],
+              constant BlurUniforms &u [[buffer(0)]],
+              texture2d<float> tex [[texture(0)]],
+              sampler tex_sampler [[sampler(0)]])
+{
+  // rjf: blend weighted texture samples into color
+  float3 color = u.blur_kernel[0].x * tex.sample(tex_sampler, v2p.texcoord).rgb;
+  for(uint i = 1; i < u.blur_count; i += 1)
+  {
+    float weight = u.blur_kernel[i].x;
+    float offset = u.blur_kernel[i].y;
+    color += weight * tex.sample(tex_sampler, v2p.texcoord - offset * u.direction).rgb;
+    color += weight * tex.sample(tex_sampler, v2p.texcoord + offset * u.direction).rgb;
+  }
+
+  // rjf: sample for corners
+  float corner_sdf_s = rect_sdf(v2p.sdf_sample_pos, v2p.rect_half_size, v2p.corner_radius);
+  float corner_sdf_t = 1-smoothstep(0.f, 2.f, corner_sdf_s);
+
+  // rjf: weight output color by sdf
+  // this is doing alpha testing, leave blurring only where mostly opaque pixels are
+  if(corner_sdf_t < 0.9f)
+  {
+    discard_fragment();
+  }
+
+  return float4(color, 1.f);
+}
+
+////////////////////////////////
+//~ Present (linear stage -> sRGB-encoded drawable, texel for texel)
+
+struct PresentV2P
+{
+  float4 position [[position]];
+};
+
+vertex PresentV2P
+r_mtl_present_vs(uint vertex_id [[vertex_id]])
+{
+  float2 p = float2((vertex_id << 1) & 2, vertex_id & 2);
+  PresentV2P v2p;
+  v2p.position = float4(p*2.0 - 1.0, 0.0, 1.0);
+  return v2p;
+}
+
+fragment float4
+r_mtl_present_ps(PresentV2P v2p [[stage_in]],
+                 texture2d<float> stage [[texture(0)]])
+{
+  float3 c = clamp(stage.read(uint2(v2p.position.xy)).rgb, 0.0, 1.0);
+  float3 lo = c*12.92;
+  float3 hi = 1.055*pow(c, float3(1.0/2.4)) - 0.055;
+  return float4(mix(lo, hi, step(float3(0.0031308), c)), 1.0);
+}
+```

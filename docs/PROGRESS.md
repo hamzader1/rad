@@ -40,7 +40,7 @@ Older entries below say `rad.exe`.
 | 9. LSP client                        | Done. `lsp` layer; one rust-analyzer per Cargo workspace: diagnostics (Problems + editor), hover, Go To Definition (F12, Ctrl+click, Alt+Left back), completion list (as you type, `.`, `::`, Ctrl+Space; imports) (see journal). 22 scripts, 453 checks, pass (debug and release, `build\release\rad.exe` 2026-11-04). |
 | 10. Remove debugger, rebrand         | Done. Debugger, debug-info layers, tools and their third-party code out of the repo and the build (421 files; tag `raddbg-reference` keeps them). Renamed to Raid: `raid.exe`, title/About, `%APPDATA%\raid\` (the old session file is imported once), README. Logo unchanged (the user's, later). 42 scripts, 833 checks, pass (debug and release, `build\release\raid.exe` 2026-11-05). |
 | 11. Mac foundation                  | Done (on the Mac, not from Windows). `src/mac/base` (from `src/linux/base`), ARM64 in `base`, `./build.sh rad_tests` on macOS: 37,610,802 checks, 0 failures (debug and release, ARM64, macOS 15.7). CI: `.github/workflows/macos.yml`. |
-| 12. Mac UI                           | Done (2026-11-06; the user tested it on the Mac). Cocoa window manager, OpenGL 4.1 (sRGB present pass), FreeType + CoreText font names, Mac shell incl. Terminal.app runs. `tests/run_scripts.sh`: 45 scripts, all pass on the release build. Left for later (TODO): IME/dead keys, file drop, .app bundle, a side-by-side screenshot check against Windows. |
+| 12. Mac UI                           | Done (2026-11-06; the user tested it on the Mac). Cocoa window manager, Metal renderer (2026-11-06; the first one, OpenGL 4.1, stays as a fallback: `./build.sh raid opengl`), FreeType + CoreText font names, Mac shell incl. Terminal.app runs. `tests/run_scripts.sh`: 45 scripts, all pass on the release build. Left for later (TODO): IME/dead keys, file drop, .app bundle, a side-by-side screenshot check against Windows. |
 | 13. Debugging                        | Not started. |
 
 Milestone 3 details:
@@ -212,13 +212,17 @@ Milestone 6 details (each item with its script):
 
 0. `docs/TASKS.md` (A-H) is done. Hint images are in `.dev_hints/`
    (private, git-ignored, never push it).
-1. Speed, continued (see the 2026-11-06 journal entry; measure with
-   `tests/perf/run_perf.sh`): input-to-photon in a visible window is not
-   measured yet (script windows are not vsync-paced). Candidates: fewer
-   frames per input (4, as raddbg; 2 broke the tool-window close button,
-   find out why first), fold ranges from a worker or incrementally, the
-   compaction copy/hash off the UI thread, a quiet-period debounce for the
-   150 ms didChange timer.
+1. Speed, continued (see the 2026-11-06 journal entries; app side:
+   `tests/perf/run_perf.sh`; key to screen: `tests/perf/typelat.m`). The
+   Mac renderer is Metal now; typing latency on a 60 Hz monitor is at
+   Zed's level (~35 ms, most of it the monitor and the compositor).
+   Candidates: the 120 Hz panel not measured with the final build (only
+   the external monitor was connected); fuse the present into the UI pass
+   with framebuffer fetch (memoryless stage, ~1.5 ms less GPU at
+   4096 x 2304); a fast-typing measurement (typelat's keys are 180-320 ms
+   apart; the caret slide after each key lasts 12 frames, 200 ms at 60 Hz);
+   fold ranges from a worker or incrementally, the compaction copy/hash off
+   the UI thread.
    - Logo: the user will supply one later (`data/logo.ico` for the exe,
      window and About; `data/logo.png` for Linux).
    - LICENSE holds Epic's notice only; the user may add their own line.
@@ -256,7 +260,9 @@ Milestone 6 details (each item with its script):
   folder watch fires (any change below the root, e.g. a build writing to
   `target/`); trees are capped at 100,000 rows.
 - Open files are still checked by file_stream's timestamp poll (async
-  threads, about once a second), not by OS notifications.
+  threads, about once a second), not by OS notifications. Folder watches
+  (explorer) are OS notifications on Windows and the Mac (FSEvents); Linux
+  still polls once a second.
 - Settings: `RAD_SettingTable` in rad.mdesk, stored in the user file under
   `settings:`, File > Settings tab. A number can't be typed in yet (slider,
   Left/Right).
@@ -369,10 +375,15 @@ Milestone 6 details (each item with its script):
 - `tests/perf/run_perf.sh [-e exe] [-s "3000 10000"] [-l "off on"]`: typing
   benchmarks on generated Rust crates (MEASURE lines, not pass/fail).
 - Profiling: `sample <pid> 6 -file out.txt` while a script types.
+- Renderer: Metal (`src/render/metal`). `bash build.sh raid opengl` builds
+  the OpenGL one instead (the Mac's first backend; with it,
+  `RAID_SWAP_INTERVAL=0 build/raid` turns off the refresh wait).
 - Key-to-screen latency of any app (Raid, Zed, ...): build `tests/perf/typelat.m`
   (build line at its top) -> `build/typelat`; the terminal needs Accessibility
-  and Screen Recording. `RAID_SWAP_INTERVAL=0 build/raid` turns off the GL
-  refresh wait (experiment; animations then run fast).
+  and Screen Recording. Unattended, on a scratch session (keys go to that
+  process only): `build/raid --user:/tmp/lat.rad_user some.txt &` then
+  `build/typelat -pid $! -d 1 -n 40`. The user file keeps the monitor
+  (`monitor:`), so reusing a copy pins the window to one screen.
 - CI: `.github/workflows/macos.yml` builds and runs `rad_tests` (debug and
   release) on every push.
 
@@ -424,6 +435,45 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-06 (Metal renderer for the Mac)
+- Why: on a 60 Hz monitor typing felt slow next to Zed. Measured key to
+  screen with the new `tests/perf/typelat.m` (posts keys, watches the
+  window with ScreenCaptureKit): GL Raid 41.6 ms avg vs Zed 34.7 (the
+  user's run); Raid's samples clustered at ~41 and ~48 ms, its best equal
+  to Zed's.
+- `src/render/metal` (`R_BACKEND_METAL`, the Mac default; `build.sh raid
+  opengl` for GL): the same frame structure as the GL backend, shaders
+  ported line for line (`render_metal.mdesk`), one CAMetalLayer per window
+  (sRGB-tagged like the window). Pixels: 3,624 of 9.4M differ from GL, by
+  1-2 of 255 (stage RGBA16F, D3D11's format, instead of GL's RGBA32F).
+  The blur samples linearly, as D3D11 (GL sampled nearest).
+- What made it fast, measured (GPU time per frame at 4096 x 2304):
+  precise math 9.9 ms -> fast math 4.1 ms, same pixels; consecutive UI
+  passes share one encoder (one load/store of the stage, not one per
+  pass); blurs of width 0-1 are skipped (raddbg fades a blur by scaling
+  its size: the editor got two full-area copy passes every frame).
+- Frames identical to the one on screen are not drawn or presented (hash
+  of the passes' parameters and instances, plus texture uploads). rad
+  draws several frames per input and each presented frame takes a refresh;
+  per keystroke 12 frames change (raddbg's caret slide), the rest are
+  skipped. Covered or minimized windows are not drawn (the compositor
+  drops those drawables; nextDrawable can stall a second); the WM wakes a
+  frame when a window is uncovered (`windowDidChangeOcclusionState`).
+- The next frame's drawable is taken right after a present (2 drawables):
+  the wait for the refresh comes before the next frame reads its input.
+  Live resize presents in Core Animation's transaction.
+- WM: the refresh rate is the key window's screen's (was the main screen's
+  at startup).
+- Mac folder watches: FSEvents (was a stub: the explorer saw a new file
+  only at its once-a-second rescan). Found because `file_watch` failed on
+  Metal (explorer_rows 4, expected 5); why it passed on GL was not checked.
+- Result, 60 Hz monitor, 40 keys each, same session: GL 36.5 ms avg (40.4
+  median), Metal 34.6 (33.2 median, p95 41.6) = Zed's level. Before the GPU
+  fixes Metal was slower than GL (42-48 ms; 224 ms without the skip).
+- `tests/perf/typelat.m -pid <pid>`: keys to that process only (unattended
+  runs). 44 scripts (871 checks) pass on Metal; rad_tests 37,610,902
+  checks, 0 failing; the OpenGL build still compiles.
 
 ### 2026-11-06 (milestone 12 done; typing speed; completion list size)
 - Milestone 12 closed: the user tested Raid on the Mac; the release build

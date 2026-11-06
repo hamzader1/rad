@@ -24,7 +24,7 @@ if [[ "$os_name" == "Darwin" ]]; then
   # macOS (ARM64 or x86_64): no -msse2 (ARM64), no -mcx16 (ARM64)
   cc_cflags_clang=" -fdiagnostics-absolute-paths -Wno-for-loop-analysis -Wno-incompatible-pointer-types-discards-qualifiers -Wno-initializer-overrides -Wno-compare-distinct-pointer-types -Wno-single-bit-bitfield-constant-conversion -Wno-deprecated-declarations -Wno-writable-strings -Wno-unknown-warning-option -Wno-deprecated-register -Wno-unused-local-typedef -Wno-gnu-folding-constant"
   cc_common=${auto_compile_flags}" -I../src/ -I../local/ -g -Wall -Wno-missing-braces -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-value -D_USE_MATH_DEFINES -Dgnu_printf=printf"
-  cc_link="-lpthread -lm -ldl -framework CoreFoundation"
+  cc_link="-lpthread -lm -ldl -framework CoreFoundation -framework CoreServices"
 else
   # Linux
   cc_cflags_clang=" -fdiagnostics-absolute-paths -Wno-for-loop-analysis  -Wno-incompatible-pointer-types-discards-qualifiers -Wno-initializer-overrides -Wno-compare-distinct-pointer-types -Wno-single-bit-bitfield-constant-conversion -Wno-deprecated-declarations -Wno-writable-strings -Wno-unknown-warning-option -Wno-deprecated-register -Wno-unused-local-typedef -msse2"
@@ -40,7 +40,7 @@ cc_link_dll="-fPIC"
 # --- External Libraries ------------------------------------------------------
 if [[ "$os_name" == "Darwin" ]]; then
   # macOS: FreeType from Homebrew (brew install freetype pkg-config); Cocoa and
-  # OpenGL from the SDK. The UI backends are Objective-C, so raid compiles as it.
+  # Metal from the SDK. The UI backends are Objective-C, so raid compiles as it.
   if [[ -x "$(command -v pkg-config)" ]]; then
     cc_font_provider="$(pkg-config --cflags --libs freetype2)"
   else
@@ -48,7 +48,13 @@ if [[ "$os_name" == "Darwin" ]]; then
   fi
   cc_font_provider="$cc_font_provider -framework CoreText"
   cc_os_gfx="-framework Cocoa"
-  cc_render="-framework OpenGL"
+  # Metal renderer; `opengl` builds the OpenGL one (the Mac's first backend)
+  if [[ "${opengl:-0}" == "1" ]]; then
+    echo "[opengl renderer]"
+    cc_render="-DR_BACKEND=R_BACKEND_OPENGL -framework OpenGL"
+  else
+    cc_render="-framework Metal -framework QuartzCore"
+  fi
   cc_icon=""
   cc_objc="-x objective-c -fno-objc-arc"
 else

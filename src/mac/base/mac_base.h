@@ -34,6 +34,8 @@
 #include <mach/mach.h>
 #include <mach-o/dyld.h>
 #include <dispatch/dispatch.h>
+// rad: FSEvents only (the CoreServices umbrella clashes with base: FileInfo, ...)
+#include <CoreServices/../Frameworks/FSEvents.framework/Headers/FSEvents.h>
 #define internal static
 
 extern char **environ;
@@ -49,6 +51,16 @@ struct MAC_Semaphore
 {
   dispatch_semaphore_t dispatch; // unnamed semaphores
   sem_t *posix;                  // named semaphores
+};
+
+////////////////////////////////
+//~ rad: Folder Watches (FSEvents)
+
+typedef struct MAC_FileWatch MAC_FileWatch;
+struct MAC_FileWatch
+{
+  FSEventStreamRef stream;
+  U32 changed; // set on FSEvents' queue, taken by file_watch_check
 };
 
 ////////////////////////////////
