@@ -1887,6 +1887,208 @@ process_group_close(ProcessGroup group)
 }
 
 ////////////////////////////////
+//~ rad: @per_os_impl Pseudo-Terminals (not in raddbg; UNTESTED: written on
+// the Mac, never compiled or run on Windows yet)
+//
+// NOTE(rad): ConPTY (Windows 10 1809+), loaded from kernel32 at run time:
+// pipes in and out of a pseudo console, the process attached to it. Writes
+// block (anonymous pipes have no non-blocking mode).
+
+typedef HRESULT W32_CreatePseudoConsoleFunctionType(COORD size, HANDLE input, HANDLE output, DWORD flags, void **pc_out);
+typedef HRESULT W32_ResizePseudoConsoleFunctionType(void *pc, COORD size);
+typedef void W32_ClosePseudoConsoleFunctionType(void *pc);
+#define W32_PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE 0x00020016
+
+internal Pty
+pty_launch(PtyLaunchParams *params)
+{
+  Pty result = {0};
+  Temp scratch = scratch_begin(0, 0);
+  HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+  W32_CreatePseudoConsoleFunctionType *CreatePseudoConsole_ = (W32_CreatePseudoConsoleFunctionType *)GetProcAddress(kernel32, "CreatePseudoConsole");
+  HANDLE in_read = 0, in_write = 0, out_read = 0, out_write = 0;
+  void *pc = 0;
+  if(CreatePseudoConsole_ != 0 && params->cmd_line.node_count != 0 &&
+     CreatePipe(&in_read, &in_write, 0, 0) && CreatePipe(&out_read, &out_write, 0, 0))
+  {
+    COORD size = {(SHORT)Clamp(1, params->cols, 4096), (SHORT)Clamp(1, params->rows, 4096)};
+    if(SUCCEEDED(CreatePseudoConsole_(size, in_read, out_write, 0, &pc)))
+    {
+      //- rad: command line, environment (as process_launch)
+      StringJoin join_params = {0};
+      join_params.pre = str8_lit("\"");
+      join_params.sep = str8_lit("\" \"");
+      join_params.post = str8_lit("\"");
+      String8 cmd = str8_list_join(scratch.arena, &params->cmd_line, &join_params);
+      String8List all_opts = {0};
+      for(String8Node *n = params->env.first; n != 0; n = n->next)
+      {
+        str8_list_push(scratch.arena, &all_opts, n->string);
+      }
+      for(String8Node *n = w32_state.process_info.environment.first; n != 0; n = n->next)
+      {
+        String8 name = str8_prefix(n->string, str8_find_needle(n->string, 0, str8_lit("="), 0) + 1);
+        B32 is_overridden = 0;
+        for(String8Node *o = params->env.first; o != 0; o = o->next)
+        {
+          is_overridden = is_overridden || str8_match(str8_prefix(o->string, name.size), name, StringMatchFlag_CaseInsensitive);
+        }
+        if(!is_overridden)
+        {
+          str8_list_push(scratch.arena, &all_opts, n->string);
+        }
+      }
+      StringJoin join_params2 = {0};
+      join_params2.sep = str8_lit("\0");
+      join_params2.post = str8_lit("\0");
+      String8 env = str8_list_join(scratch.arena, &all_opts, &join_params2);
+      String16 cmd16 = str16_from_8(scratch.arena, cmd);
+      String16 env16 = str16_from_8(scratch.arena, env);
+      String16 dir16 = str16_from_8(scratch.arena, params->path);
+
+      //- rad: the pseudo console as the process's attribute
+      STARTUPINFOEXW si = {0};
+      si.StartupInfo.cb = sizeof(si);
+      SIZE_T attr_size = 0;
+      InitializeProcThreadAttributeList(0, 1, 0, &attr_size);
+      si.lpAttributeList = (LPPROC_THREAD_ATTRIBUTE_LIST)push_array(scratch.arena, U8, attr_size);
+      PROCESS_INFORMATION pi = {0};
+      if(InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &attr_size) &&
+         UpdateProcThreadAttribute(si.lpAttributeList, 0, W32_PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, pc, sizeof(pc), 0, 0) &&
+         CreateProcessW(0, (WCHAR *)cmd16.str, 0, 0, 0, EXTENDED_STARTUPINFO_PRESENT|CREATE_UNICODE_ENVIRONMENT, (WCHAR *)env16.str,
+                        params->path.size != 0 ? (WCHAR *)dir16.str : 0, &si.StartupInfo, &pi))
+      {
+        CloseHandle(pi.hThread);
+        result.u64[0] = (U64)pc;
+        result.u64[1] = (U64)in_write;
+        result.u64[2] = (U64)out_read;
+        result.u64[3] = (U64)pi.hProcess;
+      }
+      DeleteProcThreadAttributeList(si.lpAttributeList);
+    }
+  }
+
+  //- rad: the pseudo console has its own copies of its ends
+  if(in_read != 0) { CloseHandle(in_read); }
+  if(out_write != 0) { CloseHandle(out_write); }
+  if(pty_is_zero(result))
+  {
+    W32_ClosePseudoConsoleFunctionType *ClosePseudoConsole_ = (W32_ClosePseudoConsoleFunctionType *)GetProcAddress(kernel32, "ClosePseudoConsole");
+    if(pc != 0 && ClosePseudoConsole_ != 0) { ClosePseudoConsole_(pc); }
+    if(in_write != 0) { CloseHandle(in_write); }
+    if(out_read != 0) { CloseHandle(out_read); }
+  }
+  scratch_end(scratch);
+  return result;
+}
+
+internal B32
+pty_is_zero(Pty pty)
+{
+  B32 result = (pty.u64[3] == 0);
+  return result;
+}
+
+internal U64
+pty_read(Pty pty, void *out_data, U64 size, U64 endt_us, B32 *is_end_out)
+{
+  U64 result = 0;
+  B32 is_end = 0;
+  if(!pty_is_zero(pty))
+  {
+    HANDLE out_read = (HANDLE)pty.u64[2];
+    HANDLE process = (HANDLE)pty.u64[3];
+    for(;;)
+    {
+      DWORD available = 0;
+      if(!PeekNamedPipe(out_read, 0, 0, 0, &available, 0))
+      {
+        is_end = 1;
+        break;
+      }
+      if(available != 0)
+      {
+        DWORD read_size = 0;
+        if(ReadFile(out_read, out_data, (DWORD)Min(size, available), &read_size, 0) && read_size != 0)
+        {
+          result = read_size;
+        }
+        break;
+      }
+      if(WaitForSingleObject(process, 0) == WAIT_OBJECT_0)
+      {
+        // rad: the pseudo console keeps its output end open: the process
+        // exiting is the end
+        is_end = 1;
+        break;
+      }
+      if(now_time_us() >= endt_us)
+      {
+        break;
+      }
+      Sleep(5);
+    }
+  }
+  if(is_end_out != 0)
+  {
+    *is_end_out = is_end;
+  }
+  return result;
+}
+
+internal U64
+pty_write(Pty pty, void *data, U64 size)
+{
+  U64 result = 0;
+  if(!pty_is_zero(pty))
+  {
+    for(;result < size;)
+    {
+      DWORD written = 0;
+      if(!WriteFile((HANDLE)pty.u64[1], (U8 *)data + result, (DWORD)Min(size - result, max_U32), &written, 0) || written == 0)
+      {
+        break;
+      }
+      result += written;
+    }
+  }
+  return result;
+}
+
+internal void
+pty_resize(Pty pty, U32 cols, U32 rows)
+{
+  W32_ResizePseudoConsoleFunctionType *ResizePseudoConsole_ = (W32_ResizePseudoConsoleFunctionType *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "ResizePseudoConsole");
+  if(!pty_is_zero(pty) && ResizePseudoConsole_ != 0)
+  {
+    COORD size = {(SHORT)Clamp(1, cols, 4096), (SHORT)Clamp(1, rows, 4096)};
+    ResizePseudoConsole_((void *)pty.u64[0], size);
+  }
+}
+
+internal void
+pty_close(Pty pty)
+{
+  if(!pty_is_zero(pty))
+  {
+    // rad: the output end first (closing the pseudo console waits for its
+    // output to be read otherwise)
+    W32_ClosePseudoConsoleFunctionType *ClosePseudoConsole_ = (W32_ClosePseudoConsoleFunctionType *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "ClosePseudoConsole");
+    CloseHandle((HANDLE)pty.u64[2]);
+    CloseHandle((HANDLE)pty.u64[1]);
+    if(ClosePseudoConsole_ != 0)
+    {
+      ClosePseudoConsole_((void *)pty.u64[0]);
+    }
+    if(WaitForSingleObject((HANDLE)pty.u64[3], 100) != WAIT_OBJECT_0)
+    {
+      TerminateProcess((HANDLE)pty.u64[3], 1);
+    }
+    CloseHandle((HANDLE)pty.u64[3]);
+  }
+}
+
+////////////////////////////////
 //~ rjf: @per_os_impl Dynamically-Loaded Libraries
 
 internal Library

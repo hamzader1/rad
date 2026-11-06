@@ -1441,6 +1441,88 @@ test_lsp_expect_bodies(char *test_name, String8 stream, U64 chunk_size, String8 
   scratch_end(scratch);
 }
 
+////////////////////////////////
+//~ rad: pseudo-terminals (base pty_*)
+
+internal String8
+test_pty_read_until(Arena *arena, Pty pty, String8 needle, U64 timeout_us, B32 *is_end_out)
+{
+  // NOTE(rad): everything read until `needle` shows up, the end, or timeout
+  String8List parts = {0};
+  String8 all = {0};
+  U64 endt_us = now_time_us() + timeout_us;
+  B32 is_end = 0;
+  for(;!is_end && now_time_us() < endt_us;)
+  {
+    U8 buffer[4096];
+    U64 size = pty_read(pty, buffer, sizeof(buffer), Min(endt_us, now_time_us() + 50000), &is_end);
+    if(size != 0)
+    {
+      str8_list_push(arena, &parts, push_str8_copy(arena, str8(buffer, size)));
+      all = str8_list_join(arena, &parts, 0);
+      if(needle.size != 0 && str8_find_needle(all, 0, needle, 0) < all.size)
+      {
+        break;
+      }
+    }
+  }
+  if(is_end_out != 0)
+  {
+    *is_end_out = is_end;
+  }
+  return all;
+}
+
+internal void
+test_pty(void)
+{
+#if OS_MAC || OS_LINUX
+  Temp scratch = scratch_begin(0, 0);
+
+  //- rad: output, the size, an environment entry, the end
+  {
+    PtyLaunchParams params = {0};
+    str8_list_push(scratch.arena, &params.cmd_line, str8_lit("/bin/sh"));
+    str8_list_push(scratch.arena, &params.cmd_line, str8_lit("-c"));
+    str8_list_push(scratch.arena, &params.cmd_line, str8_lit("stty size; echo \"term=$TERM tty=$(test -t 0 && echo yes)\""));
+    str8_list_push(scratch.arena, &params.env, str8_lit("TERM=xterm-256color"));
+    params.cols = 77;
+    params.rows = 22;
+    Pty pty = pty_launch(&params);
+    test_expect("pty_launch", "launched", !pty_is_zero(pty));
+    B32 is_end = 0;
+    String8 out = test_pty_read_until(scratch.arena, pty, str8_zero(), 5000000, &is_end);
+    test_expect("pty_size", "stty size prints 22 77", str8_find_needle(out, 0, str8_lit("22 77"), 0) < out.size);
+    test_expect("pty_env", "TERM is passed, stdin is the terminal", str8_find_needle(out, 0, str8_lit("term=xterm-256color tty=yes"), 0) < out.size);
+    test_expect("pty_end", "the end is seen", is_end);
+    pty_close(pty);
+  }
+
+  //- rad: input (the terminal echoes it, the shell runs it), resize, close
+  {
+    PtyLaunchParams params = {0};
+    str8_list_push(scratch.arena, &params.cmd_line, str8_lit("/bin/sh"));
+    params.cols = 80;
+    params.rows = 24;
+    Pty pty = pty_launch(&params);
+    String8 cmd = str8_lit("echo a$((40+2))b\n");
+    U64 written = pty_write(pty, cmd.str, cmd.size);
+    test_expect("pty_write", "all written", written == cmd.size);
+    String8 out = test_pty_read_until(scratch.arena, pty, str8_lit("a42b"), 5000000, 0);
+    test_expect("pty_input", "the shell ran the input", str8_find_needle(out, 0, str8_lit("a42b"), 0) < out.size);
+    pty_resize(pty, 100, 30);
+    String8 cmd2 = str8_lit("stty size\n");
+    pty_write(pty, cmd2.str, cmd2.size);
+    out = test_pty_read_until(scratch.arena, pty, str8_lit("30 100"), 5000000, 0);
+    test_expect("pty_resize", "stty size prints 30 100", str8_find_needle(out, 0, str8_lit("30 100"), 0) < out.size);
+    U64 close_start_us = now_time_us();
+    pty_close(pty);
+    test_expect("pty_close", "closing a live shell is quick", now_time_us() - close_start_us < 500000);
+  }
+  scratch_end(scratch);
+#endif
+}
+
 internal void
 test_lsp(void)
 {
@@ -1577,6 +1659,10 @@ entry_point(CmdLine *cmd_line)
   //- rad: json parsing and writing
   test_json();
   test_section_end("json: values, escapes, errors, random", &section_start_us);
+
+  //- rad: pseudo-terminals
+  test_pty();
+  test_section_end("pty: launch, read, write, resize, close", &section_start_us);
 
   //- rad: LSP framing and messages
   test_lsp();

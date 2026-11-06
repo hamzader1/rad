@@ -31,6 +31,25 @@ struct ProcessGroup
   U64 u64[1];
 };
 
+// rad: not in raddbg: a process on a pseudo-terminal (the integrated
+// terminal): u64[0..1] on POSIX: master fd, pid; on Windows: the pseudo
+// console, its input write end, its output read end, the process
+typedef struct Pty Pty;
+struct Pty
+{
+  U64 u64[4];
+};
+
+typedef struct PtyLaunchParams PtyLaunchParams;
+struct PtyLaunchParams
+{
+  String8List cmd_line;
+  String8 path;
+  String8List env; // "NAME=value", over the inherited environment
+  U32 cols;
+  U32 rows;
+};
+
 typedef struct ProcessNode ProcessNode;
 struct ProcessNode
 {
@@ -98,6 +117,22 @@ internal B32 process_join(Process process, U64 endt_us, U64 *exit_code_out);
 internal void process_detach(Process process);
 internal B32 process_kill(Process process);
 internal B32 process_send_ctrl_c(Process process);
+
+////////////////////////////////
+//~ rad: @per_os_impl Pseudo-Terminals (not in raddbg)
+//
+// pty_read waits until there is output, the terminal's end (the process and
+// every process sharing the terminal exited: *is_end_out), or endt_us;
+// pty_write never blocks (it returns what was taken); pty_close ends the
+// process (hang-up, then kill) and frees the terminal: no pty_read may be
+// running on another thread then.
+
+internal Pty pty_launch(PtyLaunchParams *params);
+internal B32 pty_is_zero(Pty pty);
+internal U64 pty_read(Pty pty, void *out_data, U64 size, U64 endt_us, B32 *is_end_out);
+internal U64 pty_write(Pty pty, void *data, U64 size);
+internal void pty_resize(Pty pty, U32 cols, U32 rows);
+internal void pty_close(Pty pty);
 
 internal ProcessGroup process_group_make(B32 kill_on_close);
 internal B32 process_group_add(ProcessGroup group, Process process);

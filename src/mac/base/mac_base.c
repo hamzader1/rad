@@ -1972,6 +1972,239 @@ process_group_close(ProcessGroup group)
 }
 
 ////////////////////////////////
+//~ rad: @per_os_impl Pseudo-Terminals (not in raddbg)
+
+internal Pty
+pty_launch(PtyLaunchParams *params)
+{
+  // NOTE(rad): posix_openpt + fork: the child takes a new session, the
+  // terminal as its controlling one and as stdin/out/err, the default
+  // signal handling, no other descriptors (async-signal-safe calls only
+  // between fork and exec: everything is prepared before)
+  Pty result = {0};
+  Temp scratch = scratch_begin(0, 0);
+  int master = posix_openpt(O_RDWR|O_NOCTTY);
+  char *slave_name = 0;
+  if(master >= 0 && grantpt(master) == 0 && unlockpt(master) == 0)
+  {
+    slave_name = ptsname(master);
+  }
+  int slave = (slave_name != 0 ? open(slave_name, O_RDWR|O_NOCTTY) : -1);
+  if(slave >= 0 && params->cmd_line.node_count != 0)
+  {
+    // rad: the terminal's slave end is open from the start (as openpty):
+    // input written before the child runs is kept
+    fcntl(master, F_SETFD, FD_CLOEXEC);
+    fcntl(slave, F_SETFD, FD_CLOEXEC);
+    fcntl(master, F_SETFL, fcntl(master, F_GETFL) | O_NONBLOCK);
+    char *dir_path = (params->path.size != 0 ? (char *)push_str8_copy(scratch.arena, params->path).str : 0);
+
+    //- rad: argv
+    char **argv = push_array(scratch.arena, char *, params->cmd_line.node_count + 1);
+    {
+      U64 idx = 0;
+      for EachNode(n, String8Node, params->cmd_line.first)
+      {
+        argv[idx] = (char *)push_str8_copy(scratch.arena, n->string).str;
+        idx += 1;
+      }
+    }
+
+    //- rad: envp: the inherited entries (minus the given names), the given ones
+    char **default_env = mac_state.default_env;
+    U64 default_env_count = 0;
+    for(;default_env != 0 && default_env[default_env_count] != 0; default_env_count += 1){}
+    char **envp = push_array(scratch.arena, char *, default_env_count + params->env.node_count + 1);
+    {
+      U64 idx = 0;
+      for EachIndex(default_idx, default_env_count)
+      {
+        String8 entry = str8_cstring(default_env[default_idx]);
+        String8 name = str8_prefix(entry, str8_find_needle(entry, 0, str8_lit("="), 0) + 1);
+        B32 is_overridden = 0;
+        for EachNode(n, String8Node, params->env.first)
+        {
+          is_overridden = is_overridden || str8_match(str8_prefix(n->string, name.size), name, 0);
+        }
+        if(!is_overridden)
+        {
+          envp[idx] = default_env[default_idx];
+          idx += 1;
+        }
+      }
+      for EachNode(n, String8Node, params->env.first)
+      {
+        envp[idx] = (char *)push_str8_copy(scratch.arena, n->string).str;
+        idx += 1;
+      }
+    }
+    struct winsize ws = {0};
+    ws.ws_col = (unsigned short)Clamp(1, params->cols, 4096);
+    ws.ws_row = (unsigned short)Clamp(1, params->rows, 4096);
+    ioctl(slave, TIOCSWINSZ, &ws);
+    int max_fd = (int)Min(getdtablesize(), 65536);
+    sigset_t empty_set;
+    sigemptyset(&empty_set);
+
+    //- rad: fork
+    pid_t pid = fork();
+    if(pid == 0)
+    {
+      setsid();
+      ioctl(slave, TIOCSCTTY, 0);
+      dup2(slave, STDIN_FILENO);
+      dup2(slave, STDOUT_FILENO);
+      dup2(slave, STDERR_FILENO);
+      for(int fd = STDERR_FILENO+1; fd < max_fd; fd += 1)
+      {
+        close(fd);
+      }
+      int signals[] = {SIGHUP, SIGINT, SIGQUIT, SIGPIPE, SIGALRM, SIGTERM, SIGCHLD, SIGTSTP, SIGTTIN, SIGTTOU, SIGWINCH};
+      for EachElement(idx, signals)
+      {
+        struct sigaction sa = {0};
+        sa.sa_handler = SIG_DFL;
+        sigaction(signals[idx], &sa, 0);
+      }
+      sigprocmask(SIG_SETMASK, &empty_set, 0);
+      if(dir_path != 0)
+      {
+        chdir(dir_path);
+      }
+      execve(argv[0], argv, envp);
+      _exit(127);
+    }
+    if(pid > 0)
+    {
+      result.u64[0] = (U64)master;
+      result.u64[1] = (U64)pid;
+    }
+  }
+  if(slave >= 0)
+  {
+    close(slave);
+  }
+  if(pty_is_zero(result) && master >= 0)
+  {
+    close(master);
+  }
+  scratch_end(scratch);
+  return result;
+}
+
+internal B32
+pty_is_zero(Pty pty)
+{
+  B32 result = (pty.u64[1] == 0);
+  return result;
+}
+
+internal U64
+pty_read(Pty pty, void *out_data, U64 size, U64 endt_us, B32 *is_end_out)
+{
+  U64 result = 0;
+  B32 is_end = 0;
+  if(!pty_is_zero(pty))
+  {
+    int fd = (int)pty.u64[0];
+    for(;;)
+    {
+      ssize_t read_size = read(fd, out_data, size);
+      if(read_size > 0)
+      {
+        result = (U64)read_size;
+        break;
+      }
+      if(read_size == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))
+      {
+        // rad: EIO (Linux) / end of file (macOS): nothing has the terminal open
+        is_end = 1;
+        break;
+      }
+      U64 now_us = now_time_us();
+      if(now_us >= endt_us)
+      {
+        break;
+      }
+      struct pollfd pfd = {fd, POLLIN, 0};
+      U64 wait_ms = (endt_us == max_U64 ? 1000 : Min(1000, (endt_us - now_us + 999)/1000));
+      poll(&pfd, 1, (int)wait_ms);
+    }
+  }
+  if(is_end_out != 0)
+  {
+    *is_end_out = is_end;
+  }
+  return result;
+}
+
+internal U64
+pty_write(Pty pty, void *data, U64 size)
+{
+  U64 result = 0;
+  if(!pty_is_zero(pty))
+  {
+    int fd = (int)pty.u64[0];
+    for(;result < size;)
+    {
+      ssize_t write_size = write(fd, (U8 *)data + result, size - result);
+      if(write_size > 0)
+      {
+        result += (U64)write_size;
+      }
+      else if(write_size < 0 && errno == EINTR)
+      {
+        continue;
+      }
+      else
+      {
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+internal void
+pty_resize(Pty pty, U32 cols, U32 rows)
+{
+  if(!pty_is_zero(pty))
+  {
+    struct winsize ws = {0};
+    ws.ws_col = (unsigned short)Clamp(1, cols, 4096);
+    ws.ws_row = (unsigned short)Clamp(1, rows, 4096);
+    ioctl((int)pty.u64[0], TIOCSWINSZ, &ws);
+  }
+}
+
+internal void
+pty_close(Pty pty)
+{
+  if(!pty_is_zero(pty))
+  {
+    pid_t pid = (pid_t)pty.u64[1];
+    close((int)pty.u64[0]);
+    kill(-pid, SIGHUP);
+    kill(pid, SIGHUP);
+    B32 reaped = 0;
+    for(U64 tries = 0; tries < 50 && !reaped; tries += 1)
+    {
+      reaped = (waitpid(pid, 0, WNOHANG) == pid);
+      if(!reaped)
+      {
+        usleep(1000);
+      }
+    }
+    if(!reaped)
+    {
+      kill(-pid, SIGKILL);
+      kill(pid, SIGKILL);
+      waitpid(pid, 0, 0);
+    }
+  }
+}
+
+////////////////////////////////
 //~ rjf: @per_os_impl Dynamically-Loaded Libraries
 
 internal Library
