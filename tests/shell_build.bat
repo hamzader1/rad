@@ -11,6 +11,14 @@
 :: If build\raid.exe is running, linking fails (LNK1104): use
 :: tests\shell_build_copy.bat instead.
 set NoDefaultCurrentDirectoryInExePath=
+:: A VS 18 developer environment inherited from the parent shell makes
+:: vcvars point at VS 18 (no C++ tools there): clear it first.
+set VCINSTALLDIR=
+set VSINSTALLDIR=
+set VCIDEInstallDir=
+set DevEnvDir=
+set VCToolsInstallDir=
+set VisualStudioVersion=
 set "PATH=C:\Program Files (x86)\Microsoft Visual Studio\Installer;%PATH%"
 call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
 cd /d "%~dp0.."

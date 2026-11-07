@@ -7,6 +7,12 @@
 ::   tests\shell_build_copy.bat [debug|release] [name]
 ::   powershell -ExecutionPolicy Bypass -File tests\run_scripts.ps1 -Exe build\rad_probe.exe
 set NoDefaultCurrentDirectoryInExePath=
+set VCINSTALLDIR=
+set VSINSTALLDIR=
+set VCIDEInstallDir=
+set DevEnvDir=
+set VCToolsInstallDir=
+set VisualStudioVersion=
 set "PATH=C:\Program Files (x86)\Microsoft Visual Studio\Installer;%PATH%"
 call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
 cd /d "%~dp0..\build"
