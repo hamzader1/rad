@@ -2301,6 +2301,134 @@ mac_signal_handler(int sig, siginfo_t *info, void *arg)
   }
 }
 
+//- rad: an app opened from the Finder or the Dock (launchd's child) gets
+// launchd's PATH (/usr/bin:/bin:/usr/sbin:/sbin): cargo and rust-analyzer
+// (~/.cargo/bin) and Homebrew's tools are not found. Like VS Code: take the
+// PATH of the user's login shell (.zprofile, .zshenv: what rustup and
+// Homebrew edit; not interactive: ~0 ms instead of ~0.35 s with .zshrc),
+// with a time limit; then add ~/.cargo/bin, /opt/homebrew/bin,
+// /usr/local/bin if they exist and are still missing. Started from a
+// terminal, the PATH is left alone.
+internal void
+mac_path_from_login_shell(void)
+{
+  if(getppid() != 1)
+  {
+    return;
+  }
+  
+  //- rad: the login shell's PATH, between markers (shell startup files may
+  // print things); 3 s at most
+  char *shell = getenv("SHELL");
+  if(shell == 0 || shell[0] == 0)
+  {
+    shell = "/bin/zsh";
+  }
+  int fds[2] = {0};
+  if(pipe(fds) == 0)
+  {
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_adddup2(&actions, fds[1], 1);
+    posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addclose(&actions, fds[0]);
+    posix_spawn_file_actions_addclose(&actions, fds[1]);
+    char *argv[] = {shell, "-l", "-c", "printf '\n__RAID_PATH__%s__RAID_PATH__\n' \"$PATH\"", 0};
+    pid_t pid = 0;
+    int spawn_code = posix_spawn(&pid, shell, &actions, 0, argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    close(fds[1]);
+    if(spawn_code == 0)
+    {
+      char buffer[16384];
+      U64 size = 0;
+      struct timespec start = {0};
+      clock_gettime(CLOCK_MONOTONIC, &start);
+      for(;size < sizeof(buffer)-1;)
+      {
+        struct timespec now = {0};
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        S64 elapsed_ms = (S64)(now.tv_sec - start.tv_sec)*1000 + (now.tv_nsec - start.tv_nsec)/1000000;
+        if(elapsed_ms >= 3000)
+        {
+          break;
+        }
+        struct pollfd pfd = {fds[0], POLLIN, 0};
+        if(poll(&pfd, 1, (int)(3000 - elapsed_ms)) <= 0)
+        {
+          break;
+        }
+        ssize_t n = read(fds[0], buffer + size, sizeof(buffer)-1-size);
+        if(n <= 0)
+        {
+          break;
+        }
+        size += (U64)n;
+        buffer[size] = 0;
+        char *first = strstr(buffer, "__RAID_PATH__");
+        if(first != 0 && strstr(first + 13, "__RAID_PATH__") != 0)
+        {
+          break;
+        }
+      }
+      buffer[size] = 0;
+      kill(pid, SIGKILL);
+      waitpid(pid, 0, 0);
+      char *begin = strstr(buffer, "__RAID_PATH__");
+      char *end = (begin != 0 ? strstr(begin + 13, "__RAID_PATH__") : 0);
+      if(begin != 0 && end != 0 && end > begin + 13)
+      {
+        *end = 0;
+        setenv("PATH", begin + 13, 1);
+      }
+    }
+    close(fds[0]);
+  }
+  
+  //- rad: the usual tool folders, if still missing
+  char *home = getenv("HOME");
+  char *cargo_home = getenv("CARGO_HOME");
+  char cargo_bin[PATH_MAX] = {0};
+  if(cargo_home != 0 && cargo_home[0] != 0)
+  {
+    snprintf(cargo_bin, sizeof(cargo_bin), "%s/bin", cargo_home);
+  }
+  else if(home != 0)
+  {
+    snprintf(cargo_bin, sizeof(cargo_bin), "%s/.cargo/bin", home);
+  }
+  char *folders[] = {cargo_bin, "/opt/homebrew/bin", "/usr/local/bin"};
+  for(U64 idx = 0; idx < ArrayCount(folders); idx += 1)
+  {
+    struct stat st = {0};
+    if(folders[idx][0] == 0 || stat(folders[idx], &st) != 0 || !S_ISDIR(st.st_mode))
+    {
+      continue;
+    }
+    char *path = getenv("PATH");
+    U64 folder_len = strlen(folders[idx]);
+    B32 found = 0;
+    for(char *p = path; p != 0 && *p != 0;)
+    {
+      char *colon = strchr(p, ':');
+      U64 len = (colon ? (U64)(colon - p) : strlen(p));
+      if(len == folder_len && memcmp(p, folders[idx], len) == 0)
+      {
+        found = 1;
+        break;
+      }
+      p = (colon ? colon+1 : 0);
+    }
+    if(!found)
+    {
+      char new_path[8192];
+      snprintf(new_path, sizeof(new_path), "%s%s%s", (path ? path : ""), (path && path[0] ? ":" : ""), folders[idx]);
+      setenv("PATH", new_path, 1);
+    }
+  }
+}
+
 #if !BASE_NOENTRY
 int
 main(int argc, char **argv)
@@ -2346,6 +2474,10 @@ main(int argc, char **argv)
     mac_state.arena = arena_alloc();
     mac_state.entity_arena = arena_alloc();
     pthread_mutex_init(&mac_state.entity_mutex, 0);
+    
+    // rad: opened from the Finder or the Dock: the terminal's PATH (before
+    // the environment is cached for child processes)
+    mac_path_from_login_shell();
     
     // cache default environment
     {

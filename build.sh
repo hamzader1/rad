@@ -7,6 +7,7 @@ auto_compile_flags=""
 for arg in "$@"; do declare $arg='1'; done
 if [[ "$#" == "0" ]]; then raid='1'; fi
 if [[ "$#" == "1" && "${release:-0}" == "1" ]]; then raid='1'; fi
+if [[ "${app:-0}" == "1" ]]; then raid='1'; fi
 if [[ "${asan:-0}" == "1" ]]; then
   echo "[asan enabled]"
   auto_compile_flags="$auto_compile_flags -fsanitize=address"
@@ -114,6 +115,63 @@ cd build
 if [[ "${raid:-0}"                 == "1" ]]; then didbuild=1 && compile $cc_objc ../src/rad/rad_main.c $cc_icon $cc_link $cc_os_gfx $cc_render $cc_font_provider -o raid; fi
 if [[ "${rad_tests:-0}"            == "1" ]]; then didbuild=1 && compile ../src/rad/tests/rad_tests.c $cc_link -o rad_tests; fi
 cd ..
+
+# --- Package The macOS App (`./build.sh raid release app`) -------------------
+# rad: Raid.app (build/release/Raid.app for a release build, else
+# build/Raid.app): the binary, the icon (icons/raid.icns), the non-system
+# libraries it links (Homebrew's FreeType and what that links) copied into
+# Contents/Frameworks with their paths rewritten, then signed ad hoc.
+if [[ "${app:-0}" == "1" && "$os_name" == "Darwin" ]]; then
+  if [[ "${release:-0}" == "1" ]]; then app_dir="build/release/Raid.app"; else app_dir="build/Raid.app"; fi
+  echo "[packaging $app_dir]"
+  rm -rf "$app_dir"
+  mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources" "$app_dir/Contents/Frameworks"
+  cp build/raid "$app_dir/Contents/MacOS/raid"
+  cp icons/raid.icns "$app_dir/Contents/Resources/raid.icns"
+  queue=("$app_dir/Contents/MacOS/raid")
+  min_os="11.0"
+  while [[ "${#queue[@]}" != "0" ]]; do
+    bin="${queue[0]}"; queue=("${queue[@]:1}")
+    bin_min_os="$(otool -l "$bin" | awk '/LC_BUILD_VERSION/{f=1} f && $1=="minos"{print $2; exit}')"
+    if [[ -n "$bin_min_os" ]]; then min_os="$(printf '%s\n%s\n' "$min_os" "$bin_min_os" | sort -V | tail -1)"; fi
+    for dep in $(otool -L "$bin" | tail -n +2 | awk '{print $1}' | grep -E '^(/opt/homebrew|/usr/local)/' || true); do
+      name="$(basename "$dep")"
+      if [[ ! -f "$app_dir/Contents/Frameworks/$name" ]]; then
+        cp -L "$dep" "$app_dir/Contents/Frameworks/$name"
+        chmod u+w "$app_dir/Contents/Frameworks/$name"
+        install_name_tool -id "@executable_path/../Frameworks/$name" "$app_dir/Contents/Frameworks/$name" 2>/dev/null
+        queue+=("$app_dir/Contents/Frameworks/$name")
+      fi
+      install_name_tool -change "$dep" "@executable_path/../Frameworks/$name" "$bin" 2>/dev/null
+    done
+  done
+  version="$(awk '/# define BUILD_VERSION_(MAJOR|MINOR|PATCH) /{printf "%s%s", sep, $4; sep="."}' src/base/base_context_cracking.h)"
+  cat > "$app_dir/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>                 <string>Raid</string>
+  <key>CFBundleDisplayName</key>          <string>Raid</string>
+  <key>CFBundleIdentifier</key>           <string>dev.raid.ide</string>
+  <key>CFBundleExecutable</key>           <string>raid</string>
+  <key>CFBundleIconFile</key>             <string>raid</string>
+  <key>CFBundlePackageType</key>          <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleShortVersionString</key>   <string>$version</string>
+  <key>CFBundleVersion</key>              <string>$version</string>
+  <key>LSMinimumSystemVersion</key>       <string>$min_os</string>
+  <key>LSApplicationCategoryType</key>    <string>public.app-category.developer-tools</string>
+  <key>NSPrincipalClass</key>             <string>NSApplication</string>
+  <key>NSHighResolutionCapable</key>      <true/>
+</dict>
+</plist>
+PLIST
+  for lib in "$app_dir"/Contents/Frameworks/*.dylib; do codesign --force --sign - "$lib" >/dev/null 2>&1; done
+  codesign --force --sign - "$app_dir" >/dev/null 2>&1
+  touch "$app_dir"
+  echo "[packaged $app_dir: Raid $version, macOS $min_os or later]"
+fi
 
 # --- Warn On No Builds -------------------------------------------------------
 if [[ "${didbuild:-0}" == "0" ]]; then

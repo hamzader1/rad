@@ -40,7 +40,7 @@ Older entries below say `rad.exe`.
 | 9. LSP client                        | Done. `lsp` layer; one rust-analyzer per Cargo workspace: diagnostics (Problems + editor), hover, Go To Definition (F12, Ctrl+click, Alt+Left back), completion list (as you type, `.`, `::`, Ctrl+Space; imports) (see journal). 22 scripts, 453 checks, pass (debug and release, `build\release\rad.exe` 2026-11-04). |
 | 10. Remove debugger, rebrand         | Done. Debugger, debug-info layers, tools and their third-party code out of the repo and the build (421 files; tag `raddbg-reference` keeps them). Renamed to Raid: `raid.exe`, title/About, `%APPDATA%\raid\` (the old session file is imported once), README. Logo unchanged (the user's, later). 42 scripts, 833 checks, pass (debug and release, `build\release\raid.exe` 2026-11-05). |
 | 11. Mac foundation                  | Done (on the Mac, not from Windows). `src/mac/base` (from `src/linux/base`), ARM64 in `base`, `./build.sh rad_tests` on macOS: 37,610,802 checks, 0 failures (debug and release, ARM64, macOS 15.7). CI: `.github/workflows/macos.yml`. |
-| 12. Mac UI                           | Done (2026-11-06; the user tested it on the Mac). Cocoa window manager, Metal renderer (2026-11-06; the first one, OpenGL 4.1, stays as a fallback: `./build.sh raid opengl`), FreeType + CoreText font names, Mac shell incl. Terminal.app runs. `tests/run_scripts.sh`: 45 scripts, all pass on the release build. Left for later (TODO): IME/dead keys, file drop, .app bundle, a side-by-side screenshot check against Windows. |
+| 12. Mac UI                           | Done (2026-11-06; the user tested it on the Mac). Cocoa window manager, Metal renderer (2026-11-06; the first one, OpenGL 4.1, stays as a fallback: `./build.sh raid opengl`), FreeType + CoreText font names, Mac shell incl. Terminal.app runs. `tests/run_scripts.sh`: 45 scripts, all pass on the release build. Left for later (TODO): IME/dead keys, file drop, a side-by-side screenshot check against Windows. `Raid.app` since 2026-11-07 (`bash build.sh raid release app`). |
 | 13. Debugging                        | Not started. |
 
 Milestone 3 details:
@@ -234,7 +234,10 @@ Milestone 6 details (each item with its script):
    - Logo: the user will supply one later (`data/logo.ico` for the exe,
      window and About; `data/logo.png` for Linux).
    - LICENSE holds Epic's notice only; the user may add their own line.
-2. Mac leftovers (TODO below): IME/dead keys, file drop, .app bundle.
+2. Mac leftovers (TODO below): IME/dead keys, file drop. (The .app bundle
+   is done, 2026-11-07; the user's icon `icons/raid.icns`. Not used yet:
+   `icons/raid.ico` and `icons/raid.jpg`, which the user put next to it:
+   the Windows exe icon and the in-app logo are still raddbg's; ask.)
 3. Not yet compared side by side with raddbg.exe: the query bar, the zoom
    button, the loading overlay (line-by-line ports; needs raddbg focused;
    raddbg.exe now builds from the `raddbg-reference` tag, see "Build, run,
@@ -242,8 +245,11 @@ Milestone 6 details (each item with its script):
 
 ## TODO (later)
 
-- Mac: IME / dead keys, file drop onto the window, an .app bundle, a
-  side-by-side screenshot check against Windows (milestone 12 leftovers).
+- Mac: IME / dead keys, file drop onto the window, a side-by-side
+  screenshot check against Windows (milestone 12 leftovers). Raid.app:
+  ad hoc signed only (not notarized: another Mac's Gatekeeper refuses it
+  until right-click > Open); needs macOS 15+ because the bundled Homebrew
+  FreeType is built for it; no file associations / "Open With" yet.
 
 - Tab drag/drop between panels (port raddbg's: drop sites on tab bars and
   panel edges, the drag visualization, `MoveTab`). Asked for by the user
@@ -379,6 +385,14 @@ Milestone 6 details (each item with its script):
 - `bash build.sh rad_tests [release]` -> `build/rad_tests` (prints the
   check count; exit code 0 = pass). `bash build.sh raid [release]` ->
   `build/raid`.
+- The app: `bash build.sh raid release app` -> `build/release/Raid.app`
+  (without `release`: `build/Raid.app`): the binary, `icons/raid.icns`,
+  Homebrew's FreeType and libpng in `Contents/Frameworks` (paths rewritten
+  to `@executable_path/../Frameworks`), Info.plist (version from
+  `base_context_cracking.h`, minimum macOS from the binaries), signed ad
+  hoc. Opened from the Finder / Dock, Raid takes the login shell's PATH
+  (`mac_path_from_login_shell`), else cargo and rust-analyzer are not
+  found (launchd's PATH has no ~/.cargo/bin).
 - `tests/run_scripts.sh [-e build/raid] [-f filter]`: every `.radtest`.
 - `tests/perf/run_perf.sh [-e exe] [-s "3000 10000"] [-l "off on"]`: typing
   benchmarks on generated Rust crates (MEASURE lines, not pass/fail).
@@ -443,6 +457,20 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-07 (Raid.app)
+- `bash build.sh raid release app` -> `build/release/Raid.app` with the
+  user's icon (`icons/raid.icns`, 16-1024 px). The binary linked
+  Homebrew's FreeType (which links libpng): both are copied into the
+  bundle, their paths rewritten, everything signed ad hoc (codesign
+  --verify --strict passes). Minimum macOS: 15.0 (the Homebrew dylibs').
+- Apps opened from the Finder get launchd's PATH, without ~/.cargo/bin:
+  the Mac base layer now takes the login shell's PATH when the parent is
+  launchd (non-interactive `zsh -l`: ~0 ms; interactive was 0.35 s), plus
+  ~/.cargo/bin, /opt/homebrew/bin, /usr/local/bin if still missing.
+- Checked: `open -n -W build/release/Raid.app --args --script:...` built a
+  Cargo project (cargo_status finished) and rust-analyzer reached ready;
+  startup 0.2 s. Not checked: another Mac (Gatekeeper, no notarization).
 
 ### 2026-11-07 (TODO_2 G: smooth zoom, Output follows, menus, status bar, nav lists, stop icon, settings)
 - Smooth Cmd+wheel zoom (G1): the font cache had sizes only at whole
