@@ -402,3 +402,17 @@ the completion list's font size and to hide the mouse while typing.
   (Windows: untested); Linux not done (needs XFixes). The script checks
   rad's state only (scripts simulate input, so the OS cursor is not
   touched); the pointer itself was not checked by a script.
+- [x] **G8. Hover docs over a see-through background with Blur off.**
+  Cause (reproduced, Background Blur 0, screenshot): raddbg's floating
+  backgrounds are translucent, made to sit over the blur; with the blur
+  off the code showed through the docs. Done 2026-11-07 (script
+  `lsp_hover`, field `see_through_popups`): Background Blur is off by
+  default, and with it off every background made to be blurred is drawn
+  opaque.
+- [x] **G9. Auto-indent new blocks.** Done 2026-11-07 (script
+  `auto_indent`): Enter after an opening { ( [ indents one level (4
+  spaces, as Tab types; a tab in tab-indented lines); with its closer
+  right after the cursor (auto-close), the closer goes to its own line at
+  the line's indentation, the cursor on the indented line between (one
+  undo step). A closer typed on a line of only whitespace removes one
+  level.

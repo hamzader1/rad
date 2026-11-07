@@ -2879,7 +2879,12 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       }
 
       //- rad: newline insertion -> auto-indent with the current line's leading
-      // whitespace; CRLF files get CRLF line ends
+      // whitespace; CRLF files get CRLF line ends. Not in raddbg (user
+      // 2026-11-07): after an opening { ( [ one level more (4 spaces, as Tab
+      // types; a tab in tab-indented lines), and its closer right after the
+      // cursor goes to its own line, back at the line's indentation:
+      // `{|}` + Enter -> "{", "    |", "}"
+      U64 insert_cursor_back = 0;
       if(cv->editable && evt->string.size != 0)
       {
         String8 insert = evt->string;
@@ -2887,8 +2892,60 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
         {
           U64 indent_size = 0;
           for(;indent_size < line.size && (line.str[indent_size] == ' ' || line.str[indent_size] == '\t'); indent_size += 1);
-          indent_size = Min(indent_size, (*cursor > line_range.min ? *cursor - line_range.min : 0));
-          insert = push_str8f(scratch.arena, "\n%S", str8_prefix(line, indent_size));
+          U64 cursor_col = (*cursor > line_range.min ? *cursor - line_range.min : 0);
+          indent_size = Min(indent_size, cursor_col);
+          String8 indent = str8_prefix(line, indent_size);
+          U64 before_end = Min(cursor_col, line.size);
+          for(;before_end > 0 && (line.str[before_end-1] == ' ' || line.str[before_end-1] == '\t' || line.str[before_end-1] == '\r'); before_end -= 1);
+          U8 opener = (before_end > 0 ? line.str[before_end-1] : 0);
+          U8 closer = (opener == '{' ? '}' : opener == '(' ? ')' : opener == '[' ? ']' : 0);
+          if(closer != 0 && *cursor == *mark)
+          {
+            String8 unit = (str8_find_needle(indent, 0, str8_lit("\t"), 0) < indent.size ? str8_lit("\t") : str8_lit("    "));
+            B32 closer_next = (cursor_col < line.size && line.str[cursor_col] == closer);
+            if(closer_next)
+            {
+              insert = push_str8f(scratch.arena, "\n%S%S\n%S", indent, unit, indent);
+              insert_cursor_back = (buffer->crlf ? 2 : 1) + indent.size;
+            }
+            else
+            {
+              insert = push_str8f(scratch.arena, "\n%S%S", indent, unit);
+            }
+          }
+          else
+          {
+            insert = push_str8f(scratch.arena, "\n%S", indent);
+          }
+        }
+
+        //- rad: a closer typed on a line of only whitespace (to the line's end)
+        // takes one indentation level away (Not in raddbg; user 2026-11-07)
+        if(evt->kind == UI_EventKind_Text && !(evt->flags & UI_EventFlag_Paste) && *cursor == *mark &&
+           (str8_match(insert, str8_lit("}"), 0) || str8_match(insert, str8_lit(")"), 0) || str8_match(insert, str8_lit("]"), 0)))
+        {
+          U64 cursor_col = (*cursor > line_range.min ? *cursor - line_range.min : 0);
+          B32 blank_before = (cursor_col > 0 && cursor_col <= line.size);
+          for(U64 idx = 0; blank_before && idx < cursor_col; idx += 1)
+          {
+            blank_before = (line.str[idx] == ' ' || line.str[idx] == '\t');
+          }
+          B32 blank_after = 1;
+          for(U64 idx = cursor_col; blank_after && idx < line.size; idx += 1)
+          {
+            blank_after = (line.str[idx] == ' ' || line.str[idx] == '\t' || line.str[idx] == '\r');
+          }
+          if(blank_before && blank_after)
+          {
+            U64 remove = 0;
+            if(line.str[cursor_col-1] == '\t')
+            {
+              remove = 1;
+            }
+            else for(;remove < 4 && remove < cursor_col && line.str[cursor_col-1-remove] == ' '; remove += 1);
+            single_line_op.range = r1u64(*cursor - remove, *cursor);
+            single_line_op.cursor = single_line_op.mark = *cursor - remove + 1;
+          }
         }
         if(str8_find_needle(insert, 0, str8_lit("\n"), 0) < insert.size)
         {
@@ -3187,7 +3244,7 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
         }
         tb_buffer_edit(buffer, &text_patched, replaced_range, single_line_op.replace);
         text_patched = txt_patched_from_info_data_patches(scratch.arena, text_info, text_data, &buffer->patches);
-        *cursor = *mark = replaced_range.min + single_line_op.replace.size;
+        *cursor = *mark = replaced_range.min + single_line_op.replace.size - Min(insert_cursor_back, single_line_op.replace.size);
         if(auto_close_kind == 1)
         {
           // rad: between the pair (TODO_2 E2)

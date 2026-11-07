@@ -584,6 +584,13 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     B32 fits = (text_rect.y1 > text_rect.y0 && bar.y0 <= text_rect.y0 && text_rect.y1 <= bar.y1);
     value = push_str8f(arena, "%i", (int)fits);
   }
+  else if(str8_match(name, str8_lit("see_through_popups"), 0))
+  {
+    // rad: last frame: backgrounds made to be blurred, drawn translucent
+    // without their blur (Background Blur off): should be 0
+    RAD_Window *ws = rad_state->first_window;
+    value = push_str8f(arena, "%I64u", (ws != 0 ? ws->see_through_count : 0));
+  }
   else if(str8_match(name, str8_lit("menu_width_em"), 0))
   {
     // rad: the open context/menu bar menu's width, in UI font sizes (rounded

@@ -21,6 +21,11 @@ wait_frames 3
 expect hover_shown == 1
 expect hover_covers_token == 0
 
+# Background Blur is off by default, and then popups are opaque (user
+# 2026-11-07: translucent without the blur, the code showed through)
+expect setting background_blur == 0
+expect see_through_popups == 0
+
 # Ctrl held: no tooltip (the link is the hint); released: back
 key_down ctrl
 wait_frames 3

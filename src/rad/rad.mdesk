@@ -1277,7 +1277,7 @@ RAD_SettingTable:
   {tab_overflow                 Enum  U64 0   0  1  Tabs       "Tab Overflow"                  "When the tabs do not fit: one row, scrolled with the mouse wheel, with a list of all tabs (Scroll); or more rows (Wrap)." "Scroll|Wrap"}
   {tab_close_button             Enum  U64 0   0  1  Tabs       "Tab Close Button"              "Which tabs show their close button: the selected and the hovered one (On Hover), or every tab (Always)." "On Hover|Always"}
   {opaque_backgrounds           Bool  B32 0   0  1  Appearance "Opaque Backgrounds"            "Controls whether or not all floating background colors are forced to be fully opaque." ""}
-  {background_blur              Bool  B32 1   0  1  Appearance "Background Blur"               "Controls whether or not occluded regions behind floating elements are blurred." ""}
+  {background_blur              Bool  B32 0   0  1  Appearance "Background Blur"               "Controls whether or not occluded regions behind floating elements are blurred; off (the default): floating elements are opaque." ""}
   {drop_shadows                 Bool  B32 1   0  1  Appearance "Drop Shadows"                  "Controls whether or not drop shadows are drawn." ""}
   {rounded_corner_amount        F32   F32 1   0  1  Appearance "Rounded Corner Amount"         "Controls the degree to which UI corners are rounded." ""}
   {animations                   Bool  B32 1   0  1  Animations "Animations"                    "Enables animations." ""}

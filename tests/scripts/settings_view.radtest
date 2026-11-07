@@ -17,15 +17,15 @@ cmd settings
 wait_idle
 expect tab_count == 3
 
-# toggle switch: Background Blur
-expect setting background_blur == 1
+# toggle switch: Background Blur (off by default)
+expect setting background_blur == 0
 click setting_control background_blur
 wait_idle
-expect setting background_blur == 0
+expect setting background_blur == 1
 expect settings_selected == ""
 click setting_control background_blur
 wait_idle
-expect setting background_blur == 1
+expect setting background_blur == 0
 
 # revert button: only on changed settings
 click setting_control drop_shadows

@@ -280,6 +280,7 @@ struct RAD_Window
   // built: scripted tests click them)
   Rng2F32 top_bar_cmd_rects[RAD_CmdKind_COUNT];
   String8 top_bar_cmd_icons[RAD_CmdKind_COUNT];   // the icon glyph each drew (static)
+  U64 see_through_count;                          // last frame: translucent backgrounds without their blur (scripts; 0)
   Rng2F32 tool_close_rects[RAD_ToolKind_COUNT];   // tool window X buttons (last layout; scripts)
   Rng2F32 bottom_bar_rect;                        // the status bar and its text (last layout; scripts)
   Rng2F32 status_text_rect;

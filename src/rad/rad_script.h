@@ -162,6 +162,8 @@
 //   output_font_size            the Output view's font size (Panel Font Size)
 //   status_text_fits            1 if the status bar's text box lies inside the bar
 //   menu_width_em               the open menu's width in UI font sizes (0: none)
+//   see_through_popups          last frame: popup backgrounds drawn translucent
+//                               without their blur (Background Blur off; 0)
 //   menu_rows_fit               1 if every row of the open menu holds its contents
 //   mouse_hidden                1 while typing hid the mouse pointer (setting
 //                               hide_mouse_while_typing; until the mouse moves)

@@ -4898,6 +4898,7 @@ rad_window_frame(RAD_Window *ws)
   // tree -> draw calls), minus developer heatmap/debug overlays.
   //
   ws->draw_bucket = dr_bucket_make();
+  ws->see_through_count = 0;
   DR_BucketScope(ws->draw_bucket)
     ProfScope("draw UI")
   {
@@ -4990,11 +4991,22 @@ rad_window_frame(RAD_Window *ws)
       }
       F32 t = box->hot_t*(1-effective_active_t);
 
-      // rad: compute background color
+      // rad: compute background color. Not in raddbg: with Background Blur
+      // off, the backgrounds made to be blurred are opaque (user 2026-11-07:
+      // translucent without the blur, the code showed through the hover docs)
       Vec4F32 box_background_color = box->background_color;
       if(force_opaque_floating_backgrounds && box->flags & UI_BoxFlag_Floating && box->flags & UI_BoxFlag_DrawDropShadow)
       {
         box_background_color.w = 1.f;
+      }
+      if(!do_background_blur && box->flags & UI_BoxFlag_DrawBackgroundBlur)
+      {
+        box_background_color.w = 1.f;
+      }
+      if(box->flags & UI_BoxFlag_DrawBackground && box->flags & UI_BoxFlag_DrawBackgroundBlur &&
+         !do_background_blur && box_background_color.w < 0.999f)
+      {
+        ws->see_through_count += 1;
       }
 
       // rad: draw background

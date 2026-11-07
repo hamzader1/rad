@@ -1,0 +1,73 @@
+# Auto-indent (user 2026-11-07): Enter after an opening { ( [ indents the
+# new line one level (4 spaces, as Tab types); with its closer right after
+# the cursor (auto-closed), the closer goes to its own line at the line's
+# indentation and the cursor to the indented line between. A closer typed
+# on a line of only whitespace takes one level away. The file is never
+# saved.
+
+write_file ../fixtures/auto_indent.rs "fn a() {\n    let x = 1;\n}\n"
+open ../fixtures/auto_indent.rs
+wait_idle
+
+# a new block, auto-closed: { } split around an indented line
+click code 2 5
+key end
+text " if x == 1 {"
+wait_idle
+expect line 2 == "    let x = 1; if x == 1 {}"
+key return
+wait_idle
+expect line 2 == "    let x = 1; if x == 1 {"
+expect line 3 == "        "
+expect line 4 == "    }"
+expect cursor_line == 3
+expect cursor_col == 9
+
+# text in it; Enter keeps the level
+text "f();"
+key return
+wait_idle
+expect line 4 == "        "
+expect cursor_col == 9
+
+# a nested block, then one undo takes the whole Enter back
+text "g(|v| {"
+key return
+wait_idle
+expect line 4 == "        g(|v| {"
+expect line 5 == "            "
+expect line 6 == "        })"
+expect cursor_col == 13
+key ctrl+z
+wait_idle
+expect line 4 == "        g(|v| {})"
+expect line 5 == "    }"
+# without auto-close, after the if block: Enter after } keeps the level;
+# after { one more; } typed on the blank line goes back one level
+click code 5 1
+key end
+key return
+wait_idle
+expect line 6 == "    "
+set_setting auto_close_brackets 0
+text "loop {"
+key return
+wait_idle
+expect line 7 == "        "
+text "h();"
+key return
+wait_idle
+expect line 8 == "        "
+text "}"
+wait_idle
+expect line 8 == "    }"
+expect cursor_col == 6
+set_setting auto_close_brackets 1
+
+# Enter elsewhere keeps the line's indentation only
+key return
+wait_idle
+expect line 9 == "    "
+expect cursor_col == 5
+delete_file ../fixtures/auto_indent.rs
+quit

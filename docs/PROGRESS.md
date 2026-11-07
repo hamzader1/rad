@@ -458,6 +458,16 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-07 (blur off by default; auto-indent)
+- Hover docs "blurry" with Background Blur off (reproduced): the popup
+  background is translucent (raddbg's, made for the blur), so the code
+  showed through. Background Blur is off by default now, and with it off
+  the backgrounds made to be blurred are opaque. Field
+  `see_through_popups` (script `lsp_hover`).
+- Auto-indent: Enter after { ( [ adds a level (4 spaces); `{|}` + Enter
+  puts } on its own line; a closer typed on a blank line removes a level
+  (script `auto_indent`).
+
 ### 2026-11-07 (Raid.app)
 - `bash build.sh raid release app` -> `build/release/Raid.app` with the
   user's icon (`icons/raid.icns`, 16-1024 px). The binary linked
