@@ -38,7 +38,7 @@ is installed without the C++ workload, use `shell_build.bat`: a VS 18
 developer environment otherwise hides the VS 2022 compiler.
 
 If `build\raid.exe` is running (link error LNK1104), build to a copy:
-`tests\shell_build_copy.bat release`.
+`tests\shell_build_copy.bat release raid2` (-> `build\raid2.exe`).
 
 ## Tests
 
