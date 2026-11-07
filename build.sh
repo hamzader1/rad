@@ -118,7 +118,8 @@ cd ..
 
 # --- Package The macOS App (`./build.sh raid release app`) -------------------
 # rad: Raid.app (build/release/Raid.app for a release build, else
-# build/Raid.app): the binary, the icon (icons/raid.icns), the non-system
+# build/Raid.app): the binary (named Raid: macOS shows the process name in
+# the menu bar, Force Quit, Activity Monitor), the icon (icons/raid.icns), the non-system
 # libraries it links (Homebrew's FreeType and what that links) copied into
 # Contents/Frameworks with their paths rewritten, then signed ad hoc.
 if [[ "${app:-0}" == "1" && "$os_name" == "Darwin" ]]; then
@@ -126,9 +127,9 @@ if [[ "${app:-0}" == "1" && "$os_name" == "Darwin" ]]; then
   echo "[packaging $app_dir]"
   rm -rf "$app_dir"
   mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources" "$app_dir/Contents/Frameworks"
-  cp build/raid "$app_dir/Contents/MacOS/raid"
+  cp build/raid "$app_dir/Contents/MacOS/Raid"
   cp icons/raid.icns "$app_dir/Contents/Resources/raid.icns"
-  queue=("$app_dir/Contents/MacOS/raid")
+  queue=("$app_dir/Contents/MacOS/Raid")
   min_os="11.0"
   while [[ "${#queue[@]}" != "0" ]]; do
     bin="${queue[0]}"; queue=("${queue[@]:1}")
@@ -154,7 +155,7 @@ if [[ "${app:-0}" == "1" && "$os_name" == "Darwin" ]]; then
   <key>CFBundleName</key>                 <string>Raid</string>
   <key>CFBundleDisplayName</key>          <string>Raid</string>
   <key>CFBundleIdentifier</key>           <string>dev.raid.ide</string>
-  <key>CFBundleExecutable</key>           <string>raid</string>
+  <key>CFBundleExecutable</key>           <string>Raid</string>
   <key>CFBundleIconFile</key>             <string>raid</string>
   <key>CFBundlePackageType</key>          <string>APPL</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>

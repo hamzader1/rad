@@ -458,6 +458,16 @@ of `text_buffer.h`.
 
 ## Journal
 
+### 2026-11-07 (no logo in the app; Raid process name; README)
+- User: no icon inside the app. The logo is gone from the top bar (the
+  menus start at the left edge), Getting Started and the Help menu; the
+  ICO decode, its texture and the stb include in rad are removed.
+- The user's icons/raid.ico is now data/logo.ico (Windows exe icon) and
+  data/logo.png (Linux); the Mac app uses icons/raid.icns.
+- Raid.app's executable is named `Raid` (process name in macOS lists).
+- README rewritten, minimal. Repo rename on GitHub: not done here (no
+  `gh`); the user renames it, then `git remote set-url`.
+
 ### 2026-11-07 (blur off by default; auto-indent)
 - Hover docs "blurry" with Background Blur off (reproduced): the popup
   background is translucent (raddbg's, made for the blur), so the code

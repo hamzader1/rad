@@ -365,7 +365,6 @@ struct RAD_State
   FNT_Tag font_slot_table[RAD_FontSlot_COUNT];
   B32 font_slot_is_custom[RAD_FontSlot_COUNT];      // a UI Font / Code Font setting took (scripts)
   U8 setting_string_buffers[RAD_SettingCode_COUNT][512]; // String settings' values (RAD_Settings points here)
-  R_Handle icon_texture;
 
   //- rad: user-facing error / warning (shown in the bottom bar, same as raddbg)
   U8 error_buffer[512];

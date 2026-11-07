@@ -2195,26 +2195,10 @@ rad_view_ui(CFG_Node *tab, Rng2F32 rect)
       {
         Rng2F32 view_rect = ui_top_parent()->rect;
 
-        //- rad: icon & info
+        //- rad: info (no logo above the title: user 2026-11-07)
         UI_Padding(ui_em(2.f, 1.f))
         {
-          //- rad: icon
-          {
-            F32 icon_dim = ui_top_font_size()*10.f;
-            ui_set_next_flags(UI_BoxFlag_AnimatePosY);
-            UI_PrefHeight(ui_px(icon_dim, 1.f))
-              UI_Row
-              UI_Padding(ui_pct(1, 0))
-              UI_PrefWidth(ui_px(icon_dim, 1.f))
-            {
-              R_Handle texture = rad_state->icon_texture;
-              Vec2S32 texture_dim = r_size_from_tex2d(texture);
-              ui_image(texture, R_Tex2DSampleKind_Linear, r2f32p(0, 0, texture_dim.x, texture_dim.y), v4f32(1, 1, 1, 1), 0, str8_lit(""));
-            }
-          }
-
           //- rad: title
-          ui_spacer(ui_em(2.f, 1.f));
           UI_WidthFill UI_PrefHeight(ui_em(2.f, 1.f))
             UI_Row
             UI_Padding(ui_pct(1, 0))
@@ -2647,19 +2631,8 @@ rad_window_frame(RAD_Window *ws)
           ui_set_next_flags(UI_BoxFlag_Clip|UI_BoxFlag_ViewScrollX|UI_BoxFlag_ViewClamp);
           UI_WidthFill UI_NamedRow(str8_lit("###menu_bar"))
           {
-            //- rad: icon
-            UI_Padding(ui_em(0.5f, 1.f))
-            {
-              UI_PrefWidth(ui_px(dim_2f32(top_bar_rect).y - ui_top_font_size()*0.8f, 1.f))
-                UI_Column
-                UI_Padding(ui_em(0.4f, 1.f))
-                UI_HeightFill
-              {
-                R_Handle texture = rad_state->icon_texture;
-                Vec2S32 texture_dim = r_size_from_tex2d(texture);
-                ui_image(texture, R_Tex2DSampleKind_Linear, r2f32p(0, 0, texture_dim.x, texture_dim.y), v4f32(1, 1, 1, 1), 0, str8_lit(""));
-              }
-            }
+            //- rad: (no logo before the menus: user 2026-11-07; the menus
+            // start at the window's left edge)
 
             //- rad: menu items
             if(dim_2f32(top_bar_rect).x > ui_top_font_size()*60)
@@ -2902,15 +2875,6 @@ rad_window_frame(RAD_Window *ws)
                 {
                   UI_Row UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
                     ui_label(str8_lit(BUILD_TITLE_STRING_LITERAL));
-                  ui_spacer(ui_em(1.f, 1.f));
-                  UI_PrefHeight(ui_children_sum(1)) UI_Row UI_Padding(ui_pct(1, 0))
-                  {
-                    R_Handle texture = rad_state->icon_texture;
-                    Vec2S32 texture_dim = r_size_from_tex2d(texture);
-                    UI_PrefWidth(ui_px(ui_top_font_size()*10.f, 1.f))
-                      UI_PrefHeight(ui_px(ui_top_font_size()*10.f, 1.f))
-                      ui_image(texture, R_Tex2DSampleKind_Linear, r2f32p(0, 0, texture_dim.x, texture_dim.y), v4f32(1, 1, 1, 1), 0, str8_lit(""));
-                  }
                   ui_spacer(ui_em(1.f, 1.f));
                   UI_TagF("weak")
                     UI_Row UI_TextAlignment(UI_TextAlign_Center)
@@ -6581,13 +6545,6 @@ rad_user_data_write(void)
 ////////////////////////////////
 //~ rad: Main Layer Top-Level Calls
 
-#if !defined(STBI_INCLUDE_STB_IMAGE_H)
-# define STB_IMAGE_IMPLEMENTATION
-# define STBI_ONLY_PNG
-# define STBI_ONLY_BMP
-# include "third_party/stb/stb_image.h"
-#endif
-
 internal void
 rad_init(CmdLine *cmdln)
 {
@@ -6778,99 +6735,6 @@ rad_init(CmdLine *cmdln)
       rad_focus_tab(tab);
     }
     rad_state->last_editor_panel = editor_panel->id;
-  }
-
-  //- rad: unpack icon image data (same ICO decode as raddbg's rd_init)
-  {
-    String8 data = rad_icon_file_bytes;
-    U8 *ptr = data.str;
-    U8 *opl = ptr+data.size;
-
-    // rad: read header
-#pragma pack(push, 1)
-    typedef struct ICO_Header ICO_Header;
-    struct ICO_Header
-    {
-      U16 reserved_padding; // must be 0
-      U16 image_type; // if 1 -> ICO, if 2 -> CUR
-      U16 num_images;
-    };
-    typedef struct ICO_Entry ICO_Entry;
-    struct ICO_Entry
-    {
-      U8 image_width_px;
-      U8 image_height_px;
-      U8 num_colors;
-      U8 reserved_padding; // should be 0
-      union
-      {
-        U16 ico_color_planes; // in ICO
-        U16 cur_hotspot_x_px; // in CUR
-      };
-      union
-      {
-        U16 ico_bits_per_pixel; // in ICO
-        U16 cur_hotspot_y_px;   // in CUR
-      };
-      U32 image_data_size;
-      U32 image_data_off;
-    };
-#pragma pack(pop)
-    ICO_Header hdr = {0};
-    if(ptr+sizeof(hdr) < opl)
-    {
-      MemoryCopy(&hdr, ptr, sizeof(hdr));
-      ptr += sizeof(hdr);
-    }
-
-    // rad: read image entries
-    U64 entries_count = hdr.num_images;
-    ICO_Entry *entries = push_array(scratch.arena, ICO_Entry, hdr.num_images);
-    {
-      U64 bytes_to_read = sizeof(ICO_Entry)*entries_count;
-      bytes_to_read = Min(bytes_to_read, opl-ptr);
-      MemoryCopy(entries, ptr, bytes_to_read);
-      ptr += bytes_to_read;
-    }
-
-    // rad: find largest image
-    ICO_Entry *best_entry = 0;
-    U64 best_entry_area = 0;
-    for(U64 idx = 0; idx < entries_count; idx += 1)
-    {
-      ICO_Entry *entry = &entries[idx];
-      U64 width = entry->image_width_px;
-      if(width == 0) { width = 256; }
-      U64 height = entry->image_height_px;
-      if(height == 0) { height = 256; }
-      U64 entry_area = width*height;
-      if(entry_area > best_entry_area)
-      {
-        best_entry = entry;
-        best_entry_area = entry_area;
-      }
-    }
-
-    // rad: deserialize raw image data from best entry's offset
-    U8 *image_data = 0;
-    Vec2S32 image_dim = {0};
-    if(best_entry != 0)
-    {
-      U8 *file_data_ptr = data.str + best_entry->image_data_off;
-      U64 file_data_size = best_entry->image_data_size;
-      int width = 0;
-      int height = 0;
-      int components = 0;
-      image_data = stbi_load_from_memory(file_data_ptr, file_data_size, &width, &height, &components, 4);
-      image_dim.x = width;
-      image_dim.y = height;
-    }
-
-    // rad: upload to gpu texture
-    rad_state->icon_texture = r_tex2d_alloc(R_ResourceKind_Static, image_dim, R_Tex2DFormat_RGBA8, image_data);
-
-    // rad: release
-    stbi_image_free(image_data);
   }
 
   //- rad: scripted tests (`--script:<file>`, see rad_script.h)

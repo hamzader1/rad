@@ -7,9 +7,9 @@ Build a native IDE for **Rust** (C/C++ later) by forking the RAD Debugger
 
 The product is called **Raid** (decided 2026-11-05): `raid.exe`, window title and
 About, `%APPDATA%\raid\`. The code layer keeps its code name `rad` (`src/rad/`,
-`RAD_`, `rad_tests`, `.radtest` scripts). The macOS app icon is the user's
-`icons/raid.icns` (2026-11-07, `Raid.app`); the in-app logo and the Windows exe icon
-are still raddbg's (the user also put `icons/raid.ico` / `raid.jpg` there: ask first).
+`RAD_`, `rad_tests`, `.radtest` scripts). The app icon is the user's `icons/raid.icns` (Mac, `Raid.app`) and `icons/raid.ico`
+(copied to `data/logo.ico`, Windows exe; `data/logo.png`, Linux). No logo is drawn
+inside the app (user, 2026-11-07).
 
 The thing I care about most is the **UI**. It must look and behave **identically** to
 the RAD Debugger UI (layout, panels, tabs, theming, fonts, animations, feel).
