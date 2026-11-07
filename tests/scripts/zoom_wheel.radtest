@@ -45,3 +45,20 @@ expect setting code_font_size == 20
 cmd reset_code_font_size
 wait_idle
 expect editor_font_size == 11
+
+# in between, the drawn size and the line height move continuously (before
+# 2026-11-07 every size was drawn floored and the line height rounded up:
+# a zoom moved in whole-pixel steps)
+key_down ctrl
+wheel_units -120 1 code 5 5
+expect editor_font_size_drawn > 11.05
+expect editor_font_size_drawn < 11.95
+expect editor_line_height > 22.05
+expect editor_line_height < 23.95
+key_up ctrl
+wait_idle
+expect editor_font_size_drawn == 12
+expect editor_line_height == 24
+cmd reset_code_font_size
+wait_idle
+expect editor_font_size == 11

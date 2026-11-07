@@ -31,8 +31,9 @@ struct FNT_Piece
 {
   R_Handle texture;
   Rng2S16 subrect;
-  Vec2S16 offset;
+  Vec2F32 offset; // rad: was Vec2S16; fractional only for scaled sizes
   F32 advance;
+  F32 scale;      // rad: drawn size / rasterized size (1, except scaled sizes)
   U16 decode_size;
 };
 
@@ -227,6 +228,11 @@ struct FNT_State
   // rjf: atlas list
   FNT_Atlas *first_atlas;
   FNT_Atlas *last_atlas;
+
+  // rad: sizes drawn scaled this frame (fnt_mark_scaled_size)
+  U64 scaled_sizes_frame_index;
+  U64 scaled_sizes_count;
+  F32 scaled_sizes[8];
 };
 
 ////////////////////////////////
@@ -285,6 +291,20 @@ internal U64 fnt_char_pos_from_tag_size_string_p(FNT_Tag tag, F32 size, F32 base
 
 internal FNT_Metrics fnt_metrics_from_tag_size(FNT_Tag tag, F32 size);
 internal F32 fnt_line_height_from_metrics(FNT_Metrics *metrics);
+
+////////////////////////////////
+//~ rad: Scaled Sizes (Smooth Zoom)
+//
+// raddbg floors every size: a fractional size looks exactly like the whole
+// size below it. A size marked here (for the current frame) is drawn
+// instead from the glyphs of the nearest whole size, scaled to it, with
+// advances and metrics mixed between the two whole sizes around it. So
+// text grows continuously while a zoom eases, and only whole sizes are
+// rasterized. Other fractional sizes (the UI's) stay floored, as in raddbg.
+
+internal void fnt_mark_scaled_size(F32 size);
+internal B32 fnt_size_is_scaled(F32 size);
+internal FNT_Run fnt_scaled_run_from_string(FNT_Tag tag, F32 size, F32 base_align_px, F32 tab_size_px, FNT_RasterFlags flags, String8 string);
 
 ////////////////////////////////
 //~ rjf: Main Calls

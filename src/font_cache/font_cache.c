@@ -562,6 +562,12 @@ fnt_hash2style_from_tag_size_flags(FNT_Tag tag, F32 size, FNT_RasterFlags flags)
 internal FNT_Run
 fnt_run_from_string(FNT_Tag tag, F32 size, F32 base_align_px, F32 tab_size_px, FNT_RasterFlags flags, String8 string)
 {
+  //- rad: a scaled size (smooth zoom) -> mixed from the whole sizes around it
+  if(Unlikely(fnt_size_is_scaled(size)))
+  {
+    return fnt_scaled_run_from_string(tag, size, base_align_px, tab_size_px, flags, string);
+  }
+
   //- rjf: map tag/size to style node
   FNT_Hash2StyleRasterCacheNode *hash2style_node = fnt_hash2style_from_tag_size_flags(tag, size, flags);
   
@@ -842,8 +848,9 @@ fnt_run_from_string(FNT_Tag tag, F32 size, F32 base_align_px, F32 tab_size_px, F
                                     info->subrect.x0 + info->raster_dim.x,
                                     info->subrect.y0 + info->raster_dim.y);
             piece->advance = advance;
+            piece->scale = 1.f;
             piece->decode_size = piece_substring.size;
-            piece->offset = v2s16(0, -(hash2style_node->ascent + hash2style_node->descent));
+            piece->offset = v2f32(0, (F32)(S16)(-(hash2style_node->ascent + hash2style_node->descent)));
           }
           base_align_px += advance;
           dim.x += piece->advance;
@@ -1067,6 +1074,17 @@ fnt_metrics_from_tag_size(FNT_Tag tag, F32 size)
     result.line_gap = floor_f32(size) * metrics.line_gap / metrics.design_units_per_em;
     result.capital_height = floor_f32(size) * metrics.capital_height / metrics.design_units_per_em;
   }
+
+  //- rad: a scaled size (smooth zoom): between the two whole sizes around it
+  if(fnt_size_is_scaled(size))
+  {
+    F32 hi_size = floor_f32(size) + 1.f;
+    F32 t = size - floor_f32(size);
+    result.ascent         = mix_1f32(result.ascent,         hi_size * metrics.ascent / metrics.design_units_per_em, t);
+    result.descent        = mix_1f32(result.descent,        hi_size * metrics.descent / metrics.design_units_per_em, t);
+    result.line_gap       = mix_1f32(result.line_gap,       hi_size * metrics.line_gap / metrics.design_units_per_em, t);
+    result.capital_height = mix_1f32(result.capital_height, hi_size * metrics.capital_height / metrics.design_units_per_em, t);
+  }
   return result;
 }
 
@@ -1074,6 +1092,76 @@ internal F32
 fnt_line_height_from_metrics(FNT_Metrics *metrics)
 {
   return metrics->ascent + metrics->descent + metrics->line_gap;
+}
+
+////////////////////////////////
+//~ rad: Scaled Sizes (Smooth Zoom)
+
+internal void
+fnt_mark_scaled_size(F32 size)
+{
+  if(size != floor_f32(size))
+  {
+    if(fnt_state->scaled_sizes_frame_index != fnt_state->frame_index)
+    {
+      fnt_state->scaled_sizes_frame_index = fnt_state->frame_index;
+      fnt_state->scaled_sizes_count = 0;
+    }
+    if(!fnt_size_is_scaled(size) && fnt_state->scaled_sizes_count < ArrayCount(fnt_state->scaled_sizes))
+    {
+      fnt_state->scaled_sizes[fnt_state->scaled_sizes_count] = size;
+      fnt_state->scaled_sizes_count += 1;
+    }
+  }
+}
+
+internal B32
+fnt_size_is_scaled(F32 size)
+{
+  B32 result = 0;
+  if(fnt_state->scaled_sizes_frame_index == fnt_state->frame_index)
+  {
+    for EachIndex(idx, fnt_state->scaled_sizes_count)
+    {
+      if(fnt_state->scaled_sizes[idx] == size)
+      {
+        result = 1;
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+internal FNT_Run
+fnt_scaled_run_from_string(FNT_Tag tag, F32 size, F32 base_align_px, F32 tab_size_px, FNT_RasterFlags flags, String8 string)
+{
+  //- rad: the runs of the whole sizes around this one (cached as usual).
+  // Advances, dims and metrics are mixed between them, so positions move
+  // continuously and meet the whole sizes' exactly; the glyph images come
+  // from the nearer whole size, scaled to this one
+  F32 lo_size = floor_f32(size);
+  F32 hi_size = lo_size + 1.f;
+  F32 t = size - lo_size;
+  FNT_Run lo = fnt_run_from_string(tag, lo_size, base_align_px, tab_size_px, flags, string);
+  FNT_Run hi = fnt_run_from_string(tag, hi_size, base_align_px, tab_size_px, flags, string);
+  FNT_Run *img = (t < 0.5f ? &lo : &hi);
+  F32 scale = size / (t < 0.5f ? lo_size : hi_size);
+  FNT_Run run = {0};
+  run.pieces.count = Min(lo.pieces.count, hi.pieces.count);
+  run.pieces.v = push_array_no_zero(fnt_state->frame_arena, FNT_Piece, run.pieces.count);
+  for EachIndex(idx, run.pieces.count)
+  {
+    FNT_Piece *piece = &run.pieces.v[idx];
+    *piece = img->pieces.v[idx];
+    piece->advance = mix_1f32(lo.pieces.v[idx].advance, hi.pieces.v[idx].advance, t);
+    piece->offset  = scale_2f32(img->pieces.v[idx].offset, scale);
+    piece->scale   = scale;
+  }
+  run.dim     = v2f32(mix_1f32(lo.dim.x, hi.dim.x, t), mix_1f32(lo.dim.y, hi.dim.y, t));
+  run.ascent  = mix_1f32(lo.ascent, hi.ascent, t);
+  run.descent = mix_1f32(lo.descent, hi.descent, t);
+  return run;
 }
 
 ////////////////////////////////

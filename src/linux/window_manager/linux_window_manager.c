@@ -1584,3 +1584,9 @@ wm_set_cursor(WM_Cursor cursor)
 {
   lnx_wm_state->last_set_cursor = cursor;
 }
+
+internal void
+wm_hide_cursor_until_mouse_moves(void)
+{
+  // NOTE(rad): not done on X11 yet (needs XFixes); the cursor stays shown
+}

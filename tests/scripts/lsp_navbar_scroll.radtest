@@ -1,0 +1,62 @@
+#! timeout: 300
+# The navigation bar's lists scroll (user 2026-11-07: a long list ran off
+# the window and could not be scrolled): at most 20 rows (fewer when the
+# window's bottom is nearer), the mouse wheel scrolls them, they open with
+# the current entry in view. Fixture: 43 top-level items, 40 methods.
+
+lsp on
+open_folder ../fixtures/lsp_navlong
+wait_idle
+open ../fixtures/lsp_navlong/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+wait_until 30000 symbol_count > 80
+
+# the items list, opened from inside item_30: scrolled to it
+cmd goto_line
+text "78"
+key return
+wait_idle
+click code 78 5
+wait_idle
+expect nav_item == "item_30"
+click nav_box item
+wait_frames 3
+expect nav_list_count == 43
+expect nav_list_rows <= 20
+expect nav_list_rows < 43
+expect nav_list_first > 1
+expect nav_list_first <= 32
+
+# the wheel up to the top, then pick item_01 (entry 3)
+wheel -30 nav_list_item 32
+wait_idle
+expect nav_list_first == 1
+click nav_list_item 3
+wait_frames 3
+expect cursor_line == 49
+expect nav_item == "item_01"
+expect nav_list_count == 0
+
+# the members list, opened from inside method_20; the wheel down to its end
+# (it stops with method_40 on its last row)
+cmd goto_line
+text "26"
+key return
+wait_idle
+click code 26 8
+wait_idle
+expect nav_member == "method_20"
+click nav_box member
+wait_frames 3
+expect nav_list_count == 40
+expect nav_list_first > 1
+wheel 30 nav_list_item 20
+wait_idle
+expect nav_list_first == 21
+click nav_list_item 40
+wait_frames 3
+expect cursor_line == 46
+expect nav_member == "method_40"
+quit

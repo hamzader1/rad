@@ -193,9 +193,11 @@ RAD_SettingCode_navigation_bar,
 RAD_SettingCode_show_quick_fixes,
 RAD_SettingCode_completion_width,
 RAD_SettingCode_completion_height,
+RAD_SettingCode_completion_font_size,
 RAD_SettingCode_scroll_past_end,
 RAD_SettingCode_cursor_scope_lines,
 RAD_SettingCode_cursor_scope_end_annotations,
+RAD_SettingCode_hide_mouse_while_typing,
 RAD_SettingCode_focus_menu_bar_with_alt,
 RAD_SettingCode_COUNT,
 } RAD_SettingCode;
@@ -334,9 +336,11 @@ B32 navigation_bar;
 B32 show_quick_fixes;
 U64 completion_width;
 U64 completion_height;
+U64 completion_font_size;
 B32 scroll_past_end;
 B32 cursor_scope_lines;
 B32 cursor_scope_end_annotations;
+B32 hide_mouse_while_typing;
 B32 focus_menu_bar_with_alt;
 F32 row_height;
 F32 tab_height;

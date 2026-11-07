@@ -1220,3 +1220,12 @@ wm_set_cursor(WM_Cursor cursor)
   }
   [ns_cursor set];
 }
+
+internal void
+wm_hide_cursor_until_mouse_moves(void)
+{
+  // NOTE(rad): what NSTextView does while typing; AppKit shows it again on
+  // the next mouse movement
+  if(wm_sim_is_enabled()) { return; }
+  [NSCursor setHiddenUntilMouseMoves:YES];
+}

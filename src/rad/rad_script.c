@@ -275,20 +275,49 @@ rad_script_diag_string(Arena *arena, RAD_Diagnostic *diag)
 }
 
 internal B32
+rad_script_try_f64_from_str8(String8 string, F64 *out)
+{
+  // NOTE(rad): a plain decimal number ("-12.5", "3"); nothing else
+  B32 result = (string.size != 0);
+  U64 dots = 0;
+  U64 digits = 0;
+  for EachIndex(idx, string.size)
+  {
+    U8 c = string.str[idx];
+    if(c == '-' && idx == 0) {}
+    else if(c == '.') { dots += 1; }
+    else if('0' <= c && c <= '9') { digits += 1; }
+    else { result = 0; }
+  }
+  result = (result && dots <= 1 && digits != 0);
+  if(result)
+  {
+    *out = f64_from_str8(string);
+  }
+  return result;
+}
+
+internal B32
 rad_script_compare(String8 actual, String8 op, String8 expected, B32 *pass_out)
 {
-  // NOTE(rad): returns 0 for an unknown operator (or an ordering of non-numbers)
+  // NOTE(rad): returns 0 for an unknown operator (or an ordering of non-numbers);
+  // numbers may have decimals ("11.50" == 11.5)
   S64 a = 0;
   S64 e = 0;
   B32 numeric = (try_s64_from_str8_c_rules(actual, &a) && try_s64_from_str8_c_rules(expected, &e));
+  F64 a_f64 = 0;
+  F64 e_f64 = 0;
+  B32 decimal = (!numeric && rad_script_try_f64_from_str8(actual, &a_f64) && rad_script_try_f64_from_str8(expected, &e_f64));
+  S32 order = (numeric ? (a < e ? -1 : a > e ? 1 : 0) : decimal ? (a_f64 < e_f64 ? -1 : a_f64 > e_f64 ? 1 : 0) : 0);
+  numeric = (numeric || decimal);
   B32 op_valid = 1;
   B32 pass = 0;
-  if(str8_match(op, str8_lit("=="), 0))      { pass = numeric ? (a == e) : str8_match(actual, expected, 0); }
-  else if(str8_match(op, str8_lit("!="), 0)) { pass = numeric ? (a != e) : !str8_match(actual, expected, 0); }
-  else if(numeric && str8_match(op, str8_lit("<"), 0))  { pass = (a <  e); }
-  else if(numeric && str8_match(op, str8_lit("<="), 0)) { pass = (a <= e); }
-  else if(numeric && str8_match(op, str8_lit(">"), 0))  { pass = (a >  e); }
-  else if(numeric && str8_match(op, str8_lit(">="), 0)) { pass = (a >= e); }
+  if(str8_match(op, str8_lit("=="), 0))      { pass = numeric ? (order == 0) : str8_match(actual, expected, 0); }
+  else if(str8_match(op, str8_lit("!="), 0)) { pass = numeric ? (order != 0) : !str8_match(actual, expected, 0); }
+  else if(numeric && str8_match(op, str8_lit("<"), 0))  { pass = (order <  0); }
+  else if(numeric && str8_match(op, str8_lit("<="), 0)) { pass = (order <= 0); }
+  else if(numeric && str8_match(op, str8_lit(">"), 0))  { pass = (order >  0); }
+  else if(numeric && str8_match(op, str8_lit(">="), 0)) { pass = (order >= 0); }
   else { op_valid = 0; }
   *pass_out = pass;
   return op_valid;
@@ -397,6 +426,24 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     else if(result)
     {
       value = push_str8_copy(arena, cv->layout_nav_names[str8_match(name, str8_lit("nav_member"), 0) ? 1 : 0]);
+    }
+  }
+  else if(str8_match(name, str8_lit("nav_list_count"), 0) || str8_match(name, str8_lit("nav_list_rows"), 0) ||
+          str8_match(name, str8_lit("nav_list_first"), 0))
+  {
+    // rad: the navigation bar's open list (last layout; 0 when closed)
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    result = rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out);
+    if(result)
+    {
+      B32 open = (cv->layout_nav_menu_frame+1 >= rad_state->frame_index);
+      S64 v = (!open ? 0 :
+               str8_match(name, str8_lit("nav_list_count"), 0) ? (S64)cv->layout_nav_item_count :
+               str8_match(name, str8_lit("nav_list_rows"), 0) ? cv->layout_nav_rows :
+               cv->layout_nav_visible.min + 1);
+      value = push_str8f(arena, "%I64d", v);
     }
   }
   else if(str8_match(name, str8_lit("code_actions_count"), 0) || str8_match(name, str8_lit("code_action"), 0) ||
@@ -517,6 +564,54 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     TB_Text text = {0};
     result = rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out);
     value = push_str8f(arena, "%.0f", cv != 0 ? cv->layout_font_size : 0.f);
+  }
+  else if(str8_match(name, str8_lit("editor_font_size_drawn"), 0) ||
+          str8_match(name, str8_lit("editor_line_height"), 0))
+  {
+    RAD_CodeViewState *cv = 0;
+    RAD_Document *doc = 0;
+    TB_Text text = {0};
+    result = rad_script_editor_text(scratch.arena, &cv, &doc, &text, error_out);
+    F32 v = (cv == 0 ? 0.f : str8_match(name, str8_lit("editor_line_height"), 0) ? cv->layout_line_height : cv->layout_font_size);
+    value = push_str8f(arena, "%.2f", v);
+  }
+  else if(str8_match(name, str8_lit("status_text_fits"), 0))
+  {
+    // rad: the status bar's text box lies inside the bar (top to bottom)
+    RAD_Window *ws = rad_state->first_window;
+    Rng2F32 bar = (ws != 0 ? ws->bottom_bar_rect : r2f32p(0, 0, 0, 0));
+    Rng2F32 text_rect = (ws != 0 ? ws->status_text_rect : r2f32p(0, 0, 0, 0));
+    B32 fits = (text_rect.y1 > text_rect.y0 && bar.y0 <= text_rect.y0 && text_rect.y1 <= bar.y1);
+    value = push_str8f(arena, "%i", (int)fits);
+  }
+  else if(str8_match(name, str8_lit("menu_width_em"), 0))
+  {
+    // rad: the open context/menu bar menu's width, in UI font sizes (rounded
+    // to tenths; 0: none open)
+    RAD_Window *ws = rad_state->first_window;
+    F32 font_size = (ws != 0 ? floor_f32((F32)rad_state->settings.font_size*ws->font_scale) : 0);
+    F32 width = (ui_state != 0 && ui_state->ctx_menu_open ? dim_2f32(ui_state->ctx_menu_root->rect).x : 0);
+    value = push_str8f(arena, "%.1f", (font_size > 0 ? width/font_size : 0.f));
+  }
+  else if(str8_match(name, str8_lit("mouse_hidden"), 0))
+  {
+    // rad: typing hid the mouse pointer (Hide Mouse While Typing)
+    value = push_str8f(arena, "%i", (int)(rad_state->mouse_hidden_by_typing && rad_state->settings.hide_mouse_while_typing));
+  }
+  else if(str8_match(name, str8_lit("toolbar_icon."), StringMatchFlag_RightSideSloppy) && name.size > 13)
+  {
+    // rad: the icon font glyph a top bar button drew last frame
+    RAD_CmdKind kind = rad_cmd_kind_from_code_name(str8_skip(name, 13));
+    RAD_Window *ws = rad_state->first_window;
+    if(kind == RAD_CmdKind_Null || ws == 0)
+    {
+      result = 0;
+      *error_out = push_str8f(arena, "%S: no such command", name);
+    }
+    else
+    {
+      value = push_str8_copy(arena, ws->top_bar_cmd_icons[kind]);
+    }
   }
   else if(str8_match(name, str8_lit("ui_font_size"), 0))
   {
@@ -1021,7 +1116,7 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
           str8_match(name, str8_lit("completion_selected_visible"), 0) || str8_match(name, str8_lit("completion_doc"), 0) ||
           str8_match(name, str8_lit("completion_doc_shown"), 0) || str8_match(name, str8_lit("completion_kind"), 0) ||
           str8_match(name, str8_lit("completion_resolved"), 0) || str8_match(name, str8_lit("completion_width_em"), 0) ||
-          str8_match(name, str8_lit("completion_height_em"), 0))
+          str8_match(name, str8_lit("completion_height_em"), 0) || str8_match(name, str8_lit("completion_font_size"), 0))
   {
     RAD_LspCompletion *c = &rad_lsp->completion;
     B32 shown = (c->active && c->rows_count != 0 && c->built_frame+1 >= rad_state->frame_index);
@@ -1032,6 +1127,11 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
       Vec2F32 dim = dim_2f32(c->layout_rect);
       F32 v = (str8_match(name, str8_lit("completion_width_em"), 0) ? dim.x : dim.y);
       value = push_str8f(arena, "%I64u", (U64)(shown && c->layout_font_size > 0 ? round_f32(v / c->layout_font_size) : 0));
+    }
+    else if(str8_match(name, str8_lit("completion_font_size"), 0))
+    {
+      // rad: its font size last frame (0 when not shown)
+      value = push_str8f(arena, "%I64u", (U64)(shown ? round_f32(c->layout_font_size) : 0));
     }
     else if(str8_match(name, str8_lit("completion_open"), 0))
     {
@@ -1327,6 +1427,35 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     CFG_Node *tab = rad_script_window_tab(str8_lit("output"));
     RAD_CodeViewState *cv = (tab != &cfg_nil_node ? &rad_view_state_from_cfg(tab)->cv : 0);
     value = push_str8f(arena, "%.0f", cv != 0 ? cv->layout_font_size : 0.f);
+  }
+  else if(str8_match(name, str8_lit("output_top_line"), 0) || str8_match(name, str8_lit("output_bottom_line"), 0) ||
+          str8_match(name, str8_lit("output_line_numbers"), 0) || str8_match(name, str8_lit("output_at_bottom"), 0))
+  {
+    CFG_Node *tab = rad_script_window_tab(str8_lit("output"));
+    RAD_CodeViewState *cv = (tab != &cfg_nil_node ? &rad_view_state_from_cfg(tab)->cv : 0);
+    S64 top = (cv != 0 ? cv->scroll_pos.y.idx + 1 : 0);
+    S64 bottom = (cv != 0 ? top + cv->layout_full_rows - 1 : 0);
+    S64 at_bottom = 0;
+    if(cv != 0 && str8_match(name, str8_lit("output_at_bottom"), 0))
+    {
+      // rad: the last line with text (not the empty one after a final
+      // newline) on the bottom row, or everything shown from line 1
+      Access *access = access_open();
+      TB_Text text = tb_text_from_buffer(scratch.arena, access, rad_cargo->output_buffer);
+      access_close(access);
+      S64 last = (S64)text.patched.line_map.total_line_count;
+      if(last > 1)
+      {
+        Rng1U64 last_range = txt_range_from_line_num(&text.patched.line_map, (U64)last);
+        last -= (last_range.max <= last_range.min);
+      }
+      at_bottom = (bottom == last || (top == 1 && last <= bottom));
+    }
+    value = push_str8f(arena, "%I64d", (cv == 0 ? 0 :
+                                        str8_match(name, str8_lit("output_top_line"), 0) ? top :
+                                        str8_match(name, str8_lit("output_bottom_line"), 0) ? bottom :
+                                        str8_match(name, str8_lit("output_at_bottom"), 0) ? at_bottom :
+                                        (S64)cv->layout_line_numbers));
   }
   else if(str8_match(name, str8_lit("output_cursor_line"), 0) || str8_match(name, str8_lit("output_line_count"), 0) ||
           str8_match(name, str8_lit("output_cursor_at_end"), 0))
@@ -1763,6 +1892,23 @@ rad_script_target(Arena *arena, String8 *args, U64 args_count, U64 *args_used_ou
         args_used = 3;
         result = 1;
       }
+    }
+  }
+
+  //- rad: Output tab: the middle of its code area
+  else if(str8_match(kind, str8_lit("output_center"), 0))
+  {
+    CFG_Node *tab = rad_script_window_tab(str8_lit("output"));
+    if(tab == &cfg_nil_node)
+    {
+      *error_out = str8_lit("output_center: no output tab");
+    }
+    else
+    {
+      RAD_CodeViewState *cv = &rad_view_state_from_cfg(tab)->cv;
+      pos = center_2f32(cv->layout_code_rect);
+      args_used = 1;
+      result = 1;
     }
   }
 

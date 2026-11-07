@@ -546,6 +546,21 @@ dr_truncated_fancy_run_list(Vec2F32 p, DR_FRunList *list, F32 max_x, FNT_Run tra
   //- rjf: total advance > max? -> enable trailer
   B32 trailer_enabled = (list->dim.x > max_x && trailer_run.dim.x < max_x);
   
+  //- rad: scaled glyphs (a smooth zoom's sizes) are sampled linearly
+  B32 scaled = 0;
+  for(DR_FRunNode *n = list->first; n != 0; n = n->next)
+  {
+    if(n->v.run.pieces.count != 0 && n->v.run.pieces.v[0].scale != 1.f)
+    {
+      scaled = 1;
+      break;
+    }
+  }
+  if(scaled)
+  {
+    dr_push_tex2d_sample_kind(R_Tex2DSampleKind_Linear);
+  }
+  
   //- rjf: draw runs
   F32 advance = 0;
   B32 trailer_found = 0;
@@ -578,7 +593,7 @@ dr_truncated_fancy_run_list(Vec2F32 p, DR_FRunList *list, F32 max_x, FNT_Run tra
       }
       R_Handle texture = piece->texture;
       Rng2F32 src = r2f32p((F32)piece->subrect.x0, (F32)piece->subrect.y0, (F32)piece->subrect.x1, (F32)piece->subrect.y1);
-      Vec2F32 size = dim_2f32(src);
+      Vec2F32 size = scale_2f32(dim_2f32(src), piece->scale);
       Rng2F32 dst = r2f32p(p.x + piece->offset.x + advance,
                            p.y + piece->offset.y,
                            p.x + piece->offset.x + advance + size.x,
@@ -624,7 +639,7 @@ dr_truncated_fancy_run_list(Vec2F32 p, DR_FRunList *list, F32 max_x, FNT_Run tra
     {
       R_Handle texture = piece->texture;
       Rng2F32 src = r2f32p((F32)piece->subrect.x0, (F32)piece->subrect.y0, (F32)piece->subrect.x1, (F32)piece->subrect.y1);
-      Vec2F32 size = dim_2f32(src);
+      Vec2F32 size = scale_2f32(dim_2f32(src), piece->scale);
       Rng2F32 dst = r2f32p(p.x + piece->offset.x + advance,
                            p.y + piece->offset.y,
                            p.x + piece->offset.x + advance + size.x,
@@ -636,6 +651,10 @@ dr_truncated_fancy_run_list(Vec2F32 p, DR_FRunList *list, F32 max_x, FNT_Run tra
       }
       advance += piece->advance;
     }
+  }
+  if(scaled)
+  {
+    dr_pop_tex2d_sample_kind();
   }
 }
 
@@ -697,13 +716,18 @@ dr_text_run(Vec2F32 p, Vec4F32 color, FNT_Run run)
   F32 advance = 0;
   FNT_Piece *piece_first = run.pieces.v;
   FNT_Piece *piece_opl = piece_first + run.pieces.count;
+  B32 scaled = (run.pieces.count != 0 && run.pieces.v[0].scale != 1.f);
+  if(scaled)
+  {
+    dr_push_tex2d_sample_kind(R_Tex2DSampleKind_Linear);
+  }
   for(FNT_Piece *piece = piece_first;
       piece < piece_opl;
       piece += 1)
   {
     R_Handle texture = piece->texture;
     Rng2F32 src = r2f32p((F32)piece->subrect.x0, (F32)piece->subrect.y0, (F32)piece->subrect.x1, (F32)piece->subrect.y1);
-    Vec2F32 size = dim_2f32(src);
+    Vec2F32 size = scale_2f32(dim_2f32(src), piece->scale);
     Rng2F32 dst = r2f32p(p.x + piece->offset.x + advance,
                          p.y + piece->offset.y,
                          p.x + piece->offset.x + advance + size.x,
@@ -713,6 +737,10 @@ dr_text_run(Vec2F32 p, Vec4F32 color, FNT_Run run)
       dr_img(dst, src, texture, color, 0, 0, 0);
     }
     advance += piece->advance;
+  }
+  if(scaled)
+  {
+    dr_pop_tex2d_sample_kind();
   }
 }
 

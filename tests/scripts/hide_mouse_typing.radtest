@@ -1,0 +1,64 @@
+#! timeout: 300
+# Hide Mouse While Typing (setting, off by default; user 2026-11-07: the
+# mouse rested on code while typing and its docs popped up): typing in the
+# editor hides the pointer until the mouse moves, and the code under it
+# shows no hover popup until then. Copies and cursor moves do not hide it.
+# The fixture is never saved.
+
+lsp on
+open_folder ../fixtures/cargo_run
+wait_idle
+open ../fixtures/cargo_run/src/main.rs
+wait_idle
+wait_until 20000 lsp_state == "ready"
+wait_until 180000 lsp_busy == 0
+
+# off (default): after typing, the hover comes back with the mouse still
+# (an edit makes a new version: asked again after the rest delay)
+click code 11 1
+wait_idle
+mouse code 8 30
+wait_until 15000 hover_shown == 1
+text "x"
+wait_frames 3
+expect mouse_hidden == 0
+wait_until 15000 hover_shown == 1
+key ctrl+z
+wait_idle
+
+# on: typing hides the pointer and the hover
+set_setting hide_mouse_while_typing 1
+wait_until 15000 hover_shown == 1
+key right
+wait_frames 3
+expect mouse_hidden == 0
+key ctrl+c
+wait_frames 3
+expect mouse_hidden == 0
+wait_until 15000 hover_shown == 1
+text "x"
+wait_frames 3
+expect mouse_hidden == 1
+expect hover_shown == 0
+wait 1500
+expect hover_shown == 0
+key backspace
+wait_frames 3
+expect mouse_hidden == 1
+expect hover_shown == 0
+
+# the mouse moves: shown again, and its hover
+mouse code 8 31
+wait_frames 3
+expect mouse_hidden == 0
+wait_until 15000 hover_shown == 1
+
+# turned off while hidden: the hover comes back
+text "x"
+wait_frames 3
+expect mouse_hidden == 1
+set_setting hide_mouse_while_typing 0
+wait_until 15000 hover_shown == 1
+key ctrl+z
+wait_idle
+quit

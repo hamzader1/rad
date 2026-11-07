@@ -122,20 +122,37 @@ rad_view_state_animate(void)
     }
   }
 
-  //- rad: the completion list's scroll point. not a view state here (in
-  // raddbg the autocompletion lister is a view, so it eases with the loop
-  // above); without this, wheel and Up/Down stop moving its rows.
+  //- rad: scroll points of lists that are not views (in raddbg the
+  // autocompletion lister is a view, so it eases with the loop above):
+  // the completion list, Quick Open's list, each code view's navigation bar
+  // list; without this, wheel and Up/Down stop moving their rows
   {
-    UI_ScrollPt *scroll_pt = &rad_lsp->completion.scroll_pt;
-    F32 scroll_diff = (-scroll_pt->off);
-    scroll_pt->off += scroll_diff*rad_state->scrolling_animation_rate;
-    if(abs_f32(scroll_diff) > 0.01f)
+    UI_ScrollPt *scroll_pts[1 + 1 + 64] = {&rad_lsp->completion.scroll_pt, &rad_state->quick_open_scroll_pt};
+    U64 scroll_pts_count = 2;
+    for EachIndex(slot_idx, rad_state->view_state_slots_count)
     {
-      rad_request_frame();
+      for(RAD_ViewState *vs = rad_state->view_state_slots[slot_idx].first; vs != 0; vs = vs->hash_next)
+      {
+        if(vs->cv.nav_scroll_pt.off != 0 && scroll_pts_count < ArrayCount(scroll_pts))
+        {
+          scroll_pts[scroll_pts_count] = &vs->cv.nav_scroll_pt;
+          scroll_pts_count += 1;
+        }
+      }
     }
-    else
+    for EachIndex(idx, scroll_pts_count)
     {
-      scroll_pt->off = 0;
+      UI_ScrollPt *scroll_pt = scroll_pts[idx];
+      F32 scroll_diff = (-scroll_pt->off);
+      scroll_pt->off += scroll_diff*rad_state->scrolling_animation_rate;
+      if(abs_f32(scroll_diff) > 0.01f)
+      {
+        rad_request_frame();
+      }
+      else
+      {
+        scroll_pt->off = 0;
+      }
     }
   }
 }
@@ -981,72 +998,136 @@ rad_navigation_bar_ui(CFG_Node *tab, RAD_CodeViewState *cv, RAD_Document *doc, R
     if(ui_pressed(ui_signal_from_box(box)) && (side == 0 ? sym_count != 0 : top_idx != max_U64))
     {
       cv->nav_menu_side = side;
+      cv->nav_menu_opened = 1;
       ui_ctx_menu_open(menu_key, box->key, v2f32(0, dim_2f32(box->rect).y));
     }
   }
 
   //- rad: the list: top-level items, or the members of the item around the
-  // cursor (indented by depth); the current one checked
-  UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(34.f, 1.f)) UI_TagF("implicit")
+  // cursor (indented by depth); the current one checked. Not in raddbg's
+  // menus: a scroll list (user 2026-11-07: long lists ran off the window),
+  // at most 20 rows and not past the window's bottom; it opens with its
+  // current entry in view
+  U64 current = (cv->nav_menu_side == 0 ? top_idx : member_idx);
+  U64 *listed = push_array(scratch.arena, U64, sym_count+1);
+  S64 listed_count = 0;
+  S64 current_pos = -1;
+  for EachIndex(idx, sym_count)
+  {
+    RAD_LspSymbol *sym = &syms[idx];
+    B32 is_listed = (cv->nav_menu_side == 0 ? sym->parent == 0 : 0);
+    if(cv->nav_menu_side == 1 && top_idx != max_U64)
+    {
+      for(U64 p = sym->parent; p != 0 && !is_listed; p = syms[p-1].parent)
+      {
+        is_listed = (p-1 == top_idx);
+      }
+    }
+    if(is_listed)
+    {
+      if(idx == current) { current_pos = listed_count; }
+      listed[listed_count] = idx;
+      listed_count += 1;
+    }
+  }
+  F32 row_height_px = ui_top_px_height();
+  F32 list_width_px = floor_f32(ui_top_font_size()*34.f);
+  F32 window_height_px = dim_2f32(wm_client_rect_from_window(rad_state->current_window->os)).y;
+  F32 space_below_px = window_height_px - cv->layout_nav_rects[cv->nav_menu_side].y1 - ui_top_font_size()*2.f;
+  S64 max_rows = Clamp(3, (S64)(space_below_px/row_height_px), 20);
+  S64 shown_rows = Clamp(1, listed_count, max_rows);
+  B32 scrolls = (listed_count > shown_rows);
+  F32 row_width_px = list_width_px - (scrolls ? floor_f32(ui_bottom_font_size()*1.5f) : 0);
+  if(cv->nav_menu_opened)
+  {
+    cv->nav_menu_opened = 0;
+    S64 top = Clamp(0, current_pos - shown_rows/2, Max(0, listed_count - shown_rows));
+    cv->nav_scroll_pt.idx = top;
+    cv->nav_scroll_pt.off = 0;
+  }
+  UI_CtxMenu(menu_key) UI_PrefWidth(ui_px(list_width_px, 1.f)) UI_TagF("implicit")
   {
     cv->layout_nav_menu_frame = rad_state->frame_index;
-    cv->layout_nav_item_count = 0;
-    U64 current = (cv->nav_menu_side == 0 ? top_idx : member_idx);
-    for EachIndex(idx, sym_count)
+    cv->layout_nav_item_count = (U64)Min(listed_count, (S64)ArrayCount(cv->layout_nav_item_rects));
+    cv->layout_nav_rows = shown_rows;
+    MemoryZeroArray(cv->layout_nav_item_rects);
+    ui_set_next_pref_height(ui_px(shown_rows*row_height_px, 1.f));
+    ui_set_next_child_layout_axis(Axis2_Y);
+    UI_Box *list_container = ui_build_box_from_stringf(UI_BoxFlag_Clip, "###nav_list_%p", tab);
+    UI_Parent(list_container) UI_WidthFill
     {
-      RAD_LspSymbol *sym = &syms[idx];
-      B32 listed = (cv->nav_menu_side == 0 ? sym->parent == 0 : 0);
-      if(cv->nav_menu_side == 1 && top_idx != max_U64)
+      UI_ScrollListParams scroll_list_params = {0};
       {
-        for(U64 p = sym->parent; p != 0 && !listed; p = syms[p-1].parent)
+        scroll_list_params.flags         = 0;
+        scroll_list_params.row_height_px = row_height_px;
+        scroll_list_params.dim_px        = v2f32(list_width_px, shown_rows*row_height_px);
+        scroll_list_params.cursor_range  = r2s64(v2s64(0, 0), v2s64(0, listed_count));
+        scroll_list_params.item_range    = r1s64(0, listed_count);
+      }
+      Rng1S64 visible_row_rng = {0};
+      UI_ScrollListSignal scroll_list_sig = {0};
+      UI_ScrollList(&scroll_list_params, &cv->nav_scroll_pt, 0, 0, &visible_row_rng, &scroll_list_sig)
+      {
+        cv->layout_nav_visible = visible_row_rng;
+        ui_set_next_pref_height(ui_children_sum(1));
+        ui_set_next_child_layout_axis(Axis2_Y);
+        UI_Box *table = ui_build_box_from_string(0, str8_lit("table"));
+        UI_Parent(table)
+          for(S64 pos = Max(0, visible_row_rng.min); pos <= visible_row_rng.max && pos < listed_count; pos += 1)
         {
-          listed = (p-1 == top_idx);
+          U64 idx = listed[pos];
+          RAD_LspSymbol *sym = &syms[idx];
+          U64 rel_depth = (cv->nav_menu_side == 0 ? 0 : sym->depth - syms[top_idx].depth - 1);
+          String8 indent = {0};
+          if(rel_depth != 0)
+          {
+            indent = push_str8f(scratch.arena, "%.*s", (int)Min(rel_depth*4, 32), "                                ");
+          }
+          DR_FStrList fstrs = rad_fstrs_from_lsp_symbol(scratch.arena, sym, indent);
+          ui_set_next_child_layout_axis(Axis2_X);
+          ui_set_next_pref_width(ui_px(row_width_px, 1.f));
+          ui_set_next_pref_height(ui_px(row_height_px, 1.f));
+          UI_Box *item = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|
+                                                   UI_BoxFlag_DrawBackground|
+                                                   UI_BoxFlag_DrawHotEffects|
+                                                   UI_BoxFlag_DrawActiveEffects|
+                                                   UI_BoxFlag_Clickable,
+                                                   "###nav_item_%I64u", idx);
+          UI_Parent(item) UI_HeightFill UI_Padding(ui_em(1.f, 1.f))
+          {
+            RAD_Font(RAD_FontSlot_Icons)
+              UI_PrefWidth(ui_em(2.f, 1.f))
+              UI_TextAlignment(UI_TextAlign_Center)
+              UI_TagF("weak")
+              ui_label(idx == current ? rad_icon_kind_text_table[RAD_IconKind_Check] : str8_lit(""));
+            UI_PrefWidth(ui_text_dim(10, 1.f))
+            {
+              UI_Box *label = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
+              ui_box_equip_display_fstrs(label, &fstrs);
+            }
+          }
+          if(pos < (S64)ArrayCount(cv->layout_nav_item_rects))
+          {
+            cv->layout_nav_item_rects[pos] = item->rect;
+          }
+          if(ui_clicked(ui_signal_from_box(item)))
+          {
+            // rad: jump: the cursor to its name, shown (centered if off screen)
+            cv->cursor = cv->mark = sym->select_off;
+            cv->contain_cursor = 1;
+            ui_ctx_menu_close();
+            rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
+            rad_request_frame();
+          }
         }
       }
-      if(!listed)
+      
+      // rad: a dropdown stops with its last entry on its last row (the scroll
+      // list's range lets the last entry scroll up to the top)
+      S64 max_top = Max(0, listed_count - shown_rows);
+      if(cv->nav_scroll_pt.idx > max_top)
       {
-        continue;
-      }
-      U64 rel_depth = (cv->nav_menu_side == 0 ? 0 : sym->depth - syms[top_idx].depth - 1);
-      String8 indent = {0};
-      if(rel_depth != 0)
-      {
-        indent = push_str8f(scratch.arena, "%.*s", (int)Min(rel_depth*4, 32), "                                ");
-      }
-      DR_FStrList fstrs = rad_fstrs_from_lsp_symbol(scratch.arena, sym, indent);
-      ui_set_next_child_layout_axis(Axis2_X);
-      UI_Box *item = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|
-                                               UI_BoxFlag_DrawBackground|
-                                               UI_BoxFlag_DrawHotEffects|
-                                               UI_BoxFlag_DrawActiveEffects|
-                                               UI_BoxFlag_Clickable,
-                                               "###nav_item_%I64u", idx);
-      UI_Parent(item) UI_HeightFill UI_Padding(ui_em(1.f, 1.f))
-      {
-        RAD_Font(RAD_FontSlot_Icons)
-          UI_PrefWidth(ui_em(2.f, 1.f))
-          UI_TextAlignment(UI_TextAlign_Center)
-          UI_TagF("weak")
-          ui_label(idx == current ? rad_icon_kind_text_table[RAD_IconKind_Check] : str8_lit(""));
-        UI_PrefWidth(ui_text_dim(10, 1.f))
-        {
-          UI_Box *label = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
-          ui_box_equip_display_fstrs(label, &fstrs);
-        }
-      }
-      if(cv->layout_nav_item_count < ArrayCount(cv->layout_nav_item_rects))
-      {
-        cv->layout_nav_item_rects[cv->layout_nav_item_count] = item->rect;
-        cv->layout_nav_item_count += 1;
-      }
-      if(ui_clicked(ui_signal_from_box(item)))
-      {
-        // rad: jump: the cursor to its name, shown (centered if off screen)
-        cv->cursor = cv->mark = sym->select_off;
-        cv->contain_cursor = 1;
-        ui_ctx_menu_close();
-        rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
-        rad_request_frame();
+        ui_scroll_pt_target_idx(&cv->nav_scroll_pt, max_top);
       }
     }
   }
@@ -1186,6 +1267,7 @@ rad_completion_popup_ui(RAD_Window *ws, CFG_Node *window)
   }
   if(c->active && c->window == window->id && c->rows_count != 0)
     RAD_Font(RAD_FontSlot_Code)
+    UI_FontSize(rad_completion_font_size(ws))
     UI_TagF("floating")
   {
     Temp scratch = scratch_begin(0, 0);
@@ -2652,12 +2734,23 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
   F32 code_tab_size = fnt_column_size_from_tag_size(code_font, code_font_size)*settings->tab_width;
   FNT_Metrics code_font_metrics = fnt_metrics_from_tag_size(code_font, code_font_size);
   F32 code_line_height = ceil_f32(fnt_line_height_from_metrics(&code_font_metrics) * 1.5f);
+  if(fnt_size_is_scaled(code_font_size))
+  {
+    // rad: a zoom's in-between size: between the whole sizes' line heights,
+    // so lines move continuously (ceil would step) and meet them exactly
+    F32 lo_size = floor_f32(code_font_size);
+    FNT_Metrics lo_metrics = fnt_metrics_from_tag_size(code_font, lo_size);
+    FNT_Metrics hi_metrics = fnt_metrics_from_tag_size(code_font, lo_size + 1.f);
+    code_line_height = mix_1f32(ceil_f32(fnt_line_height_from_metrics(&lo_metrics) * 1.5f),
+                                ceil_f32(fnt_line_height_from_metrics(&hi_metrics) * 1.5f),
+                                code_font_size - lo_size);
+  }
   F32 big_glyph_advance = fnt_dim_from_tag_size_string(code_font, code_font_size, 0, 0, str8_lit("H")).x;
   Vec2F32 panel_box_dim = dim_2f32(rect);
   F32 scroll_bar_dim = floor_f32(main_font_size*1.5f);
   Vec2F32 code_area_dim = v2f32(panel_box_dim.x - scroll_bar_dim, panel_box_dim.y - scroll_bar_dim);
   S64 num_possible_visible_lines = (S64)(code_area_dim.y/code_line_height)+1;
-  B32 do_line_numbers = settings->show_line_numbers;
+  B32 do_line_numbers = settings->show_line_numbers && !cv->log_view;
   B32 text_is_ready = (text_info->lines_count != 0);
 
   //////////////////////////////
@@ -2776,6 +2869,13 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
       if(!cv->editable && (single_line_op.replace.size != 0 || evt->flags & UI_EventFlag_Delete))
       {
         continue;
+      }
+
+      //- rad: typing hides the mouse until it moves (a setting; not copies
+      // or cursor moves)
+      if(cv->editable && (evt->kind == UI_EventKind_Text || (evt->kind == UI_EventKind_Edit && !(evt->flags & UI_EventFlag_Copy))))
+      {
+        rad_hide_mouse_while_typing();
       }
 
       //- rad: newline insertion -> auto-indent with the current line's leading
@@ -3123,6 +3223,13 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
 
       //- rad: consume
       ui_eat_event(evt);
+
+      //- rad: not in raddbg: a log (the Output): any navigation key brings
+      // its cursor into view (Ctrl+End at the end: follows again)
+      if(cv->log_view)
+      {
+        cv->contain_cursor = 1;
+      }
 
       //- rad: changed cursor -> snap in X
       if(*cursor != start_cursor)
@@ -3894,11 +4001,13 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     // -> the file's language server -> its answer in a tooltip, anchored to
     // the token (VS2022): below its line, or above when it does not fit
     // there, so it never covers the token. Not while Ctrl is held: that is
-    // the Ctrl+click link (user, 2026-11-04: the docs got in its way)
+    // the Ctrl+click link (user, 2026-11-04: the docs got in its way); not
+    // while typing hid the mouse (Hide Mouse While Typing)
     {
       RAD_Document *hover_doc = rad_document_from_tab(tab);
       B32 mouse_on_token = (hover_doc != 0 && text_is_ready && sig.mouse_over_text &&
                             !(sig.base.event_flags & WM_Modifier_Ctrl) &&
+                            !(rad_state->mouse_hidden_by_typing && rad_state->settings.hide_mouse_while_typing) &&
                             ui_hovering(sig.base) && !ui_dragging(sig.base) && !ui_any_ctx_menu_is_open());
       String8 hover_text = (mouse_on_token ? rad_lsp_hover_from_mouse(hover_doc, sig.mouse_token_range, sig.mouse_char_off) : str8_zero());
       if(hover_text.size != 0)
@@ -4001,6 +4110,8 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     cv->layout_text_rect     = sig.text_rect;
     cv->layout_text_x_off    = sig.text_x_off;
     cv->layout_line_height   = code_line_height;
+    cv->layout_full_rows     = ClampBot(1, (S64)(code_area_dim.y/code_line_height));
+    cv->layout_line_numbers  = do_line_numbers;
     cv->layout_visible_lines = visible_lines;
     cv->layout_visible_rows  = visible_line_num_range;
     cv->layout_fold_count    = Min(folds.count, ArrayCount(cv->layout_folds));
@@ -4047,6 +4158,54 @@ rad_code_view_build(Arena *arena, CFG_Node *tab, RAD_CodeViewState *cv, TB_Buffe
     U64 cursor = cv->cursor;
     U64 cursor_line_num = txt_line_num_from_off(&text_patched.line_map, cursor);
     B32 cursor_in_range = (1 <= cursor_line_num && cursor_line_num <= text_patched.line_map.total_line_count);
+
+    // rad: not in raddbg: a log (the Output) follows its end like a
+    // terminal: while its cursor sits at the end, the last line is held at
+    // the bottom (5 rows shown: line 6 shows 2-6, line 7 shows 3-7), not
+    // raddbg's 4-row margin. The wheel moving it up stops that until it is
+    // back at the bottom; moving the cursor stops it, Ctrl+End resumes it
+    if(cv->log_view && cv->cursor == cv->mark && cv->cursor >= text_patched.size)
+    {
+      S64 last_row = total_rows;
+      if(last_row > 1)
+      {
+        Rng1U64 last_line_range = txt_range_from_line_num(&text_patched.line_map, text_patched.line_map.total_line_count);
+        if(last_line_range.max <= last_line_range.min)
+        {
+          last_row -= 1; // the empty line after the final newline
+        }
+      }
+      S64 full_rows = ClampBot(1, (S64)(code_area_dim.y/code_line_height));
+      S64 bottom_idx = ClampBot(0, last_row - full_rows);
+      if(cv->contain_cursor)
+      {
+        cv->log_scrolled_away = 0;
+      }
+      else if(cv->log_follow_idx >= 0 && scroll_pos.y.idx < cv->log_follow_idx && scroll_pos.y.idx < bottom_idx)
+      {
+        cv->log_scrolled_away = 1;
+      }
+      else if(cv->log_scrolled_away && scroll_pos.y.idx >= bottom_idx)
+      {
+        cv->log_scrolled_away = 0;
+      }
+      cv->contain_cursor = 0;
+      cv->center_cursor = 0;
+      cv->log_follow_idx = -1;
+      if(!cv->log_scrolled_away)
+      {
+        scroll_pos.y.idx = bottom_idx;
+        scroll_pos.y.off = 0;
+        scroll_pos.x.idx = 0;
+        scroll_pos.x.off = 0;
+        cv->log_follow_idx = bottom_idx;
+      }
+    }
+    else if(cv->log_view)
+    {
+      cv->log_scrolled_away = 0;
+      cv->log_follow_idx = -1;
+    }
 
     // rad: contain => snap
     if(cv->contain_cursor)
@@ -6070,39 +6229,33 @@ rad_explorer_view_ui(CFG_Node *tab, Rng2F32 rect)
       rad_cmd(RAD_CmdKind_FocusPanel, .panel = tab->parent->id);
     }
   }
-  UI_CtxMenu(menu_key) UI_PrefWidth(ui_em(30.f, 1.f)) UI_TagF("implicit")
+  //- rad: its rows: for the empty space (the root), a folder, a file. Sized
+  // to the widest row (rad_cmd_list_menu_width_px; was 30 em)
+  RAD_CmdKind root_cmds[] = {RAD_CmdKind_ExplorerNewFile, RAD_CmdKind_ExplorerNewFolder, RAD_CmdKind_Null,
+                             RAD_CmdKind_ExplorerPaste, RAD_CmdKind_Null,
+                             RAD_CmdKind_ExplorerCopyPath, RAD_CmdKind_ExplorerReveal};
+  U32 root_codepoints[] = {'n', 'f', 0, 'p', 0, 'a', 'v'};
+  StaticAssert(ArrayCount(root_codepoints) == ArrayCount(root_cmds), explorer_root_menu_check);
+  RAD_CmdKind folder_cmds[] = {RAD_CmdKind_ExplorerNewFile, RAD_CmdKind_ExplorerNewFolder, RAD_CmdKind_ExplorerReveal, RAD_CmdKind_Null,
+                               RAD_CmdKind_ExplorerCut, RAD_CmdKind_ExplorerCopy, RAD_CmdKind_ExplorerPaste, RAD_CmdKind_Null,
+                               RAD_CmdKind_ExplorerCopyPath, RAD_CmdKind_ExplorerCopyRelativePath, RAD_CmdKind_Null,
+                               RAD_CmdKind_ExplorerRename, RAD_CmdKind_ExplorerDelete};
+  U32 folder_codepoints[] = {'n', 'f', 'v', 0, 't', 'c', 'p', 0, 'a', 'l', 0, 'r', 'd'};
+  StaticAssert(ArrayCount(folder_codepoints) == ArrayCount(folder_cmds), explorer_folder_menu_check);
+  RAD_CmdKind file_cmds[] = {RAD_CmdKind_ExplorerOpen, RAD_CmdKind_ExplorerOpenToSide, RAD_CmdKind_ExplorerReveal, RAD_CmdKind_Null,
+                             RAD_CmdKind_ExplorerNewFile, RAD_CmdKind_ExplorerNewFolder, RAD_CmdKind_Null,
+                             RAD_CmdKind_ExplorerCut, RAD_CmdKind_ExplorerCopy, RAD_CmdKind_ExplorerPaste, RAD_CmdKind_Null,
+                             RAD_CmdKind_ExplorerCopyPath, RAD_CmdKind_ExplorerCopyRelativePath, RAD_CmdKind_Null,
+                             RAD_CmdKind_ExplorerRename, RAD_CmdKind_ExplorerDelete};
+  U32 file_codepoints[] = {'o', 's', 'v', 0, 'n', 'f', 0, 't', 'c', 'p', 0, 'a', 'l', 0, 'r', 'd'};
+  StaticAssert(ArrayCount(file_codepoints) == ArrayCount(file_cmds), explorer_file_menu_check);
+  RAD_CmdKind *menu_cmds = (ex->menu_is_root ? root_cmds : ex->menu_is_folder ? folder_cmds : file_cmds);
+  U32 *menu_codepoints = (ex->menu_is_root ? root_codepoints : ex->menu_is_folder ? folder_codepoints : file_codepoints);
+  U64 menu_count = (ex->menu_is_root ? ArrayCount(root_cmds) : ex->menu_is_folder ? ArrayCount(folder_cmds) : ArrayCount(file_cmds));
+  UI_CtxMenu(menu_key) UI_PrefWidth(ui_px(rad_cmd_list_menu_width_px(menu_count, menu_cmds), 1.f)) UI_TagF("implicit")
   {
     ex->layout_menu_frame = rad_state->frame_index;
-    if(ex->menu_is_root)
-    {
-      RAD_CmdKind cmds[] = {RAD_CmdKind_ExplorerNewFile, RAD_CmdKind_ExplorerNewFolder, RAD_CmdKind_Null,
-                            RAD_CmdKind_ExplorerPaste, RAD_CmdKind_Null,
-                            RAD_CmdKind_ExplorerCopyPath, RAD_CmdKind_ExplorerReveal};
-      U32 codepoints[] = {'n', 'f', 0, 'p', 0, 'a', 'v'};
-      StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), explorer_root_menu_check);
-      rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
-    }
-    else if(ex->menu_is_folder)
-    {
-      RAD_CmdKind cmds[] = {RAD_CmdKind_ExplorerNewFile, RAD_CmdKind_ExplorerNewFolder, RAD_CmdKind_ExplorerReveal, RAD_CmdKind_Null,
-                            RAD_CmdKind_ExplorerCut, RAD_CmdKind_ExplorerCopy, RAD_CmdKind_ExplorerPaste, RAD_CmdKind_Null,
-                            RAD_CmdKind_ExplorerCopyPath, RAD_CmdKind_ExplorerCopyRelativePath, RAD_CmdKind_Null,
-                            RAD_CmdKind_ExplorerRename, RAD_CmdKind_ExplorerDelete};
-      U32 codepoints[] = {'n', 'f', 'v', 0, 't', 'c', 'p', 0, 'a', 'l', 0, 'r', 'd'};
-      StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), explorer_folder_menu_check);
-      rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
-    }
-    else
-    {
-      RAD_CmdKind cmds[] = {RAD_CmdKind_ExplorerOpen, RAD_CmdKind_ExplorerOpenToSide, RAD_CmdKind_ExplorerReveal, RAD_CmdKind_Null,
-                            RAD_CmdKind_ExplorerNewFile, RAD_CmdKind_ExplorerNewFolder, RAD_CmdKind_Null,
-                            RAD_CmdKind_ExplorerCut, RAD_CmdKind_ExplorerCopy, RAD_CmdKind_ExplorerPaste, RAD_CmdKind_Null,
-                            RAD_CmdKind_ExplorerCopyPath, RAD_CmdKind_ExplorerCopyRelativePath, RAD_CmdKind_Null,
-                            RAD_CmdKind_ExplorerRename, RAD_CmdKind_ExplorerDelete};
-      U32 codepoints[] = {'o', 's', 'v', 0, 'n', 'f', 0, 't', 'c', 'p', 0, 'a', 'l', 0, 'r', 'd'};
-      StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), explorer_file_menu_check);
-      rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
-    }
+    rad_cmd_list_menu_buttons(menu_count, menu_cmds, menu_codepoints);
   }
 
   //////////////////////////////
@@ -6165,6 +6318,7 @@ rad_output_view_ui(CFG_Node *tab, Rng2F32 rect)
   TB_Buffer *buffer = rad_cargo->output_buffer;
   rad_code_view_init(cv);
   cv->editable = 0;
+  cv->log_view = 1;
 
   //////////////////////////////
   //- rad: text
@@ -6181,8 +6335,8 @@ rad_output_view_ui(CFG_Node *tab, Rng2F32 rect)
   {
     if(cv->cursor == cv->mark && cv->cursor >= cv->last_text_size)
     {
+      // rad: the view follows (log view, in rad_code_view_build)
       cv->cursor = cv->mark = text.patched.size;
-      cv->contain_cursor = 1;
     }
     cv->cursor = Min(cv->cursor, text.patched.size);
     cv->mark = Min(cv->mark, text.patched.size);

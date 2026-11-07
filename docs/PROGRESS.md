@@ -19,7 +19,7 @@ user, beyond CLAUDE.md:
   Bash heredoc: `\r` and `\n` turn into real control characters. Write such
   edit scripts with the file-writing tool and run `python -I <file>`.
 
-## Status (2026-11-06)
+## Status (2026-11-07)
 
 Windows only for now; macOS is milestones 11-12, at the very end (decided 2026-11-03).
 Plan revised 2026-11-03 (see CLAUDE.md section 6). Builds: unoptimized day to day; an
@@ -211,7 +211,8 @@ Milestone 6 details (each item with its script):
 ## Next steps
 
 0. **Now: `docs/TODO_2.md`** (the user's list of 2026-11-06 plus
-   suggestions). `docs/TASKS.md` (A-H) is done. Hint images are in
+   suggestions; section G, the user's list of 2026-11-07, is done).
+   `docs/TASKS.md` (A-H) is done. Hint images are in
    `.dev_hints/` (private, git-ignored, never push it).
    **NOTE: the integrated terminal (TODO_2 E5) is NOT done.** Stopped
    2026-11-06 at the user's request after its groundwork (base `pty_*`,
@@ -442,6 +443,46 @@ Milestone 6 details (each item with its script):
 of `text_buffer.h`.
 
 ## Journal
+
+### 2026-11-07 (TODO_2 G: smooth zoom, Output follows, menus, status bar, nav lists, stop icon, settings)
+- Smooth Cmd+wheel zoom (G1): the font cache had sizes only at whole
+  pixels (floor) and the line height was rounded up, so a zoom jumped a
+  pixel at a time and rasterized every quarter size it passed. While a
+  zoom eases, the code size is now a "scaled size" (`fnt_mark_scaled_size`):
+  glyphs come from the nearest whole size's atlas, drawn scaled and
+  sampled linearly (`FNT_Piece.scale`), advances and metrics mixed
+  between floor and floor+1, the line height continuous. Whole sizes are
+  drawn as before. Probed: 11 -> 11.29 -> 11.5 -> 11.75 -> 12.
+- Output tab (G2; the user said "terminal": the integrated terminal E5 is
+  not wired in, so this is the Output tab): no line numbers, follows its
+  last line on its last row (raddbg's 4-row margin is gone there); the
+  wheel up stops following, Ctrl+End or the wheel back down resumes.
+- Menus (G3): the menu bar's and the explorer's menus fit their widest
+  row, at least 18 em (raddbg's: 50 em) (`rad_cmd_list_menu_width_px`).
+- Status bar (G4): its row kept the default 3-font-size height inside a
+  2-font-size bar, pushing "Ready" below the window's bottom at big UI
+  fonts (reproduced at 25). The row fills the bar now.
+- Navigation bar lists (G5): a UI_ScrollList, at most 20 rows and not past
+  the window's bottom, opened with the current entry in view, stopping
+  with the last entry on the last row. Found: scroll points of lists that
+  are not views were never eased (`rad_view_state_animate`), so the wheel
+  did not move them; Quick Open's list had the same missing step.
+- Stop (G6): raddbg's Kill All icon (icon font `Stop`) replaces the
+  user's stop.svg glyph (left in the font, unused).
+- Settings (G7): Completion List Font Size (0: the UI font size);
+  Hide Mouse While Typing (off by default): typing in the editor hides
+  the pointer until the mouse moves, with no hover popup until then.
+  New `wm_hide_cursor_until_mouse_moves` (Mac: NSCursor
+  setHiddenUntilMouseMoves; Windows: null cursor until the mouse moves,
+  untested; Linux: not done). Scripts check rad's state only; the real
+  pointer hiding was not checked by a script (simulated input).
+- New scripts: `output_follow`, `status_bar`, `menu_width`,
+  `lsp_navbar_scroll` (fixture `lsp_navlong`), `hide_mouse_typing`;
+  extended: `zoom_wheel`, `cargo_stop`, `lsp_completion_size`. Script
+  compares take decimals now.
+- `tests/run_scripts.sh` (debug build): 58 scripts, all pass
+  (`settings_view` counts 42 settings now). Follow-ups from the user the
+  same day: below.
 
 ### 2026-11-06 (TODO_2 F: mouse wheel, key labels, settings groups, Compact)
 - Mouse wheel (Mac): precise wheel events outside a trackpad gesture

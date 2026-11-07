@@ -279,5 +279,6 @@ internal Vec2F32        wm_mouse_from_window(WM_Window window);
 //~ rjf: @per_os_impl Cursors (Implemented Per-OS)
 
 internal void           wm_set_cursor(WM_Cursor cursor);
+internal void           wm_hide_cursor_until_mouse_moves(void); // rad: hidden while typing
 
 #endif // WINDOW_MANAGER_H

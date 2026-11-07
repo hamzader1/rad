@@ -81,6 +81,8 @@ struct W32_WM_State
   U32 gfx_thread_tid;
   HINSTANCE hInstance;
   HCURSOR hCursor;
+  B32 cursor_hidden_until_move; // rad: hidden while typing, until the mouse moves
+  POINT cursor_hidden_pos;      // (screen) where it was hidden
   WM_SystemInfo gfx_info;
   W32_WM_Window *first_window;
   W32_WM_Window *last_window;

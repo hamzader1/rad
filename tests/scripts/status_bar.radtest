@@ -1,0 +1,18 @@
+# The status bar's text stays inside the bar at any UI font size (user
+# 2026-11-07: with UI Font Size 25 the bottom of "Ready" was cut off by the
+# window's edge: the bar is 2x the UI font high since TODO_2 B3, but its
+# row kept the default 3x height and pushed the text down).
+
+wait_idle
+expect status_text_fits == 1
+set_setting font_size 25
+wait_idle
+expect ui_font_size == 25
+expect status_text_fits == 1
+set_setting font_size 40
+wait_idle
+expect status_text_fits == 1
+set_setting font_size 8
+wait_idle
+expect status_text_fits == 1
+quit

@@ -279,7 +279,10 @@ struct RAD_Window
   //- rad: last frame's top bar command buttons, by command (empty when not
   // built: scripted tests click them)
   Rng2F32 top_bar_cmd_rects[RAD_CmdKind_COUNT];
+  String8 top_bar_cmd_icons[RAD_CmdKind_COUNT];   // the icon glyph each drew (static)
   Rng2F32 tool_close_rects[RAD_ToolKind_COUNT];   // tool window X buttons (last layout; scripts)
+  Rng2F32 bottom_bar_rect;                        // the status bar and its text (last layout; scripts)
+  Rng2F32 status_text_rect;
   CFG_ID panel_rect_ids[64];                      // leaf panels' rects (last layout; scripts)
   Rng2F32 panel_rects[64];
   U64 panel_rect_count;
@@ -331,6 +334,7 @@ struct RAD_State
   F32 menu_animation_rate__very_slow;
   F32 rich_hover_animation_rate;
   F32 scrolling_animation_rate;
+  F32 zoom_animation_rate; // rad: the code zoom (a bit slower: wheel notches blend)
   F32 tooltip_animation_rate;
 
   //- rad: code zoom: the code font size drawn (points) eases to the setting,
@@ -423,6 +427,11 @@ struct RAD_State
   UI_Key code_slice_link_press_key;
   UI_Key fold_hover_key;            // the fold chevron hovered, since when (its tooltip waits 1 s)
   U64 fold_hover_begin_us;
+
+  //- rad: typing hid the mouse pointer (Hide Mouse While Typing): no hover
+  // popup until the mouse moves away from where it was hidden
+  B32 mouse_hidden_by_typing;
+  Vec2F32 mouse_hidden_pos;
 
   //- rad: drag/drop (tabs; explorer files)
   RAD_DragDropState drag_drop_state;
@@ -520,6 +529,8 @@ internal CFG_Node *rad_editor_panel_from_window(CFG_Node *window);
 internal String8 rad_setting_value_string(Arena *arena, RAD_Settings *settings, U64 idx);
 internal F64 rad_setting_f64_from_settings(RAD_Settings *settings, U64 idx);
 internal F32 rad_panel_font_size(RAD_Window *ws);
+internal F32 rad_completion_font_size(RAD_Window *ws);
+internal void rad_hide_mouse_while_typing(void);
 internal F32 rad_code_font_size(RAD_Window *ws);
 
 ////////////////////////////////

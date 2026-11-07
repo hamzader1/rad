@@ -305,17 +305,50 @@ rad_panel_font_size(RAD_Window *ws)
   return result;
 }
 
+internal void
+rad_hide_mouse_while_typing(void)
+{
+  // NOTE(rad): not in raddbg (user 2026-11-07: the mouse rested on code
+  // while typing, and its docs popped up): typing in the editor hides the
+  // pointer, and its hover, until the mouse moves (the event loop)
+  if(rad_state->settings.hide_mouse_while_typing)
+  {
+    if(!rad_state->mouse_hidden_by_typing)
+    {
+      rad_state->mouse_hidden_by_typing = 1;
+      rad_state->mouse_hidden_pos = ui_mouse();
+    }
+    wm_hide_cursor_until_mouse_moves();
+  }
+}
+
+internal F32
+rad_completion_font_size(RAD_Window *ws)
+{
+  // NOTE(rad): the completion list's font size (user 2026-11-07), scaled like
+  // the window's; 0 in the settings: the window's UI font size (raddbg's)
+  F32 result = floor_f32((F32)rad_state->settings.font_size*ws->font_scale);
+  if(rad_state->settings.completion_font_size != 0)
+  {
+    result = floor_f32((F32)rad_state->settings.completion_font_size*ws->font_scale);
+  }
+  result = Clamp(6.f, result, 72.f);
+  return result;
+}
+
 internal F32
 rad_code_font_size(RAD_Window *ws)
 {
-  // NOTE(rad): the code font size (editor, Output), scaled like the window's
-  // (DPI changes). While a zoom eases: quarter pixels, so the in-between
-  // sizes are few and their glyphs stay cached across zooms
+  // NOTE(rad): the code font size (editor), scaled like the window's (DPI
+  // changes). While a zoom eases: any size in between, marked as scaled for
+  // the font cache (drawn from the whole sizes' glyphs, so text grows
+  // continuously and nothing new is rasterized; raddbg would floor it)
   F32 setting_pt = (F32)rad_state->settings.code_font_size;
   F32 pt = (rad_state->code_zoom_pt != 0 ? rad_state->code_zoom_pt : setting_pt);
   F32 size = pt*ws->font_scale;
-  F32 result = (pt == setting_pt ? floor_f32(size) : round_f32(size*4.f)/4.f);
+  F32 result = (pt == setting_pt ? floor_f32(size) : size);
   result = Clamp(6.f, result, 72.f);
+  fnt_mark_scaled_size(result);
   return result;
 }
 
@@ -2636,7 +2669,7 @@ rad_window_frame(RAD_Window *ws)
               {
                 // rad: file menu
                 UI_Key file_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_file_menu_key_"));
-                UI_CtxMenu(file_menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+                UI_CtxMenu(file_menu_key) UI_TagF("implicit")
                 {
                   RAD_CmdKind cmds[] =
                   {
@@ -2663,12 +2696,13 @@ rad_window_frame(RAD_Window *ws)
                     'x',
                   };
                   StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
-                  rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
+                  UI_PrefWidth(ui_px(rad_cmd_list_menu_width_px(ArrayCount(cmds), cmds), 1.f))
+                    rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
                 }
 
                 // rad: edit menu
                 UI_Key edit_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_edit_menu_key_"));
-                UI_CtxMenu(edit_menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+                UI_CtxMenu(edit_menu_key) UI_TagF("implicit")
                 {
                   RAD_CmdKind cmds[] =
                   {
@@ -2693,12 +2727,13 @@ rad_window_frame(RAD_Window *ws)
                     'g',
                   };
                   StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
-                  rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
+                  UI_PrefWidth(ui_px(rad_cmd_list_menu_width_px(ArrayCount(cmds), cmds), 1.f))
+                    rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
                 }
 
                 // rad: window menu
                 UI_Key window_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_window_menu_key_"));
-                UI_CtxMenu(window_menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+                UI_CtxMenu(window_menu_key) UI_TagF("implicit")
                 {
                   RAD_CmdKind cmds[] =
                   {
@@ -2715,12 +2750,13 @@ rad_window_frame(RAD_Window *ws)
                     'd',
                   };
                   StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
-                  rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
+                  UI_PrefWidth(ui_px(rad_cmd_list_menu_width_px(ArrayCount(cmds), cmds), 1.f))
+                    rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
                 }
 
                 // rad: panel menu
                 UI_Key panel_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_panel_menu_key_"));
-                UI_CtxMenu(panel_menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+                UI_CtxMenu(panel_menu_key) UI_TagF("implicit")
                 {
                   RAD_CmdKind cmds[] =
                   {
@@ -2749,12 +2785,13 @@ rad_window_frame(RAD_Window *ws)
                     't',
                   };
                   StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
-                  rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
+                  UI_PrefWidth(ui_px(rad_cmd_list_menu_width_px(ArrayCount(cmds), cmds), 1.f))
+                    rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
                 }
 
                 // rad: view menu (not in raddbg; VS2022's View: the tool windows)
                 UI_Key view_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_view_menu_key_"));
-                UI_CtxMenu(view_menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+                UI_CtxMenu(view_menu_key) UI_TagF("implicit")
                 {
                   RAD_CmdKind cmds[] =
                   {
@@ -2775,12 +2812,13 @@ rad_window_frame(RAD_Window *ws)
                     'c',
                   };
                   StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
-                  rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
+                  UI_PrefWidth(ui_px(rad_cmd_list_menu_width_px(ArrayCount(cmds), cmds), 1.f))
+                    rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
                 }
 
                 // rad: tab menu
                 UI_Key tab_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_tab_menu_key_"));
-                UI_CtxMenu(tab_menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+                UI_CtxMenu(tab_menu_key) UI_TagF("implicit")
                 {
                   RAD_CmdKind cmds[] =
                   {
@@ -2799,12 +2837,13 @@ rad_window_frame(RAD_Window *ws)
                     'p',
                   };
                   StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
-                  rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
+                  UI_PrefWidth(ui_px(rad_cmd_list_menu_width_px(ArrayCount(cmds), cmds), 1.f))
+                    rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
                 }
 
                 // rad: build menu (cargo)
                 UI_Key build_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_build_menu_key_"));
-                UI_CtxMenu(build_menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+                UI_CtxMenu(build_menu_key) UI_TagF("implicit")
                 {
                   RAD_CmdKind cmds[] =
                   {
@@ -2847,12 +2886,19 @@ rad_window_frame(RAD_Window *ws)
                     'v',
                   };
                   StaticAssert(ArrayCount(codepoints) == ArrayCount(cmds), menu_button_check);
-                  rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
+                  UI_PrefWidth(ui_px(rad_cmd_list_menu_width_px(ArrayCount(cmds), cmds), 1.f))
+                    rad_cmd_list_menu_buttons(ArrayCount(cmds), cmds, codepoints);
                 }
 
                 // rad: help menu
                 UI_Key help_menu_key = ui_key_from_string(ui_key_zero(), str8_lit("_help_menu_key_"));
-                UI_CtxMenu(help_menu_key) UI_PrefWidth(ui_em(50.f, 1.f)) UI_TagF("implicit")
+                // (not 50 em as in raddbg: its longest line plus a margin; the
+                // user found the menus too wide, 2026-11-07)
+                String8 help_credit = str8_lit("Built on the RAD Debugger codebase (MIT license).");
+                F32 help_width_px = ceil_f32(Max(fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, help_credit).x,
+                                                 fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, str8_lit(BUILD_TITLE_STRING_LITERAL)).x) +
+                                             ui_top_font_size()*4.f);
+                UI_CtxMenu(help_menu_key) UI_PrefWidth(ui_px(help_width_px, 1.f)) UI_TagF("implicit")
                 {
                   UI_Row UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
                     ui_label(str8_lit(BUILD_TITLE_STRING_LITERAL));
@@ -2868,7 +2914,7 @@ rad_window_frame(RAD_Window *ws)
                   ui_spacer(ui_em(1.f, 1.f));
                   UI_TagF("weak")
                     UI_Row UI_TextAlignment(UI_TextAlign_Center)
-                    ui_label(str8_lit("Built on the RAD Debugger codebase (MIT license)."));
+                    ui_label(help_credit);
                   ui_spacer(ui_em(0.5f, 1.f));
                 }
 
@@ -3101,6 +3147,7 @@ rad_window_frame(RAD_Window *ws)
             UI_Signal sig = ui_buttonf("%S###cargo_btn_%S", rad_icon_kind_text_table[info->icon_kind], info->code_name);
             wm_window_push_custom_title_bar_client_area(ws->os, sig.box->rect);
             ws->top_bar_cmd_rects[buttons[idx].kind] = sig.box->rect;
+            ws->top_bar_cmd_icons[buttons[idx].kind] = rad_icon_kind_text_table[info->icon_kind];
             if(ui_hovering(sig)) UI_Tooltip
               RAD_Font(RAD_FontSlot_Main)
               UI_FontSize(main_font_size)
@@ -3285,18 +3332,22 @@ rad_window_frame(RAD_Window *ws)
         }
       }
 
-      //- rad: build bottom bar
+      //- rad: build bottom bar (its row and contents fill its height: the
+      // bar is 2x the UI font, lower than raddbg's, so the default 3x row
+      // pushed the text down, out of the window at large UI font sizes)
       UI_Flags(UI_BoxFlag_DrawBackground) UI_CornerRadius(0)
         UI_Tag(tag)
-        UI_Pane(bottom_bar_rect, str8_lit("###bottom_bar")) UI_WidthFill UI_Row
+        UI_Pane(bottom_bar_rect, str8_lit("###bottom_bar")) UI_WidthFill UI_HeightFill UI_Row
         UI_Flags(0)
       {
-        // rad: build status
+        // rad: build status (keyed: its last layout is kept for scripts)
         UI_PrefWidth(ui_text_dim(10, 1))
         {
           ui_spacer(ui_em(0.5f, 1.f));
-          UI_Box *box = ui_build_box_from_key(UI_BoxFlag_DrawText, ui_key_zero());
+          UI_Box *box = ui_build_box_from_string(UI_BoxFlag_DrawText, str8_lit("###status_text"));
           ui_box_equip_display_fstrs(box, &status_fstrs);
+          ws->bottom_bar_rect = bottom_bar_rect;
+          ws->status_text_rect = box->rect;
         }
 
         ui_spacer(ui_pct(1, 0));
@@ -7125,6 +7176,15 @@ rad_frame(void)
         rad_state->current_window = ws;
       }
 
+      //- rad: the mouse moved: shown again after typing hid it
+      if(event->kind == WM_EventKind_MouseMove && rad_state->mouse_hidden_by_typing &&
+         (abs_f32(event->pos.x - rad_state->mouse_hidden_pos.x) >= 1.f ||
+          abs_f32(event->pos.y - rad_state->mouse_hidden_pos.y) >= 1.f))
+      {
+        rad_state->mouse_hidden_by_typing = 0;
+        rad_request_frame();
+      }
+
       //- rad: try window close
       //- rad: drag/drop drop-kickoff (raddbg's); Esc cancels a drag
       if(event->kind == WM_EventKind_Release && event->key == WM_Key_LeftMouseButton)
@@ -7308,6 +7368,7 @@ rad_frame(void)
     rad_state->menu_animation_rate__very_slow = 1 - master_animations_f*menu_animations_f*pow_f32(2, (-20.f * rad_state->frame_dt));
     rad_state->rich_hover_animation_rate      = 1 - master_animations_f*menu_animations_f*pow_f32(2, (-50.f * rad_state->frame_dt));
     rad_state->scrolling_animation_rate       = 1 - master_animations_f*scrolling_animations_f*pow_f32(2, (-60.f * rad_state->frame_dt));
+    rad_state->zoom_animation_rate            = 1 - master_animations_f*scrolling_animations_f*pow_f32(2, (-30.f * rad_state->frame_dt));
     rad_state->tooltip_animation_rate         = 1 - master_animations_f*tooltip_animations_f*pow_f32(2, (-60.f * rad_state->frame_dt));
   }
 
@@ -7330,7 +7391,8 @@ rad_frame(void)
   //////////////////////////////
   //- rad: animate the code zoom (the drawn code font size eases to the
   // setting, or to the wheel's target while it turns; 150 ms after the
-  // last wheel step the setting takes the nearest whole size)
+  // last wheel step the setting takes the nearest whole size). The rate is
+  // half the scrolling one, so quick wheel notches blend into one motion
   //
   {
     F32 setting_pt = (F32)rad_state->settings.code_font_size;
@@ -7353,7 +7415,7 @@ rad_frame(void)
     {
       rad_state->code_zoom_pt = target_pt;
     }
-    rad_state->code_zoom_pt += (target_pt - rad_state->code_zoom_pt)*rad_state->scrolling_animation_rate;
+    rad_state->code_zoom_pt += (target_pt - rad_state->code_zoom_pt)*rad_state->zoom_animation_rate;
     if(abs_f32(target_pt - rad_state->code_zoom_pt) < 0.01f)
     {
       rad_state->code_zoom_pt = target_pt;

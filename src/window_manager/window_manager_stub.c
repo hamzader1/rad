@@ -254,3 +254,8 @@ internal void
 wm_set_cursor(WM_Cursor cursor)
 {
 }
+
+internal void
+wm_hide_cursor_until_mouse_moves(void)
+{
+}

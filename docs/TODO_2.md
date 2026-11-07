@@ -322,3 +322,64 @@ setting).
   Compact each line gets one text line's height, centered; Comfortable
   is unchanged (raddbg's).
 
+
+## G. Third list (user, 2026-11-07)
+
+User: smooth Cmd+wheel zoom like Zed / Visual Studio 2022 (today it feels
+like Cmd +/- and lags mid-zoom, even at 120 Hz); "terminal" with no line
+numbers that follows its last line; narrower explorer and menu bar menus;
+the status bar runs past the window's bottom; the navigation bar's
+dropdowns must scroll; raddbg's stop icon if it still exists; settings for
+the completion list's font size and to hide the mouse while typing.
+
+- [x] **G1. Smooth wheel zoom.** Cause (verified in the code): the font
+  cache rasterizes and measures at floor(size) and the line height was
+  rounded up, so a zoom moved in whole-pixel jumps, and every quarter size
+  the zoom passed through rasterized a new atlas for nothing.
+  Done 2026-11-07 (script `zoom_wheel`, fields `editor_font_size_drawn`,
+  `editor_line_height`): while a zoom eases, the code font size is a
+  "scaled size": glyphs drawn from the nearest whole size's atlas, scaled,
+  sampled linearly; advances and metrics mixed between floor and floor+1;
+  the line height continuous. Whole sizes are drawn as before (hinted,
+  pixel exact). Probed: 11 -> 11.29 -> 11.5 -> 11.75 -> 12.
+- [x] **G2. Output follows its last line, no line numbers.** Taken as the
+  bottom panel's Output tab (the integrated terminal, E5, is not wired
+  in). Cause (verified): raddbg's 4-row cursor margin and the line
+  numbers. Done 2026-11-07 (script `output_follow`): the Output view is a
+  log view: no line numbers, the last line on the last row while it
+  follows (5 rows: lines 1-5, then 2-6, 3-7); the wheel up stops
+  following, Ctrl+End or the wheel back to the end resumes.
+- [x] **G3. Narrower menus.** Done 2026-11-07 (script `menu_width`, field
+  `menu_width_em`): the menu bar's menus and the explorer's context menu
+  fit their widest row (icon, name, key, a 3 em gap), at least 18 em
+  (raddbg's are 50 em). File: 26.5 em at the default font.
+- [x] **G4. Status bar cut at the window's bottom.** Cause (verified,
+  reproduced at UI font 25): the bar is 2 font sizes high, but its row
+  and children kept the default 3-font-size height, pushing the text
+  down. Done 2026-11-07 (script `status_bar`, field `status_text_fits`):
+  the row fills the bar.
+- [x] **G5. Navigation bar dropdowns scroll.** Done 2026-11-07 (script
+  `lsp_navbar_scroll`, fixture `lsp_navlong`, fields `nav_list_count`,
+  `nav_list_rows`, `nav_list_first`): a scroll list (raddbg's
+  UI_ScrollList), at most 20 rows and not past the window's bottom, opened
+  with the current entry in view; it stops with its last entry on its
+  last row. Found on the way: list scroll points outside view states
+  were never eased, so the wheel did not move them; Quick Open's list had
+  the same missing step and is eased now too.
+- [x] **G6. raddbg's stop icon.** It exists: the icon font's `Stop` ("s"),
+  which raddbg's Kill All button uses. Done 2026-11-07 (script
+  `cargo_stop`, field `toolbar_icon.<command>`): the Stop command (top
+  bar button, Build menu) uses it; the user's `stop.svg` glyph stays in
+  the font, unused.
+- [x] **G7. Settings: completion font size, hide the mouse while typing.**
+  Done 2026-11-07. "Completion List Font Size" (Language Server; 0, the
+  default: the UI font size, raddbg's; script `lsp_completion_size`).
+  "Hide Mouse While Typing" (Editor; off by default; script
+  `hide_mouse_typing`, field `mouse_hidden`): typing in the editor hides
+  the pointer until the mouse moves, and no hover popup opens until then;
+  copies and cursor moves do not hide it. New `window_manager` call
+  `wm_hide_cursor_until_mouse_moves`: Mac `NSCursor
+  setHiddenUntilMouseMoves`; Windows a null cursor until the mouse moves
+  (Windows: untested); Linux not done (needs XFixes). The script checks
+  rad's state only (scripts simulate input, so the OS cursor is not
+  touched); the pointer itself was not checked by a script.

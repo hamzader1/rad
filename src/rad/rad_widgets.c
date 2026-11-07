@@ -193,6 +193,43 @@ rad_cmd_list_menu_buttons(U64 count, RAD_CmdKind *kinds, U32 *fastpath_codepoint
   }
 }
 
+internal F32
+rad_cmd_list_menu_width_px(U64 count, RAD_CmdKind *kinds)
+{
+  // NOTE(rad): not in raddbg (its menus are 50 em wide; the user found that
+  // too wide, 2026-11-07): the widest row of rad_cmd_spec_button (padding,
+  // icon, name, key label) plus a 3 em gap between name and key, at least
+  // 18 em. Called where the menu's UI_PrefWidth is pushed (same font).
+  Temp scratch = scratch_begin(0, 0);
+  FNT_Tag font = ui_top_font();
+  F32 font_size = ui_top_font_size();
+  F32 text_padding = ui_top_text_padding();
+  F32 widest_px = 0;
+  for EachIndex(idx, count)
+  {
+    if(kinds[idx] == RAD_CmdKind_Null) { continue; }
+    RAD_CmdKindInfo *info = &rad_cmd_kind_info_table[kinds[idx]];
+    F32 row_px = font_size*2.f; // UI_Padding(ui_em(1)) on both sides
+    if(info->icon_kind != RAD_IconKind_Null)
+    {
+      row_px += font_size*2.f;
+    }
+    row_px += 10.f + fnt_dim_from_tag_size_string(font, font_size, 0, 0, info->display_name).x + text_padding*2.f;
+    CFG_Binding binding = rad_label_binding_from_cmd_kind(kinds[idx]);
+    if(binding.key != WM_Key_Null)
+    {
+      F32 key_font_size = font_size*0.95f;
+      String8 keybinding_str = wm_string_from_modifiers_key(scratch.arena, binding.modifiers, binding.key);
+      row_px += key_font_size*1.f + key_font_size + fnt_dim_from_tag_size_string(font, key_font_size, 0, 0, keybinding_str).x + text_padding*2.f;
+    }
+    row_px += font_size*3.f;
+    widest_px = Max(widest_px, row_px);
+  }
+  scratch_end(scratch);
+  F32 result = ceil_f32(Max(font_size*18.f, widest_px));
+  return result;
+}
+
 ////////////////////////////////
 //~ rad: Cells
 
@@ -2210,9 +2247,11 @@ rad_code_slice(RAD_CodeSliceParams *params, U64 *cursor, U64 *mark, S64 *preferr
         {
           Vec2F32 advance = v2f32(rad_code_slice_x_from_col(params, line_idx, line_string, *cursor - line_range.min), 0);
           F32 cursor_y = text_container_box->rect.y0 + line_idx*params->line_height_px - params->font_size*0.125f;
-          F32 cursor_y__animated = ui_anim(ui_key_from_stringf(text_container_box->key, "cursor_y_px"), cursor_y, .initial = cursor_y);
+          // rad: no trail while a zoom eases (the caret moves with the text)
+          B32 zooming = fnt_size_is_scaled(params->font_size);
+          F32 cursor_y__animated = ui_anim(ui_key_from_stringf(text_container_box->key, "cursor_y_px"), cursor_y, .initial = cursor_y, .reset = zooming);
           F32 cursor_off_pixels = advance.x;
-          F32 cursor_off_pixels__animated = ui_anim(ui_key_from_stringf(text_container_box->key, "cursor_off_px"), cursor_off_pixels, .initial = cursor_off_pixels);
+          F32 cursor_off_pixels__animated = ui_anim(ui_key_from_stringf(text_container_box->key, "cursor_off_px"), cursor_off_pixels, .initial = cursor_off_pixels, .reset = zooming);
           F32 cursor_thickness = ClampBot(1.f, floor_f32(line_box->font_size/10.f));
           Rng2F32 cursor_rect =
           {

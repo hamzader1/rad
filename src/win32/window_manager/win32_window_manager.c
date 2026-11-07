@@ -421,6 +421,19 @@ w32_wm_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         WM_Event *event = w32_wm_push_event(WM_EventKind_MouseMove, window);
         event->pos.x = (F32)(S16)LOWORD(lParam);
         event->pos.y = (F32)(S16)HIWORD(lParam);
+        
+        // rad: hidden while typing: back once the mouse really moves (Windows
+        // also sends this message when the cursor is set, without movement)
+        if(w32_wm_state->cursor_hidden_until_move)
+        {
+          POINT p = {0};
+          GetCursorPos(&p);
+          if(p.x != w32_wm_state->cursor_hidden_pos.x || p.y != w32_wm_state->cursor_hidden_pos.y)
+          {
+            w32_wm_state->cursor_hidden_until_move = 0;
+            SetCursor(w32_wm_state->hCursor);
+          }
+        }
       }break;
       
       case WM_MOUSEWHEEL:
@@ -542,7 +555,7 @@ w32_wm_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         }
         if(!w32_wm_resizing && !on_border && contains_2f32(window_rect, mouse))
         {
-          SetCursor(w32_wm_state->hCursor);
+          SetCursor(w32_wm_state->cursor_hidden_until_move ? 0 : w32_wm_state->hCursor);
         }
         else
         {
@@ -1705,5 +1718,20 @@ hcursor = curs; }break;
       SetCursorPos(p.x, p.y);
     }
     w32_wm_state->hCursor = hcursor;
+  }
+}
+
+internal void
+wm_hide_cursor_until_mouse_moves(void)
+{
+  // NOTE(rad): no system call does this on Windows (edit controls hide the
+  // cursor themselves): a null cursor over the client area until
+  // WM_MOUSEMOVE sees the mouse at another position
+  if(wm_sim_is_enabled()) { return; }
+  if(!w32_wm_state->cursor_hidden_until_move)
+  {
+    GetCursorPos(&w32_wm_state->cursor_hidden_pos);
+    w32_wm_state->cursor_hidden_until_move = 1;
+    SetCursor(0);
   }
 }

@@ -13,10 +13,14 @@ expect error == "No Cargo project found: open a folder with a Cargo.toml (File >
 open_folder ../fixtures/cargo_sleep
 wait_idle
 
-# run, stop while the program runs
+# run, stop while the program runs. The top bar's Stop button draws
+# raddbg's Kill All icon (its icon font's Stop, "s"; user 2026-11-07)
 key f5
 wait_output "started"
 expect cargo_status == "running"
+wait_frames 3
+expect toolbar_icon.cargo_stop == "s"
+expect toolbar_icon.cargo_run == "2"
 measure_begin stop
 key shift+f5
 wait_cargo 10000

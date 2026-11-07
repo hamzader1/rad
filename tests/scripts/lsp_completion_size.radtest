@@ -1,7 +1,8 @@
 #! timeout: 300
-# The completion list's size is two settings (Editor group): its width and
-# its most height, in text heights; 30 x 30 (raddbg's size) by default. A
-# long list shows fewer rows when it is lower. The fixture is never saved.
+# The completion list's size is two settings (Language Server group): its
+# width and its most height, in text heights; 30 x 30 (raddbg's size) by
+# default. A long list shows fewer rows when it is lower. A third sets its
+# font size. The fixture is never saved.
 
 lsp on
 open_folder ../fixtures/lsp_complete
@@ -41,6 +42,22 @@ expect completion_width_em == 45
 expect completion_height_em >= 48
 expect completion_height_em <= 50
 expect completion_bottom > 14
+
+# its font size (user 2026-11-07): 0 (default) is the UI font size; the
+# sizes above stay in text heights of its own font
+expect completion_font_size == 11
+set_setting completion_font_size 18
+wait_idle
+expect completion_open == 1
+expect completion_font_size == 18
+expect completion_width_em == 45
+set_setting completion_font_size 8
+wait_idle
+expect completion_font_size == 8
+expect completion_width_em == 45
+set_setting completion_font_size 0
+wait_idle
+expect completion_font_size == 11
 
 # out of range values are clamped
 set_setting completion_width 1

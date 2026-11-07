@@ -1,0 +1,53 @@
+# The Output tab follows its end like a terminal (user 2026-11-07): while
+# its cursor is at the end, the last line with text sits on the bottom row
+# (5 rows shown: line 6 shows lines 2-6; was raddbg's 4-row margin, which
+# left empty rows under it); new output scrolls it on. No line numbers.
+# The wheel moving it up stops following until it is back at the bottom,
+# or a key (Ctrl+End) brings the cursor back.
+
+open_folder ../fixtures/cargo_sleep
+wait_idle
+# a big Panel Font Size: only a few rows fit
+set_setting panel_font_size 30
+key f5
+wait_output "started"
+cmd show_output
+wait_idle
+expect panel == "output"
+expect output_line_numbers == 0
+expect output_cursor_at_end == 1
+expect output_top_line > 1
+expect output_at_bottom == 1
+
+# new output while following: still at the bottom
+wait_output "tick"
+wait_idle
+expect output_has "tick" == 1
+expect output_at_bottom == 1
+
+# the wheel up: it stays there while new output arrives
+wheel -2 output_center
+wait_idle
+expect output_at_bottom == 0
+expect output_top_line == 1
+key shift+f5
+wait_cargo 10000
+wait_idle
+expect output_has "[stopped after" == 1
+expect output_top_line == 1
+expect output_at_bottom == 0
+
+# Ctrl+End (the cursor is already at the end): following again
+key ctrl+end
+wait_idle
+expect output_at_bottom == 1
+expect output_cursor_at_end == 1
+
+# the wheel back down to the end: following again
+wheel -2 output_center
+wait_idle
+expect output_at_bottom == 0
+wheel 50 output_center
+wait_idle
+expect output_at_bottom == 1
+quit

@@ -64,6 +64,9 @@ struct RAD_CodeViewState
   // rad: text
   U64 buffer_version;
   B32 editable;
+  B32 log_view;                 // rad: a log (the Output): no line numbers, follows its end (set every frame, like `editable`)
+  B32 log_scrolled_away;        // rad: the wheel moved a following log up: it waits until it is back at the bottom
+  S64 log_follow_idx;           // rad: the top row it was held at last frame (-1: not following)
   U32 pending_line_op;          // rad: a line command for the next build (RAD_CmdKind, TODO_2 E1)
 
   // rad: code folding (not in raddbg): the foldable ranges of the text at
@@ -120,9 +123,13 @@ struct RAD_CodeViewState
   String8 layout_nav_names[2];  // (layout_nav_arena)
   Arena *layout_nav_arena;
   U64 nav_menu_side;            // which list is open (0: items, 1: members)
+  B32 nav_menu_opened;          // rad: just opened: scroll its current entry into view
+  UI_ScrollPt nav_scroll_pt;    // rad: the open list's scroll position
   U64 layout_nav_menu_frame;
-  Rng2F32 layout_nav_item_rects[128];
-  U64 layout_nav_item_count;
+  Rng2F32 layout_nav_item_rects[128]; // by entry (empty: scrolled out of view)
+  U64 layout_nav_item_count;          // entries in the open list
+  Rng1S64 layout_nav_visible;         // entries shown (0-based)
+  S64 layout_nav_rows;                // rows the list shows at most
 
   // rad: a completion left the cursor before the closing bracket it inserted:
   // typing that bracket there steps over it (offsets in the text of `typeover_version`; off once
@@ -151,6 +158,8 @@ struct RAD_CodeViewState
   F32 layout_text_x_off;
   F32 layout_line_height;
   Rng1S64 layout_visible_lines;
+  S64 layout_full_rows;      // rad: rows that fit whole in the code area
+  B32 layout_line_numbers;   // rad: the line number gutter was built
   FNT_Tag layout_font;
   F32 layout_font_size;
   F32 layout_tab_size;

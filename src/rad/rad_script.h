@@ -74,6 +74,7 @@
 //                               terminal whose output goes to the Output tab;
 //                               `visible` opens a real window (manual checks)
 //   expect <field> <op> <value> ops: == != < <= > >= ; numbers compare as numbers
+//                               (decimals too: "11.50" == 11.5)
 //   print <field>
 //   measure_begin <name>
 //   measure_end <name>          three stats over the frames in between:
@@ -92,6 +93,7 @@
 //   explorer_center             middle of the explorer view
 //   output <line> <col>         a visible text position in the Output tab
 //   output_text "<text>"        the first Output line containing it, at its start
+//   output_center               middle of the Output view
 //   problem <n>                 middle of visible Problems row n (1-based)
 //   tool_close <explorer|bottom> a tool window's X button
 //   explorer_filter             the explorer's search filter row
@@ -154,7 +156,16 @@
 //   font_custom <main|code>     1 if the UI Font / Code Font setting opened a font
 //   setting <name>              a setting's value as stored (enums: the option's name)
 //   editor_font_size            the editor view's font size (code font setting)
+//   editor_font_size_drawn      the size it was drawn at last frame, 2 decimals
+//                               (in between while a zoom eases)
+//   editor_line_height          its line height last frame (pixels, 2 decimals)
 //   output_font_size            the Output view's font size (Panel Font Size)
+//   status_text_fits            1 if the status bar's text box lies inside the bar
+//   menu_width_em               the open menu's width in UI font sizes (0: none)
+//   mouse_hidden                1 while typing hid the mouse pointer (setting
+//                               hide_mouse_while_typing; until the mouse moves)
+//   toolbar_icon.<code_name>    the icon font glyph that top bar button drew ("s":
+//                               raddbg's Stop)
 //   inline_diag_count           editor lines showing an inline diagnostic (visible ones)
 //   inlay_hint_count            inlay hints shown on the editor's visible lines
 //   key_label <command>         the key its menus show ("Cmd + S" on the Mac,
@@ -164,6 +175,8 @@
 //   panel_tabs <n>              editor panel n's tab names, space-separated
 //   drag_active                 1 while a tab or file is being dragged
 //   nav_item nav_member         the navigation bar's item / member names ("" = none)
+//   nav_list_count nav_list_rows nav_list_first   its open list: entries, rows it
+//                               shows at most, first entry shown (1-based); 0 if closed
 //   symbol_count                the editor document's symbols (documentSymbol)
 //   code_actions_count          code actions in the last answer
 //   code_action <n>             the title of action n (1-based)
@@ -228,6 +241,7 @@
 //                               completion_below: rows under the last visible one;
 //                               completion_selected_visible: 1 if the selection is
 //   completion_width_em completion_height_em   the list's size in font heights
+//   completion_font_size        the list's font size last frame (0: not shown)
 //                               (settings completion_width/_height; 0: not shown)
 //   diag_count diag_errors diag_warnings   problems: the last cargo command's
 //                               diagnostics and the language servers', merged
@@ -240,6 +254,11 @@
 //   output_has "<text>"         1 if the output contains the text
 //   output_line_count output_cursor_line output_cursor_at_end   the Output tab's
 //                               text and cursor (it shows the output <= 100 ms later)
+//   output_top_line output_bottom_line   the first and last line the Output
+//                               shows whole (the bottom one may be past the text)
+//   output_line_numbers         1 if the Output shows line numbers (it does not)
+//   output_at_bottom            1 if its last line with text is on its bottom row
+//                               (or all of it shows from line 1)
 //   elapsed_ms                  time since the script started
 //   last_sleep_ms               duration of the last sleep_until_woken
 

@@ -100,7 +100,7 @@ RAD_IconTable:
   (Duplicate                "#")
   //- rad: icons/*.svg (not in raddbg's font)
   (CargoRun                 "2")
-  (CargoStop                "%")
+  (CargoStop                "%")  // unused: Stop is raddbg's Kill All icon (user 2026-11-07)
   (CargoBuild               "$")
   (CargoCheck               "~")
   (CargoTest                "t")
@@ -1206,7 +1206,7 @@ RAD_CmdTable:
   {CargoCheck             cargo_check          "Check"                CargoCheck        F7         0      0      0      Null     0         0           0         0 }
   {CargoRun               cargo_run            "Run"                  CargoRun          F5         0      0      0      Null     0         0           0         0 }
   {CargoTest              cargo_test           "Test"                 CargoTest         F6         0      0      0      Null     0         0           0         0 }
-  {CargoStop              cargo_stop           "Stop"                 CargoStop         F5         0      shift  0      Null     0         0           0         0 }
+  {CargoStop              cargo_stop           "Stop"                 Stop              F5         0      shift  0      Null     0         0           0         0 }
   {CargoDebug             cargo_debug          "Debug Configuration"  Null              Null       0      0      0      Null     0         0           0         0 }
   {CargoRelease           cargo_release        "Release Configuration" Null             Null       0      0      0      Null     0         0           0         0 }
   {NextError              next_error           "Next Error"           DownArrow         F8         0      0      0      Null     0         0           0         0 }
@@ -1305,9 +1305,11 @@ RAD_SettingTable:
   {show_quick_fixes             Bool  B32 1   0  1  "Language Server" "Show Quick Fixes"              "Shows the quick fixes button (the language server's code actions) on the cursor's line, one second after the cursor stops. Quick Actions (Ctrl+.) works either way." ""}
   {completion_width             U64   U64 30  15 120 "Language Server" "Completion List Width"         "The width of the code completion list, in text heights (30: raddbg's size; 20: small, 45: large)." ""}
   {completion_height            U64   U64 30  6  100 "Language Server" "Completion List Height"        "The most height of the code completion list, in text heights; it shrinks to fit fewer items (30: raddbg's size; 15: small, 50: large)." ""}
+  {completion_font_size         U64   U64 0   0  72 "Language Server" "Completion List Font Size"     "The font size of the code completion list; 0: the UI font size (raddbg's)." ""}
   {scroll_past_end              Bool  B32 1   0  1  Editor     "Scroll Past End"               "Lets text views scroll until their last line is at the top (raddbg's); off: the last line stops at the bottom." ""}
   {cursor_scope_lines           Bool  B32 1   0  1  Editor     "Cursor Scope Lines"            "Controls whether or not scopes containing the cursor in text views are drawn." ""}
   {cursor_scope_end_annotations Bool  B32 1   0  1  Editor     "Cursor Scope End Annotations"  "Controls whether or not ending annotations for scopes containing the cursor are drawn." ""}
+  {hide_mouse_while_typing      Bool  B32 0   0  1  Editor     "Hide Mouse While Typing"       "Typing in the editor hides the mouse pointer until it moves; until then the code under it shows no hover popup (docs)." ""}
   {focus_menu_bar_with_alt      Bool  B32 1   0  1  Window     "Focus Menu Bar With Alt"       "Pressing and releasing Alt alone gives the keyboard to the menu bar." ""}
 }
 
