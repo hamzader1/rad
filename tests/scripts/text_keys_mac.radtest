@@ -3,8 +3,9 @@
 # Cmd+Up/Down: file start / end; Option+Left/Right: word; Shift selects;
 # Option+Backspace / Option+Delete: delete a word; Cmd+Backspace /
 # Cmd+Delete: delete to the line's start / end. Cmd+= / Cmd+- zoom the
-# code (never split the panel); Cmd+[ is Navigate Backward. Menus label
-# keys with Cmd / Option (TODO_2 F3).
+# code (never split the panel); Cmd+[ is Navigate Backward. Tooltips label
+# keys with Cmd / Option (TODO_2 F3); menus with Apple's symbols, in
+# Apple's order (Option, Shift, Command; user 2026-11-07).
 
 only_on mac
 open ../fixtures/nav.txt
@@ -13,6 +14,11 @@ expect panel_count == 1
 expect key_label save == "Cmd + S"
 expect key_label explorer_copy_path == "Cmd + Option + C"
 expect key_label explorer_rename == "F2"
+expect menu_key_label save == "⌘S"
+expect menu_key_label explorer_copy_path == "⌥⌘C"
+expect menu_key_label explorer_rename == "F2"
+expect menu_key_label reopen_closed_tab == "⇧⌘T"
+expect menu_key_label explorer_delete == "⌘⌫"
 
 # Cmd+Right: end of line 1; Cmd+Left: first non-blank, again: column 1
 click code 1 10

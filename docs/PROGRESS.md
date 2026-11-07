@@ -483,6 +483,17 @@ of `text_buffer.h`.
 - `tests/run_scripts.sh` (debug build): 58 scripts, all pass
   (`settings_view` counts 42 settings now). Follow-ups from the user the
   same day: below.
+- Follow-up, zoom "vibration" (user: with a slow wheel the text followed
+  the small motion, then stopped): the target was fractional and settled
+  on round(target), so small motions grew the text and eased it back. The
+  target moves in whole points now, the rest kept for half a second; a
+  wheel motion under a point does nothing.
+- Follow-up, explorer menu still wide (user's screenshot): measured 33 em,
+  wider than the old 30: the Mac key labels ("Cmd + Option + Shift + C",
+  13.7 em) plus my 3 em gap. The user chose Apple's symbols for menu key
+  labels on the Mac (drawn with the built-in JetBrains Mono, which has
+  them; Segoe UI does not); tooltips keep words. Explorer menus: 23 em.
+  Checked on screen. Windows unchanged (raddbg's words).
 
 ### 2026-11-06 (TODO_2 F: mouse wheel, key labels, settings groups, Compact)
 - Mouse wheel (Mac): precise wheel events outside a trackpad gesture

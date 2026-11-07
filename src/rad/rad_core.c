@@ -3158,7 +3158,7 @@ rad_window_frame(RAD_Window *ws)
               UI_Row
               {
                 ui_label(info->display_name);
-                rad_cmd_binding_labels(buttons[idx].kind);
+                rad_cmd_binding_labels(buttons[idx].kind, 0);
               }
             }
             if(ui_clicked(sig))
@@ -4324,7 +4324,7 @@ rad_window_frame(RAD_Window *ws)
                   UI_Row
                   {
                     ui_label(rad_cmd_kind_info_table[RAD_CmdKind_CloseToolWindow].display_name);
-                    rad_cmd_binding_labels(RAD_CmdKind_CloseToolWindow);
+                    rad_cmd_binding_labels(RAD_CmdKind_CloseToolWindow, 0);
                   }
                 }
               }
@@ -4650,7 +4650,7 @@ rad_window_frame(RAD_Window *ws)
                     UI_Row
                     {
                       ui_label(rad_cmd_kind_info_table[add_cmd_kind].display_name);
-                      rad_cmd_binding_labels(add_cmd_kind);
+                      rad_cmd_binding_labels(add_cmd_kind, 0);
                     }
                   }
                 }
@@ -4836,8 +4836,13 @@ rad_window_frame(RAD_Window *ws)
     ////////////////////////////
     //- rad: Ctrl/Cmd+wheel: the code font size (setting "Mouse Wheel Zoom";
     // raddbg zooms the whole window here). Smooth: the wheel moves a
-    // fractional target (a notch, 120 units, = 1 point; a trackpad's small
-    // steps a fraction of one) that the drawn size eases to every frame
+    // target that the drawn size eases to every frame. The target moves in
+    // whole points (a notch, 120 units, = 1 point; a trackpad's or a
+    // high-resolution wheel's small steps add up to one), the rest kept
+    // until a point is reached either way: a slow or back-and-forth wheel
+    // under a point does nothing (user 2026-11-07: with a fractional target,
+    // the text followed those small movements, then eased back to the whole
+    // size: it "vibrated")
     //
     for(UI_Event *evt = 0; ui_next_event(&evt);)
     {
@@ -4846,15 +4851,30 @@ rad_window_frame(RAD_Window *ws)
         ui_eat_event(evt);
         if(settings->mouse_wheel_zoom && evt->delta_2f32.y != 0)
         {
+          U64 now_us = now_time_us();
           if(!rad_state->code_zoom_wheeling)
           {
             rad_state->code_zoom_wheeling = 1;
             rad_state->code_zoom_target_pt = (F32)settings->code_font_size;
           }
+          if(now_us >= rad_state->code_zoom_wheel_us + 500000)
+          {
+            // rad: a new wheel motion: what an old one left does not count
+            rad_state->code_zoom_wheel_acc = 0;
+          }
           F32 min_pt = (F32)rad_setting_info_table[RAD_SettingCode_code_font_size].min;
           F32 max_pt = (F32)rad_setting_info_table[RAD_SettingCode_code_font_size].max;
-          rad_state->code_zoom_target_pt = Clamp(min_pt, rad_state->code_zoom_target_pt - evt->delta_2f32.y/120.f, max_pt);
-          rad_state->code_zoom_wheel_us = now_time_us();
+          F32 acc = rad_state->code_zoom_wheel_acc - evt->delta_2f32.y/120.f;
+          F32 steps = (acc >= 0 ? floor_f32(acc) : ceil_f32(acc));
+          acc -= steps;
+          F32 target_pt = Clamp(min_pt, rad_state->code_zoom_target_pt + steps, max_pt);
+          if((target_pt == max_pt && acc > 0) || (target_pt == min_pt && acc < 0))
+          {
+            acc = 0;
+          }
+          rad_state->code_zoom_target_pt = target_pt;
+          rad_state->code_zoom_wheel_acc = acc;
+          rad_state->code_zoom_wheel_us = now_us;
           rad_request_frame();
         }
       }
@@ -5639,14 +5659,17 @@ rad_exec_cmd(RAD_Cmd *cmd)
     //- rad: not in raddbg: the code font alone (editor, Output)
     case RAD_CmdKind_IncCodeFontSize:
     {
+      rad_state->code_zoom_wheel_acc = 0;
       rad_setting_set_f64(str8_lit("code_font_size"), (F64)rad_state->settings.code_font_size + 1);
     }break;
     case RAD_CmdKind_DecCodeFontSize:
     {
+      rad_state->code_zoom_wheel_acc = 0;
       rad_setting_set_f64(str8_lit("code_font_size"), (F64)rad_state->settings.code_font_size - 1);
     }break;
     case RAD_CmdKind_ResetCodeFontSize:
     {
+      rad_state->code_zoom_wheel_acc = 0;
       rad_setting_set_f64(str8_lit("code_font_size"), rad_setting_info_table[RAD_SettingCode_code_font_size].default_value);
     }break;
 
@@ -7391,8 +7414,8 @@ rad_frame(void)
   //////////////////////////////
   //- rad: animate the code zoom (the drawn code font size eases to the
   // setting, or to the wheel's target while it turns; 150 ms after the
-  // last wheel step the setting takes the nearest whole size). The rate is
-  // half the scrolling one, so quick wheel notches blend into one motion
+  // last wheel step the setting takes it: a whole size). The rate is half
+  // the scrolling one, so quick wheel notches blend into one motion
   //
   {
     F32 setting_pt = (F32)rad_state->settings.code_font_size;

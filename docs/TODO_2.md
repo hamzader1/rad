@@ -308,7 +308,8 @@ setting).
   Option (and Zed-like symbols?) instead of Ctrl / Alt on the Mac.
   Done 2026-11-06 (script `text_keys_mac`, query `key_label`): words, not
   symbols (the UI font has no ⌘ glyph): "Cmd + Option + C"; also the
-  "save first" messages and the quick-fix tooltip.
+  "save first" messages and the quick-fix tooltip. Menus show Apple's
+  symbols since 2026-11-07 (G3, drawn with JetBrains Mono).
 - [x] **F4. Settings grouped**: rows under group headers (Appearance /
   UI, Editor, Explorer, Language Server, Build, ...), in a fixed order.
   Done 2026-11-06 (script `settings_view`): Appearance, Fonts, Editor,
@@ -342,6 +343,13 @@ the completion list's font size and to hide the mouse while typing.
   sampled linearly; advances and metrics mixed between floor and floor+1;
   the line height continuous. Whole sizes are drawn as before (hinted,
   pixel exact). Probed: 11 -> 11.29 -> 11.5 -> 11.75 -> 12.
+  Follow-up (user, same day: zooming "vibrates" when the wheel moves
+  slowly or in place). Cause (verified in the code): the wheel moved a
+  fractional target and the setting settled on round(target), so a small
+  wheel motion grew the text a little, then eased it back. Now the target
+  moves in whole points (the rest kept, either way, for half a second): a
+  slow or back-and-forth wheel under a point does nothing; each point
+  still eases smoothly (script `zoom_wheel`).
 - [x] **G2. Output follows its last line, no line numbers.** Taken as the
   bottom panel's Output tab (the integrated terminal, E5, is not wired
   in). Cause (verified): raddbg's 4-row cursor margin and the line
@@ -353,6 +361,17 @@ the completion list's font size and to hide the mouse while typing.
   `menu_width_em`): the menu bar's menus and the explorer's context menu
   fit their widest row (icon, name, key, a 3 em gap), at least 18 em
   (raddbg's are 50 em). File: 26.5 em at the default font.
+  Follow-up (user, same day, `.dev_hints/CHppBHg7`: the explorer menu was
+  still wide). Cause (measured): its widest rows ("Reveal in File Manager
+  Cmd + Option + R", "Copy Relative Path Cmd + Option + Shift + C", the
+  key alone 13.7 em) plus the 3 em gap made it 33 em, wider than the old
+  30. The user chose Apple's symbols for menus' key labels on the Mac
+  (`wm_symbol_string_from_modifiers_key`: Option Shift Command, then the
+  key; Backspace, Return, arrows... as symbols), drawn with the built-in
+  JetBrains Mono (the UI font, Segoe UI, has none of these glyphs);
+  tooltips and messages keep the words (F3). The gap is half an em now.
+  Explorer menus: 23 em. Fields `menu_key_label`, `menu_rows_fit`;
+  scripts `menu_width`, `text_keys_mac`. Windows keeps raddbg's words.
 - [x] **G4. Status bar cut at the window's bottom.** Cause (verified,
   reproduced at UI font 25): the bar is 2 font sizes high, but its row
   and children kept the default 3-font-size height, pushing the text

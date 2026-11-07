@@ -179,6 +179,7 @@ internal B32 wm_monitor_match(WM_Monitor a, WM_Monitor b);
 internal String8 wm_string_from_event_kind(WM_EventKind kind);
 internal String8List wm_string_list_from_modifiers(Arena *arena, WM_Modifiers flags);
 internal String8 wm_string_from_modifiers_key(Arena *arena, WM_Modifiers modifiers, WM_Key key);
+internal String8 wm_symbol_string_from_modifiers_key(Arena *arena, WM_Modifiers modifiers, WM_Key key);
 internal U32 wm_codepoint_from_modifiers_and_key(WM_Modifiers flags, WM_Key key);
 internal void wm_eat_event(WM_EventList *events, WM_Event *event);
 internal B32 wm_key_press(WM_EventList *events, WM_Window window, WM_Modifiers modifiers, WM_Key key);

@@ -338,12 +338,13 @@ struct RAD_State
   F32 tooltip_animation_rate;
 
   //- rad: code zoom: the code font size drawn (points) eases to the setting,
-  // or, while Ctrl/Cmd+wheel turns, to the wheel's fractional target; the
-  // wheel stopping settles the setting on the nearest whole size
+  // or, while Ctrl/Cmd+wheel turns, to the wheel's target (whole points);
+  // the wheel stopping sets the setting to it
   F32 code_zoom_pt;
   F32 code_zoom_target_pt;
   B32 code_zoom_wheeling;
   U64 code_zoom_wheel_us;
+  F32 code_zoom_wheel_acc;  // wheel motion not yet a whole point (-1..+1)
 
   //- rad: commands (slot 0: being pushed, slot 1: being executed)
   Arena *cmds_arenas[2];

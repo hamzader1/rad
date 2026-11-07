@@ -593,6 +593,25 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     F32 width = (ui_state != 0 && ui_state->ctx_menu_open ? dim_2f32(ui_state->ctx_menu_root->rect).x : 0);
     value = push_str8f(arena, "%.1f", (font_size > 0 ? width/font_size : 0.f));
   }
+  else if(str8_match(name, str8_lit("menu_rows_fit"), 0))
+  {
+    // rad: every row of the open menu holds its contents (its last child,
+    // the right padding, ends inside it); 0 when a row overflows or none open
+    B32 fits = (ui_state != 0 && ui_state->ctx_menu_open);
+    if(fits)
+    {
+      UI_Box *root = ui_state->ctx_menu_root;
+      for(UI_Box *b = root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, root).next)
+      {
+        if(b->child_layout_axis == Axis2_X && b->child_count >= 2 && !ui_box_is_nil(b->last) &&
+           b->last->rect.x1 > b->rect.x1 + 0.5f)
+        {
+          fits = 0;
+        }
+      }
+    }
+    value = push_str8f(arena, "%i", (int)fits);
+  }
   else if(str8_match(name, str8_lit("mouse_hidden"), 0))
   {
     // rad: typing hid the mouse pointer (Hide Mouse While Typing)
@@ -1382,9 +1401,10 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
   }
 
   //- rad: the Output tab's cursor line (follows the end while it is there)
-  else if(str8_match(name, str8_lit("key_label"), 0))
+  else if(str8_match(name, str8_lit("key_label"), 0) || str8_match(name, str8_lit("menu_key_label"), 0))
   {
-    // rad: the key a command's menus show (TODO_2 F3)
+    // rad: the key a command's tooltips and messages show (TODO_2 F3), or its
+    // menus (symbols on the Mac, 2026-11-07)
     RAD_CmdKind kind = RAD_CmdKind_Null;
     for EachNonZeroEnumVal(RAD_CmdKind, k)
     {
@@ -1396,13 +1416,15 @@ rad_script_field(Arena *arena, String8 *args, U64 args_count, String8 *value_out
     }
     if(kind == RAD_CmdKind_Null)
     {
-      *error_out = str8_lit("key_label: needs a command name");
+      *error_out = str8_lit("key_label / menu_key_label: needs a command name");
       result = 0;
     }
     else
     {
       CFG_Binding binding = rad_label_binding_from_cmd_kind(kind);
-      value = wm_string_from_modifiers_key(arena, binding.modifiers, binding.key);
+      value = (str8_match(name, str8_lit("menu_key_label"), 0) ?
+               rad_menu_key_label_from_cmd_kind(arena, kind) :
+               wm_string_from_modifiers_key(arena, binding.modifiers, binding.key));
     }
   }
   else if(str8_match(name, str8_lit("inlay_hint_count"), 0))

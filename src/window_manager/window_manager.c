@@ -91,6 +91,52 @@ wm_string_from_modifiers_key(Arena *arena, WM_Modifiers modifiers, WM_Key key)
   return result;
 }
 
+internal String8
+wm_symbol_string_from_modifiers_key(Arena *arena, WM_Modifiers modifiers, WM_Key key)
+{
+  // NOTE(rad): the key labels of menus on the Mac (user 2026-11-07: the
+  // words made the menus wide): Apple's symbols, in Apple's order (Option,
+  // Shift, Command), then the key, as a symbol when it has one: "(Option)
+  // (Command) C" drawn as the glyphs U+2325 U+2318. Needs a font with those
+  // glyphs (the UI font has none). Elsewhere: the words of
+  // wm_string_from_modifiers_key.
+  String8 result = {0};
+#if OS_MAC
+  if(key != WM_Key_Null)
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    String8List parts = {0};
+    if(modifiers & WM_Modifier_Alt)   { str8_list_push(scratch.arena, &parts, str8_lit("\xe2\x8c\xa5")); } // U+2325 Option
+    if(modifiers & WM_Modifier_Shift) { str8_list_push(scratch.arena, &parts, str8_lit("\xe2\x87\xa7")); } // U+21E7 Shift
+    if(modifiers & WM_Modifier_Ctrl)  { str8_list_push(scratch.arena, &parts, str8_lit("\xe2\x8c\x98")); } // U+2318 Command
+    String8 key_string = wm_key_display_name_table[key];
+    switch(key)
+    {
+      default:{}break;
+      case WM_Key_Backspace:{key_string = str8_lit("\xe2\x8c\xab");}break; // U+232B
+      case WM_Key_Delete:   {key_string = str8_lit("\xe2\x8c\xa6");}break; // U+2326
+      case WM_Key_Return:   {key_string = str8_lit("\xe2\x86\xa9");}break; // U+21A9
+      case WM_Key_Esc:      {key_string = str8_lit("\xe2\x8e\x8b");}break; // U+238B
+      case WM_Key_Tab:      {key_string = str8_lit("\xe2\x87\xa5");}break; // U+21E5
+      case WM_Key_Left:     {key_string = str8_lit("\xe2\x86\x90");}break; // U+2190
+      case WM_Key_Up:       {key_string = str8_lit("\xe2\x86\x91");}break; // U+2191
+      case WM_Key_Right:    {key_string = str8_lit("\xe2\x86\x92");}break; // U+2192
+      case WM_Key_Down:     {key_string = str8_lit("\xe2\x86\x93");}break; // U+2193
+      case WM_Key_PageUp:   {key_string = str8_lit("\xe2\x87\x9e");}break; // U+21DE
+      case WM_Key_PageDown: {key_string = str8_lit("\xe2\x87\x9f");}break; // U+21DF
+      case WM_Key_Home:     {key_string = str8_lit("\xe2\x86\x96");}break; // U+2196
+      case WM_Key_End:      {key_string = str8_lit("\xe2\x86\x98");}break; // U+2198
+    }
+    str8_list_push(scratch.arena, &parts, key_string);
+    result = str8_list_join(arena, &parts, 0);
+    scratch_end(scratch);
+  }
+#else
+  result = wm_string_from_modifiers_key(arena, modifiers, key);
+#endif
+  return result;
+}
+
 internal U32
 wm_codepoint_from_modifiers_and_key(WM_Modifiers modifiers, WM_Key key)
 {

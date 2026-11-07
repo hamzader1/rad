@@ -162,14 +162,17 @@
 //   output_font_size            the Output view's font size (Panel Font Size)
 //   status_text_fits            1 if the status bar's text box lies inside the bar
 //   menu_width_em               the open menu's width in UI font sizes (0: none)
+//   menu_rows_fit               1 if every row of the open menu holds its contents
 //   mouse_hidden                1 while typing hid the mouse pointer (setting
 //                               hide_mouse_while_typing; until the mouse moves)
 //   toolbar_icon.<code_name>    the icon font glyph that top bar button drew ("s":
 //                               raddbg's Stop)
 //   inline_diag_count           editor lines showing an inline diagnostic (visible ones)
 //   inlay_hint_count            inlay hints shown on the editor's visible lines
-//   key_label <command>         the key its menus show ("Cmd + S" on the Mac,
+//   key_label <command>         the key its tooltips show ("Cmd + S" on the Mac,
 //                               "Ctrl + S" elsewhere), "" if none
+//   menu_key_label <command>    the key its menus show (Apple's symbols on the
+//                               Mac, e.g. U+2318 S; key_label's words elsewhere)
 //   lsp_hint_state              the editor's inlay hint requests: "supported asked
 //                               in_flight valid count"
 //   panel_tabs <n>              editor panel n's tab names, space-separated

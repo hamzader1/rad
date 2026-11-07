@@ -1,8 +1,8 @@
 # Smooth Ctrl/Cmd+wheel zoom of the code font (TODO_2 A2): the wheel moves a
-# fractional target (a notch = 1 point; trackpad steps of 40 units = 1/3
-# point) that the drawn size eases to; when the wheel stops the setting
-# takes the nearest whole size. The UI font never changes. Frame times are
-# measured over a first zoom (new glyph sizes rasterized) and a second one.
+# target in whole points (a notch = 1 point; trackpad steps of 40 units =
+# 1/3 point add up) that the drawn size eases to; when the wheel stops the
+# setting takes it. The UI font never changes. Frame times are measured
+# over a first zoom (new glyph sizes rasterized) and a second one.
 
 open ../fixtures/lines_3000.txt
 wait_idle
@@ -36,12 +36,40 @@ key_up ctrl
 wait_idle
 expect setting code_font_size == 21
 
-# a fraction settles on the nearest whole size: 4 steps of 40 = 1.33 -> 1
+# whole points only: 4 steps of 40 = 1.33 -> 1
 key_down ctrl
 wheel_units 40 4 code 5 5
 key_up ctrl
 wait_idle
 expect setting code_font_size == 20
+cmd reset_code_font_size
+wait_idle
+expect editor_font_size == 11
+
+# a slow or back-and-forth wheel under a point does nothing (user
+# 2026-11-07: with a fractional target the text followed it, then eased
+# back to the whole size: it "vibrated")
+key_down ctrl
+wheel_units -30 3 code 5 5
+wait_frames 3
+expect editor_font_size_drawn == 11
+wheel_units 30 3 code 5 5
+wheel_units -30 3 code 5 5
+wheel_units 30 2 code 5 5
+wait_frames 5
+expect editor_font_size_drawn == 11
+key_up ctrl
+wait_idle
+expect setting code_font_size == 11
+expect editor_font_size_drawn == 11
+
+# the next notch still moves one point (what is left, under a point, adds
+# to it for half a second)
+key_down ctrl
+wheel_units -120 1 code 5 5
+key_up ctrl
+wait_idle
+expect setting code_font_size == 12
 cmd reset_code_font_size
 wait_idle
 expect editor_font_size == 11

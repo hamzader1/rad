@@ -98,17 +98,50 @@ rad_label_binding_from_cmd_kind(RAD_CmdKind kind)
   return binding;
 }
 
+internal String8
+rad_menu_key_label_from_cmd_kind(Arena *arena, RAD_CmdKind kind)
+{
+  // NOTE(rad): a command's key as menus show it: Apple's symbols on the Mac
+  // (user 2026-11-07), raddbg's words elsewhere (wm_symbol_string_...)
+  CFG_Binding binding = rad_label_binding_from_cmd_kind(kind);
+  String8 result = wm_symbol_string_from_modifiers_key(arena, binding.modifiers, binding.key);
+  return result;
+}
+
+internal FNT_Tag
+rad_menu_key_label_font(void)
+{
+  // NOTE(rad): the font of menus' key labels: on the Mac the built-in code
+  // font (JetBrains Mono has the key symbols; the UI font and a user's code
+  // font may not); elsewhere the current font (raddbg's)
+#if OS_MAC
+  FNT_Tag result = fnt_tag_from_static_data_string(&rad_default_code_font_bytes);
+#else
+  FNT_Tag result = ui_top_font();
+#endif
+  return result;
+}
+
 internal void
-rad_cmd_binding_labels(RAD_CmdKind kind)
+rad_cmd_binding_labels(RAD_CmdKind kind, B32 in_menu)
 {
   // NOTE(rad): same box as raddbg's `rd_cmd_binding_buttons` with
-  // `RD_CmdBindingButtonFlag_NoEdit` - rebinding is not supported yet.
+  // `RD_CmdBindingButtonFlag_NoEdit` - rebinding is not supported yet. In
+  // menus: the menu label (symbols on the Mac); tooltips keep the words.
   Temp scratch = scratch_begin(0, 0);
   CFG_Binding binding = rad_label_binding_from_cmd_kind(kind);
   if(binding.key != WM_Key_Null) UI_CornerRadius(ui_top_font_size()*0.5f)
   {
     ui_spacer(ui_em(1.f, 1.f));
     String8 keybinding_str = wm_string_from_modifiers_key(scratch.arena, binding.modifiers, binding.key);
+    if(in_menu)
+    {
+      keybinding_str = rad_menu_key_label_from_cmd_kind(scratch.arena, kind);
+      ui_set_next_font(rad_menu_key_label_font());
+#if OS_MAC
+      ui_set_next_text_raster_flags(rad_raster_flags_from_slot(RAD_FontSlot_Code));
+#endif
+    }
     ui_set_next_text_alignment(UI_TextAlign_Center);
     ui_set_next_group_key(ui_key_zero());
     ui_set_next_pref_width(ui_text_dim(ui_top_font_size()*1.f, 1));
@@ -159,7 +192,7 @@ rad_cmd_spec_button(RAD_CmdKind kind)
         UI_TagF("weak")
         UI_FastpathCodepoint(0)
       {
-        rad_cmd_binding_labels(kind);
+        rad_cmd_binding_labels(kind, 1);
       }
     }
   }
@@ -198,8 +231,9 @@ rad_cmd_list_menu_width_px(U64 count, RAD_CmdKind *kinds)
 {
   // NOTE(rad): not in raddbg (its menus are 50 em wide; the user found that
   // too wide, 2026-11-07): the widest row of rad_cmd_spec_button (padding,
-  // icon, name, key label) plus a 3 em gap between name and key, at least
-  // 18 em. Called where the menu's UI_PrefWidth is pushed (same font).
+  // icon, name, key label; the key's own 1 em spacer is the gap between
+  // name and key) plus half an em, at least 18 em. Called where the menu's
+  // UI_PrefWidth is pushed (same font).
   Temp scratch = scratch_begin(0, 0);
   FNT_Tag font = ui_top_font();
   F32 font_size = ui_top_font_size();
@@ -219,10 +253,10 @@ rad_cmd_list_menu_width_px(U64 count, RAD_CmdKind *kinds)
     if(binding.key != WM_Key_Null)
     {
       F32 key_font_size = font_size*0.95f;
-      String8 keybinding_str = wm_string_from_modifiers_key(scratch.arena, binding.modifiers, binding.key);
-      row_px += key_font_size*1.f + key_font_size + fnt_dim_from_tag_size_string(font, key_font_size, 0, 0, keybinding_str).x + text_padding*2.f;
+      String8 keybinding_str = rad_menu_key_label_from_cmd_kind(scratch.arena, kinds[idx]);
+      row_px += key_font_size*1.f + key_font_size + fnt_dim_from_tag_size_string(rad_menu_key_label_font(), key_font_size, 0, 0, keybinding_str).x + text_padding*2.f;
     }
-    row_px += font_size*3.f;
+    row_px += font_size*0.5f;
     widest_px = Max(widest_px, row_px);
   }
   scratch_end(scratch);
